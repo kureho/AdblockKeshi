@@ -239,6 +239,235 @@ platform :ios do
     UI.message("https://appstoreconnect.apple.com/apps/#{app.id}/pricing")
   end
 
+  desc "Set Price ¥400 via raw ASC API (appPriceSchedules)"
+  lane :set_price_raw do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    token_text = Spaceship::ConnectAPI.token.text
+    require 'json'
+
+    # まず JPN 領域で ¥400 相当の appPricePoint を検索
+    UI.message("Looking for ¥400 priceTier in JPN territory...")
+    # priceTier 4 が ¥400 相当（過去 fastlane deliver で使用）
+    # ASC API の新形式: appPricePoints は他アプリの price point id を経由する必要
+    # 別アプリ (StillCam 4K) で ¥400 相当の price point id を取得して流用
+
+    stillcam = Spaceship::ConnectAPI::App.find("com.Kureho.MannerCamera4K")
+    res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{stillcam.id}/appPricePoints?limit=200&filter%5Bterritory%5D=JPN" \
+      -H "Authorization: Bearer #{token_text}"`
+    parsed = JSON.parse(res)
+    pp_jpn_400 = parsed['data']&.find do |pp|
+      cp = pp.dig('attributes', 'customerPrice')&.to_f
+      cp == 400.0
+    end
+
+    if pp_jpn_400.nil?
+      UI.error("¥400 price point not found in StillCam. Sample:")
+      parsed['data']&.first(3)&.each { |p| UI.message("  #{p.dig('attributes', 'customerPrice')} #{p.dig('attributes', 'territory') || ''}") }
+      next
+    end
+
+    base_pp_id = pp_jpn_400['id']
+    UI.message("Found ¥400 price point id=#{base_pp_id}")
+
+    # AdblockKeshi 用の同じ priceTier の price point を取得する必要
+    res2 = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}/appPricePoints?limit=200&filter%5Bterritory%5D=JPN" \
+      -H "Authorization: Bearer #{token_text}"`
+    parsed2 = JSON.parse(res2)
+    target_pp = parsed2['data']&.find do |pp|
+      pp.dig('attributes', 'customerPrice')&.to_f == 400.0
+    end
+    UI.user_error!("AdblockKeshi 用の ¥400 price point not found") unless target_pp
+    target_pp_id = target_pp['id']
+    UI.message("AdblockKeshi ¥400 price point id=#{target_pp_id}")
+
+    # appPriceSchedules 作成
+    body = {
+      data: {
+        type: "appPriceSchedules",
+        relationships: {
+          app: { data: { type: "apps", id: app.id } },
+          manualPrices: {
+            data: [
+              { type: "appPrices", id: "${new-price}" }
+            ]
+          },
+          baseTerritory: { data: { type: "territories", id: "JPN" } }
+        }
+      },
+      included: [
+        {
+          id: "${new-price}",
+          type: "appPrices",
+          attributes: { startDate: nil },
+          relationships: {
+            appPricePoint: { data: { type: "appPricePoints", id: target_pp_id } }
+          }
+        }
+      ]
+    }
+    File.write("/tmp/price-body.json", JSON.generate(body))
+    res3 = `curl -sS -X POST "https://api.appstoreconnect.apple.com/v1/appPriceSchedules" \
+      -H "Authorization: Bearer #{token_text}" \
+      -H "Content-Type: application/json" \
+      --data-binary @/tmp/price-body.json -w "\\nHTTP_STATUS:%{http_code}"`
+    UI.message("Response: #{res3[0..500]}")
+    if res3 =~ /HTTP_STATUS:(200|201|204)/
+      UI.success("✓ Price ¥400 set")
+    else
+      UI.error("✗ Price set failed")
+    end
+  end
+
+  desc "Set Primary Category UTILITIES via raw ASC API"
+  lane :set_category_raw do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    token_text = Spaceship::ConnectAPI.token.text
+
+    # AppInfo の取得 (editable な最新)
+    result = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}/appInfos" \
+      -H "Authorization: Bearer #{token_text}"`
+    require 'json'
+    parsed = JSON.parse(result)
+    UI.message("AppInfos count: #{parsed['data']&.count}")
+    parsed['data']&.each do |info|
+      UI.message("  - id=#{info['id']} state=#{info.dig('attributes', 'appStoreState')}")
+    end
+
+    # editable な appInfo を選ぶ (PREPARE_FOR_SUBMISSION 等)
+    info = parsed['data']&.find { |i| %w[PREPARE_FOR_SUBMISSION WAITING_FOR_REVIEW IN_REVIEW REJECTED].include?(i.dig('attributes', 'appStoreState')) }
+    info ||= parsed['data']&.first
+    UI.user_error!("editable appInfo not found") unless info
+
+    info_id = info['id']
+    UI.message("Patching appInfo id=#{info_id}...")
+
+    # 正しい方法: PATCH /v1/appInfos/{id} 本体の relationships を直接更新
+    body = {
+      data: {
+        id: info_id,
+        type: "appInfos",
+        relationships: {
+          primaryCategory: { data: { type: "appCategories", id: "UTILITIES" } }
+        }
+      }
+    }
+    File.write("/tmp/cat-body.json", JSON.generate(body))
+    res = `curl -sS -X PATCH "https://api.appstoreconnect.apple.com/v1/appInfos/#{info_id}" \
+      -H "Authorization: Bearer #{token_text}" \
+      -H "Content-Type: application/json" \
+      --data-binary @/tmp/cat-body.json -w "\\nHTTP_STATUS:%{http_code}"`
+    UI.message("Response: #{res[0..500]}")
+    if res.include?("HTTP_STATUS:204") || res.include?("HTTP_STATUS:200")
+      UI.success("✓ Primary Category = UTILITIES")
+    else
+      UI.error("✗ Category set failed")
+    end
+  end
+
+  desc "Set Age Rating (4+) via raw ASC API"
+  lane :set_age_rating_raw do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    token_text = Spaceship::ConnectAPI.token.text
+    require 'json'
+
+    # AppInfo を取得して ageRatingDeclaration を見る
+    result = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}/appInfos?include=ageRatingDeclaration" \
+      -H "Authorization: Bearer #{token_text}"`
+    parsed = JSON.parse(result)
+
+    # editable appInfo
+    info = parsed['data']&.find { |i| %w[PREPARE_FOR_SUBMISSION WAITING_FOR_REVIEW IN_REVIEW REJECTED].include?(i.dig('attributes', 'appStoreState')) }
+    info ||= parsed['data']&.first
+    UI.user_error!("editable appInfo not found") unless info
+
+    rating_rel = info.dig('relationships', 'ageRatingDeclaration', 'data')
+    UI.message("ageRatingDeclaration: #{rating_rel.inspect}")
+
+    # ageRatingDeclaration が存在するかチェック → なければ作成、あれば PATCH
+    rating_attrs = {
+      alcoholTobaccoOrDrugUseOrReferences: "NONE",
+      contests: "NONE",
+      gamblingSimulated: "NONE",
+      medicalOrTreatmentInformation: "NONE",
+      profanityOrCrudeHumor: "NONE",
+      sexualContentGraphicAndNudity: "NONE",
+      sexualContentOrNudity: "NONE",
+      horrorOrFearThemes: "NONE",
+      matureOrSuggestiveThemes: "NONE",
+      unrestrictedWebAccess: false,
+      gambling: false,
+      violenceCartoonOrFantasy: "NONE",
+      violenceRealistic: "NONE",
+      violenceRealisticProlongedGraphicOrSadistic: "NONE",
+      userGeneratedContent: false
+    }
+
+    # エラーループで不足 attribute を自動補完 (最大 30 trial)
+    rating_id = rating_rel&.[]('id')
+    success = false
+    30.times do |trial|
+      if rating_id
+        body = { data: { id: rating_id, type: "ageRatingDeclarations", attributes: rating_attrs } }
+        url = "https://api.appstoreconnect.apple.com/v1/ageRatingDeclarations/#{rating_id}"
+        method = "PATCH"
+      else
+        body = {
+          data: {
+            type: "ageRatingDeclarations",
+            attributes: rating_attrs,
+            relationships: { appInfo: { data: { type: "appInfos", id: info['id'] } } }
+          }
+        }
+        url = "https://api.appstoreconnect.apple.com/v1/ageRatingDeclarations"
+        method = "POST"
+      end
+      File.write("/tmp/age-body.json", JSON.generate(body))
+      res = `curl -sS -X #{method} "#{url}" \
+        -H "Authorization: Bearer #{token_text}" \
+        -H "Content-Type: application/json" \
+        --data-binary @/tmp/age-body.json -w "\\nHTTP_STATUS:%{http_code}"`
+
+      if res =~ /HTTP_STATUS:(200|201|204)/
+        UI.success("✓ Age Rating success (trial #{trial + 1}, attrs=#{rating_attrs.keys.size})")
+        success = true
+        break
+      end
+
+      # 不足 attribute を解析
+      if res =~ /You must provide a value for the attribute '([^']+)'/
+        missing = $1
+        # デフォルト値: 名前から推測 (大抵 ENUM 'NONE' か BOOLEAN false)
+        # 後で BOOLEAN error が出たら false に切替
+        rating_attrs[missing.to_sym] = "NONE"
+        UI.message("  trial #{trial + 1}: adding '#{missing}' = NONE")
+      elsif res =~ /Unexpected json type provided for attribute '([^']+)'. Expected a (BOOLEAN|INTEGER)/
+        attr = $1
+        type = $2
+        rating_attrs[attr.to_sym] = (type == "BOOLEAN") ? false : 0
+        UI.message("  trial #{trial + 1}: '#{attr}' → #{type}")
+      elsif res =~ /'([^']+)' is not an attribute on the resource/
+        attr = $1
+        rating_attrs.delete(attr.to_sym)
+        UI.message("  trial #{trial + 1}: removed unknown '#{attr}'")
+      else
+        UI.error("  trial #{trial + 1}: unhandled response:")
+        UI.error(res[0..400])
+        break
+      end
+    end
+
+    UI.error("✗ Age rating failed after retries") unless success
+  end
+
   desc "Create new App Review Information for AdblockKeshi via raw curl"
   lane :create_review_info_adblockkeshi do
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
