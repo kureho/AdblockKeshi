@@ -239,6 +239,277 @@ platform :ios do
     UI.message("https://appstoreconnect.apple.com/apps/#{app.id}/pricing")
   end
 
+  desc "TestFlight build 1.0.0(3) を AppStoreVersion v1.0 に attach"
+  lane :attach_build do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    token_text = Spaceship::ConnectAPI.token.text
+    require 'json'
+
+    # 利用可能な build (最新)
+    builds = app.get_builds(limit: 5, sort: "-uploadedDate")
+    build = builds.find { |b| b.processing_state == "VALID" } || builds.first
+    UI.user_error!("VALID build not found") unless build
+    UI.message("Attaching build #{build.version} (#{build.processing_state})...")
+
+    # 輸出コンプライアンス補完 (nil なら false)
+    if build.uses_non_exempt_encryption.nil?
+      build.update(attributes: { usesNonExemptEncryption: false })
+      sleep 2
+      UI.message("  uses_non_exempt_encryption: nil → false")
+    end
+
+    # version
+    versions = app.get_app_store_versions(limit: 3)
+    target = versions.find { |v| v.app_store_state == "PREPARE_FOR_SUBMISSION" }
+    UI.user_error!("editable version not found") unless target
+
+    # PATCH /v1/appStoreVersions/{id}/relationships/build
+    body = { data: { type: "builds", id: build.id } }
+    File.write("/tmp/attach-body.json", JSON.generate(body))
+    res = `curl -sS -X PATCH "https://api.appstoreconnect.apple.com/v1/appStoreVersions/#{target.id}/relationships/build" \
+      -H "Authorization: Bearer #{token_text}" \
+      -H "Content-Type: application/json" \
+      --data-binary @/tmp/attach-body.json -w "\\nHTTP_STATUS:%{http_code}"`
+    UI.message("Response: #{res[0..300]}")
+    if res =~ /HTTP_STATUS:(200|204)/
+      UI.success("✓ Build attached")
+    else
+      UI.error("✗ attach failed")
+    end
+  end
+
+  desc "Set App Availability to all territories"
+  lane :set_territories do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    token_text = Spaceship::ConnectAPI.token.text
+    require 'json'
+
+    # 利用可能な territories リスト
+    UI.message("Fetching all territories...")
+    terr_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/territories?limit=200" -H "Authorization: Bearer #{token_text}"`
+    terr_p = JSON.parse(terr_res)
+    territory_ids = terr_p['data'].map { |t| t['id'] }
+    UI.message("  total territories: #{territory_ids.size}")
+
+    # availability request: 全地域 + availableInNewTerritories: true
+    # ASC v2 仕様: territoryAvailabilities sub-resource 経由
+    included_arr = territory_ids.map.with_index do |id, idx|
+      {
+        type: "territoryAvailabilities",
+        id: "${ta#{idx}}",
+        attributes: { available: true },
+        relationships: { territory: { data: { type: "territories", id: id } } }
+      }
+    end
+    avail_body = {
+      data: {
+        type: "appAvailabilities",
+        attributes: { availableInNewTerritories: true },
+        relationships: {
+          app: { data: { type: "apps", id: app.id } },
+          territoryAvailabilities: {
+            data: included_arr.map { |ta| { type: "territoryAvailabilities", id: ta[:id] } }
+          }
+        }
+      },
+      included: included_arr
+    }
+    File.write("/tmp/avail-body.json", JSON.generate(avail_body))
+    # 既存 availability id を v2 / v1 両方で探索
+    cur_id = nil
+    %w[v2 v1].each do |ver|
+      cur_res = `curl -sS "https://api.appstoreconnect.apple.com/#{ver}/apps/#{app.id}/appAvailability" -H "Authorization: Bearer #{token_text}"`
+      UI.message("  #{ver}/appAvailability response (first 200): #{cur_res[0..200]}")
+      cur = JSON.parse(cur_res) rescue {}
+      cur_id = cur.dig('data', 'id')
+      break if cur_id
+    end
+    # v1 V2 sub-resource も試行
+    if cur_id.nil?
+      cur_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}/appAvailabilityV2" -H "Authorization: Bearer #{token_text}"`
+      UI.message("  v1/appAvailabilityV2 response (first 200): #{cur_res[0..200]}")
+      cur = JSON.parse(cur_res) rescue {}
+      cur_id = cur.dig('data', 'id')
+    end
+    UI.message("既存 availability id: #{cur_id || 'なし'}")
+
+    if cur_id
+      # PATCH 既存
+      avail_body[:data][:id] = cur_id
+      File.write("/tmp/avail-body.json", JSON.generate(avail_body))
+      res = `curl -sS -X PATCH "https://api.appstoreconnect.apple.com/v2/appAvailabilities/#{cur_id}" \
+        -H "Authorization: Bearer #{token_text}" \
+        -H "Content-Type: application/json" \
+        --data-binary @/tmp/avail-body.json -w "\\nHTTP_STATUS:%{http_code}"`
+    else
+      res = `curl -sS -X POST "https://api.appstoreconnect.apple.com/v2/appAvailabilities" \
+        -H "Authorization: Bearer #{token_text}" \
+        -H "Content-Type: application/json" \
+        --data-binary @/tmp/avail-body.json -w "\\nHTTP_STATUS:%{http_code}"`
+    end
+    UI.message("Response: #{res[0..500]}")
+    if res =~ /HTTP_STATUS:(200|201|204)/
+      UI.success("✓ All #{territory_ids.size} territories enabled")
+    else
+      UI.error("✗ Availability set failed")
+    end
+  end
+
+  desc "提出前全項目監査 (feedback_apple_submission_state_audit 4点 + 必須メタデータ)"
+  lane :pre_submit_audit do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    token_text = Spaceship::ConnectAPI.token.text
+    require 'json'
+
+    issues = []
+    ok = []
+    APP_ID = app.id
+
+    # 1. version state + build attached
+    UI.message("=== ① version + build ===")
+    versions = app.get_app_store_versions(limit: 3)
+    target = versions.find { |v| v.app_store_state == "PREPARE_FOR_SUBMISSION" }
+    if target.nil?
+      issues << "editable version (PREPARE_FOR_SUBMISSION) not found"
+    else
+      UI.message("  version: v#{target.version_string} state=#{target.app_store_state}")
+      ok << "version v#{target.version_string} editable"
+
+      # build attached?
+      build_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/appStoreVersions/#{target.id}/build" -H "Authorization: Bearer #{token_text}"`
+      bp = JSON.parse(build_res) rescue { 'data' => nil }
+      if bp.dig('data', 'id')
+        UI.message("  build attached: #{bp.dig('data', 'id')}")
+        ok << "build attached"
+      else
+        issues << "BUILD NOT ATTACHED to version v#{target.version_string} → 提出不可"
+      end
+    end
+
+    # 2. screenshots
+    UI.message("=== ② screenshots ===")
+    locs = target&.get_app_store_version_localizations || []
+    ja = locs.find { |l| l.locale == "ja" }
+    if ja
+      ss_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/appStoreVersionLocalizations/#{ja.id}/appScreenshotSets?include=appScreenshots" -H "Authorization: Bearer #{token_text}"`
+      ssp = JSON.parse(ss_res) rescue { 'data' => [] }
+      total_ss = ssp.dig('included')&.count { |i| i['type'] == 'appScreenshots' } || 0
+      UI.message("  screenshot total: #{total_ss}")
+      if total_ss >= 3
+        ok << "screenshots: #{total_ss}"
+      else
+        issues << "screenshots: #{total_ss} (Apple は iPhone 6.9 で最低3枚必須)"
+      end
+    end
+
+    # 3. metadata 必須項目
+    UI.message("=== ③ metadata text ===")
+    if ja
+      ml = ja.attributes if ja.respond_to?(:attributes)
+      desc_len = (ja.description || '').length
+      kw_len = (ja.keywords || '').length
+      UI.message("  description len=#{desc_len}, keywords len=#{kw_len}")
+      ok << "description (#{desc_len} chars)" if desc_len >= 10
+      issues << "description too short (#{desc_len})" if desc_len < 10
+      ok << "keywords (#{kw_len} chars)" if kw_len >= 5
+      issues << "keywords too short (#{kw_len})" if kw_len < 5
+    end
+
+    # 4. AppInfo: category / age rating
+    UI.message("=== ④ AppInfo (category / age rating) ===")
+    info_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{APP_ID}/appInfos?include=primaryCategory,ageRatingDeclaration" -H "Authorization: Bearer #{token_text}"`
+    info_p = JSON.parse(info_res)
+    info = info_p['data']&.find { |i| %w[PREPARE_FOR_SUBMISSION].include?(i.dig('attributes', 'appStoreState')) } || info_p['data']&.first
+
+    primary_cat = info.dig('relationships', 'primaryCategory', 'data', 'id')
+    if primary_cat
+      ok << "Primary Category: #{primary_cat}"
+    else
+      issues << "Primary Category NOT SET"
+    end
+
+    age_rating_id = info.dig('relationships', 'ageRatingDeclaration', 'data', 'id')
+    if age_rating_id
+      ok << "Age Rating set (id=#{age_rating_id})"
+    else
+      issues << "Age Rating NOT SET"
+    end
+
+    # 5. Review Information
+    UI.message("=== ⑤ Review Information ===")
+    begin
+      rd = target.fetch_app_store_review_detail
+      if rd && rd.contact_email
+        UI.message("  Email: #{rd.contact_email} / First: #{rd.contact_first_name}")
+        if rd.contact_email == "info@kureho.app" && rd.contact_first_name == "Kureho"
+          ok << "Review Info (法人版)"
+        else
+          issues << "Review Info NOT corp (個人情報のまま): #{rd.contact_first_name}/#{rd.contact_email}"
+        end
+      else
+        issues << "Review Information NOT SET"
+      end
+    rescue => e
+      issues << "Review Info error: #{e.message[0..80]}"
+    end
+
+    # 6. ⚠ 重要: Pricing & Availability (4点監査ルール)
+    UI.message("=== ⑥ Pricing & Availability ===")
+    # 6a. price schedule
+    price_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{APP_ID}/appPriceSchedule?include=manualPrices,baseTerritory" -H "Authorization: Bearer #{token_text}"`
+    pp = JSON.parse(price_res) rescue { 'data' => nil }
+    if pp.dig('data', 'id')
+      ok << "Price Schedule set"
+    else
+      issues << "Price Schedule NOT SET → 提出時に price tier 不明エラー"
+    end
+
+    # 6b. App Availability (Territories) — v2 endpoint
+    avail_res = `curl -sS "https://api.appstoreconnect.apple.com/v2/apps/#{APP_ID}/appAvailability?include=territoryAvailabilities&limit=200" -H "Authorization: Bearer #{token_text}"`
+    av = JSON.parse(avail_res) rescue { 'data' => nil }
+    available_new = av.dig('data', 'attributes', 'availableInNewTerritories')
+    terr_avails = av['included']&.select { |i| i['type'] == 'territoryAvailabilities' } || []
+    available_count = terr_avails.count { |ta| ta.dig('attributes', 'available') == true }
+    UI.message("  territoryAvailabilities total: #{terr_avails.size} (available=#{available_count})")
+    UI.message("  availableInNewTerritories: #{available_new}")
+    if available_count >= 1
+      ok << "Territories (#{available_count}/#{terr_avails.size} 地域 available, availableInNewTerritories=#{available_new})"
+    else
+      issues << "⚠⚠⚠ Territories EMPTY → 審査通過後も配信されない事故 (feedback_apple_submission_state_audit)"
+    end
+
+    # 7. App Privacy
+    UI.message("=== ⑦ App Privacy ===")
+    privacy_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{APP_ID}/appPrivacyDetails" -H "Authorization: Bearer #{token_text}"`
+    pd = JSON.parse(privacy_res) rescue { 'data' => nil }
+    UI.message("  Response (first 300): #{privacy_res[0..300]}")
+    if privacy_res.include?('"data"') && !privacy_res.include?('"data" : null')
+      ok << "App Privacy declaration submitted"
+    else
+      issues << "⚠ App Privacy NOT SET (kureho が ASC Web UI で「データを収集していません」選択必要)"
+    end
+
+    UI.message("")
+    UI.message("========== 監査結果 ==========")
+    UI.success("✓ OK (#{ok.count} 項目)")
+    ok.each { |o| UI.message("  ✓ #{o}") }
+    if issues.any?
+      UI.error("✗ ISSUES (#{issues.count} 項目)")
+      issues.each { |i| UI.error("  ✗ #{i}") }
+    else
+      UI.success("🎉 全項目クリア・提出可能")
+    end
+  end
+
   desc "Set Price ¥400 via raw ASC API (appPriceSchedules)"
   lane :set_price_raw do
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
@@ -721,5 +992,21 @@ platform :ios do
       end
     end
   end
+
+desc "territories check via v1"
+lane :verify_terr_v1 do
+  Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+    key_id: "8AQ38HX67R", issuer_id: "f75dec40-cdbc-4042-8faa-de413470def6",
+    filepath: File.expand_path("~/.appstoreconnect/private_keys/AuthKey_8AQ38HX67R.p8")
+  )
+  app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+  token = Spaceship::ConnectAPI.token.text
+  # v1 endpoint with sub-resource
+  res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}/appAvailabilityV2/availableTerritories?limit=200" -H "Authorization: Bearer #{token}"`
+  require 'json'
+  p = JSON.parse(res) rescue {}
+  UI.message("territories count: #{p.dig('data')&.size || 0}")
+  UI.message("first 5: #{p.dig('data')&.first(5)&.map{|t|t['id']}&.join(',')}")
+end
 
 end
