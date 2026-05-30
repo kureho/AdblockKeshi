@@ -361,6 +361,51 @@ platform :ios do
     end
   end
 
+  desc "Update App Store name (with ASO suffix) via ASC API"
+  lane :patch_app_name do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    token_text = Spaceship::ConnectAPI.token.text
+    require 'json'
+
+    new_name = "広告消し - Safari広告ブロック・アドブロック"
+    UI.message("New name: '#{new_name}' (#{new_name.length} chars)")
+    UI.user_error!("name exceeds 30 chars") if new_name.length > 30
+
+    # AppInfo → AppInfoLocalization (ja) の id を取得
+    info_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}/appInfos" -H "Authorization: Bearer #{token_text}"`
+    info_p = JSON.parse(info_res)
+    info = info_p['data'].find { |i| %w[PREPARE_FOR_SUBMISSION].include?(i.dig('attributes', 'appStoreState')) } || info_p['data'].first
+
+    loc_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/appInfos/#{info['id']}/appInfoLocalizations" -H "Authorization: Bearer #{token_text}"`
+    loc_p = JSON.parse(loc_res)
+    ja_loc = loc_p['data'].find { |l| l.dig('attributes', 'locale') == "ja" }
+    UI.user_error!("ja localization not found") unless ja_loc
+    UI.message("ja localization id: #{ja_loc['id']}")
+
+    # PATCH /v1/appInfoLocalizations/{id}
+    body = {
+      data: {
+        id: ja_loc['id'],
+        type: "appInfoLocalizations",
+        attributes: { name: new_name }
+      }
+    }
+    File.write("/tmp/name-body.json", JSON.generate(body))
+    res = `curl -sS -X PATCH "https://api.appstoreconnect.apple.com/v1/appInfoLocalizations/#{ja_loc['id']}" \
+      -H "Authorization: Bearer #{token_text}" \
+      -H "Content-Type: application/json" \
+      --data-binary @/tmp/name-body.json -w "\\nHTTP_STATUS:%{http_code}"`
+    UI.message("Response: #{res[0..400]}")
+    if res =~ /HTTP_STATUS:(200|204)/
+      UI.success("✓ App name updated to '#{new_name}'")
+    else
+      UI.error("✗ name update failed")
+    end
+  end
+
   desc "提出前全項目監査 (feedback_apple_submission_state_audit 4点 + 必須メタデータ)"
   lane :pre_submit_audit do
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(

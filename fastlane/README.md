@@ -87,6 +87,86 @@ Set Primary Category (UTILITIES)
 
 Set Price (¥400 = price point JPY 400)
 
+### ios attach_build
+
+```sh
+[bundle exec] fastlane ios attach_build
+```
+
+TestFlight build 1.0.0(3) を AppStoreVersion v1.0 に attach
+
+### ios set_territories
+
+```sh
+[bundle exec] fastlane ios set_territories
+```
+
+Set App Availability to all territories
+
+### ios patch_app_name
+
+```sh
+[bundle exec] fastlane ios patch_app_name
+```
+
+Update App Store name (with ASO suffix) via ASC API
+
+### ios pre_submit_audit
+
+```sh
+[bundle exec] fastlane ios pre_submit_audit
+```
+
+提出前全項目監査 (feedback_apple_submission_state_audit 4点 + 必須メタデータ)
+
+### ios set_price_raw
+
+```sh
+[bundle exec] fastlane ios set_price_raw
+```
+
+Set Price ¥400 via raw ASC API (appPriceSchedules)
+
+### ios set_category_raw
+
+```sh
+[bundle exec] fastlane ios set_category_raw
+```
+
+Set Primary Category UTILITIES via raw ASC API
+
+### ios set_age_rating_raw
+
+```sh
+[bundle exec] fastlane ios set_age_rating_raw
+```
+
+Set Age Rating (4+) via raw ASC API
+
+### ios create_review_info_adblockkeshi
+
+```sh
+[bundle exec] fastlane ios create_review_info_adblockkeshi
+```
+
+Create new App Review Information for AdblockKeshi via raw curl
+
+### ios migrate_all_review_info_to_corp
+
+```sh
+[bundle exec] fastlane ios migrate_all_review_info_to_corp
+```
+
+Migrate all apps' App Review Information to corp (info@kureho.app, Kureho/Support)
+
+### ios list_all_review_info
+
+```sh
+[bundle exec] fastlane ios list_all_review_info
+```
+
+List all apps' App Review Information (連絡先 一覧)
+
 ### ios patch_metadata
 
 ```sh
@@ -118,6 +198,14 @@ List TestFlight builds for the app
 ```
 
 Check current ASC state (versions / localizations / metadata)
+
+### ios verify_terr_v1
+
+```sh
+[bundle exec] fastlane ios verify_terr_v1
+```
+
+territories check via v1
 
 ----
 
