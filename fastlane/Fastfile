@@ -44,39 +44,43 @@ platform :ios do
   end
 
   # ============================================================
-  # 不可逆: App ID 登録 + ASC アプリ作成（kureho の GO サイン後のみ）
+  # 不可逆: bundle id 登録のみ（ASC アプリ作成は Web UI 手動・後述）
+  # ASC API は 'apps' リソースに対する CREATE をサポートしないため
   # ============================================================
-  desc "[不可逆] App ID + ASC アプリ作成"
-  lane :create_app do
-    produce(
-      app_identifier: "com.kureho.adblockkeshi",
-      app_name: "広告消し",
-      language: "ja-JP",
-      app_version: "1.0.0",
-      sku: "com.kureho.adblockkeshi.sku.001",
-      team_id: "L455WPL8QZ",
-      itc_team_id: "L455WPL8QZ",
-      skip_devcenter: false,
-      skip_itc: false,
-      enable_services: {
-        app_group: "on"
-      }
+  desc "[不可逆] bundle id 登録 (ASC API 経由・2FA不要)"
+  lane :register_bundle_ids do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID,
+      issuer_id: ISSUER_ID,
+      filepath: API_KEY_PATH
     )
 
-    # Extension の App ID
-    produce(
-      app_identifier: "com.kureho.adblockkeshi.blocker",
-      app_name: "広告消し Content Blocker",
-      language: "ja-JP",
-      sku: "com.kureho.adblockkeshi.blocker.sku.001",
-      team_id: "L455WPL8QZ",
-      itc_team_id: "L455WPL8QZ",
-      skip_devcenter: false,
-      skip_itc: true,  # Extension は ASC アプリ不要
-      enable_services: {
-        app_group: "on"
-      }
-    )
+    %w[com.kureho.adblockkeshi com.kureho.adblockkeshi.blocker].each do |bundle_id|
+      existing = Spaceship::ConnectAPI::BundleId.all.find { |b| b.identifier == bundle_id }
+      if existing
+        UI.message("✓ bundle id 既存: #{bundle_id} (id=#{existing.id})")
+      else
+        name = bundle_id == "com.kureho.adblockkeshi" ? "AdblockKeshi" : "AdblockKeshi ContentBlocker"
+        Spaceship::ConnectAPI::BundleId.create(
+          name: name,
+          identifier: bundle_id,
+          platform: "IOS",
+          seed_id: "L455WPL8QZ"
+        )
+        UI.success("✓ bundle id 新規作成: #{bundle_id}")
+      end
+    end
+
+    UI.message("")
+    UI.message("==== 次に kureho の手動操作 (約30秒) ====")
+    UI.message("ASC Web UI で新規アプリ作成:")
+    UI.message("  https://appstoreconnect.apple.com/apps")
+    UI.message("  → 「+」ボタン → 新規 App → iOS")
+    UI.message("  - 名前: 広告消し")
+    UI.message("  - 主要言語: 日本語")
+    UI.message("  - バンドルID: com.kureho.adblockkeshi (上記で登録済)")
+    UI.message("  - SKU: com.kureho.adblockkeshi.sku.001")
+    UI.message("  - ユーザーアクセス: 限定アクセス")
   end
 
   # ============================================================
