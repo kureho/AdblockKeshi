@@ -148,6 +148,31 @@ platform :ios do
     sh "python3 ../../tasks/scripts/audit_4points.py com.kureho.adblockkeshi || true"
   end
 
+  desc "Patch URLs directly via ASC API (bypass deliver's review_attachment_file bug)"
+  lane :patch_urls do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID,
+      issuer_id: ISSUER_ID,
+      filepath: API_KEY_PATH
+    )
+
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    versions = app.get_app_store_versions
+    target = versions.find { |v| v.app_store_state == "PREPARE_FOR_SUBMISSION" } || versions.first
+    UI.user_error!("editable version not found") unless target
+
+    locs = target.get_app_store_version_localizations
+    ja = locs.find { |l| l.locale == "ja" }
+    UI.user_error!("ja localization not found") unless ja
+
+    UI.message("Patching ja localization (id=#{ja.id})...")
+    ja.update(attributes: {
+      marketingUrl: "https://kureho.app/apps/adblock-keshi",
+      supportUrl: "https://kureho.app/contact?product=adblockkeshi"
+    })
+    UI.success("✓ URLs updated")
+  end
+
   desc "List TestFlight builds for the app"
   lane :list_builds do
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
