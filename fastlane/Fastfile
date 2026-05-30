@@ -239,6 +239,151 @@ platform :ios do
     UI.message("https://appstoreconnect.apple.com/apps/#{app.id}/pricing")
   end
 
+  desc "Create new App Review Information for AdblockKeshi via raw curl"
+  lane :create_review_info_adblockkeshi do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    target = app.get_app_store_versions(limit: 3).find { |v| v.app_store_state == "PREPARE_FOR_SUBMISSION" }
+    UI.user_error!("editable version not found") unless target
+    UI.message("target version: v#{target.version_string} (id=#{target.id})")
+
+    token_text = Spaceship::ConnectAPI.token.text
+    require 'json'
+    body = {
+      data: {
+        type: "appStoreReviewDetails",
+        attributes: {
+          contactFirstName: "Kureho",
+          contactLastName: "Support",
+          contactEmail: "info@kureho.app",
+          contactPhone: "+81-REDACTED",
+          demoAccountRequired: false,
+          notes: "本アプリは Safari Content Blocker です。Safari 設定 > 機能拡張 > 「広告消し」を ON にして https://adblock-tester.com を開くと広告ブロック動作が確認できます。アプリ内画面は最小構成で、設定項目はありません。"
+        },
+        relationships: {
+          appStoreVersion: {
+            data: { type: "appStoreVersions", id: target.id }
+          }
+        }
+      }
+    }
+    body_json = JSON.generate(body)
+    # tmp file 経由で curl にデータ渡す (escape 問題回避)
+    tmp = "/tmp/review-info-body.json"
+    File.write(tmp, body_json)
+    result = `curl -sS -X POST "https://api.appstoreconnect.apple.com/v1/appStoreReviewDetails" \
+      -H "Authorization: Bearer #{token_text}" \
+      -H "Content-Type: application/json" \
+      --data-binary @#{tmp} 2>&1`
+    UI.message("Response: #{result[0..500]}")
+    if result.include?('"errors"')
+      UI.error("Create failed")
+    else
+      UI.success("✓ Review Info created")
+    end
+  end
+
+  desc "Migrate all apps' App Review Information to corp (info@kureho.app, Kureho/Support)"
+  lane :migrate_all_review_info_to_corp do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+
+    corp_attrs = {
+      contactFirstName: "Kureho",
+      contactLastName: "Support",
+      contactEmail: "info@kureho.app"
+      # Phone は既存維持 (kureho 判断)
+      # Notes はアプリ固有なので維持
+    }
+
+    apps = Spaceship::ConnectAPI::App.all
+    UI.message("対象アプリ数: #{apps.count}")
+    success = []
+    failed = []
+
+    apps.each do |app|
+      UI.message("---------- #{app.name} ----------")
+      versions = app.get_app_store_versions(limit: 3)
+      # PREPARE_FOR_SUBMISSION / WAITING_FOR_REVIEW / READY_FOR_SALE の editable な最新
+      target = versions.find { |v| %w[PREPARE_FOR_SUBMISSION WAITING_FOR_REVIEW IN_REVIEW REJECTED DEVELOPER_REJECTED].include?(v.app_store_state) }
+      target ||= versions.first
+      if target.nil?
+        UI.message("  バージョン無し → skip")
+        next
+      end
+
+      UI.message("  target: v#{target.version_string} (#{target.app_store_state})")
+      begin
+        detail = target.fetch_app_store_review_detail
+        if detail
+          detail.update(attributes: corp_attrs)
+          UI.success("  ✓ updated (existing)")
+          success << "#{app.name} v#{target.version_string}"
+        else
+          UI.message("  Review Detail nil → skip (新規 ASC アプリのケース、別途作成必要)")
+          failed << "#{app.name} (nil detail)"
+        end
+      rescue => e
+        UI.error("  ✗ failed: #{e.message[0..120]}")
+        failed << "#{app.name}: #{e.message[0..80]}"
+      end
+    end
+
+    UI.message("")
+    UI.message("========== 結果 ==========")
+    UI.success("成功: #{success.count}")
+    success.each { |s| UI.message("  ✓ #{s}") }
+    UI.error("失敗: #{failed.count}") if failed.any?
+    failed.each { |f| UI.message("  ✗ #{f}") }
+  end
+
+  desc "List all apps' App Review Information (連絡先 一覧)"
+  lane :list_all_review_info do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+
+    apps = Spaceship::ConnectAPI::App.all
+    UI.message("総アプリ数: #{apps.count}")
+    UI.message("")
+
+    apps.each do |app|
+      UI.message("========== #{app.name} (#{app.bundle_id}) ==========")
+      versions = app.get_app_store_versions(limit: 5)
+      if versions.empty?
+        UI.message("  (バージョン無し)")
+        next
+      end
+
+      versions.each do |v|
+        begin
+          detail = v.fetch_app_store_review_detail
+          if detail.nil?
+            UI.message("  v#{v.version_string} (#{v.app_store_state}): (Review Detail 無し)")
+            next
+          end
+          UI.message("  v#{v.version_string} (#{v.app_store_state}):")
+          UI.message("    First:  #{detail.contact_first_name}")
+          UI.message("    Last:   #{detail.contact_last_name}")
+          UI.message("    Email:  #{detail.contact_email}")
+          UI.message("    Phone:  #{detail.contact_phone}")
+          UI.message("    DemoReq: #{detail.demo_account_required}")
+          UI.message("    DemoUser: #{detail.demo_account_name}")
+          notes = (detail.notes || "")[0..200]
+          UI.message("    Notes:  #{notes}")
+          break  # 最新1つだけで十分
+        rescue => e
+          UI.message("  v#{v.version_string} (#{v.app_store_state}): エラー (#{e.message[0..80]})")
+        end
+      end
+      UI.message("")
+    end
+  end
+
   desc "Patch description/keywords/url metadata directly (full text refresh)"
   lane :patch_metadata do
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
