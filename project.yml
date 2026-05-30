@@ -29,6 +29,11 @@ targets:
           UIColorName: ""
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+        UIBackgroundModes:
+          - fetch
+          - processing
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.kureho.adblockkeshi.filter-refresh
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kureho.adblockkeshi

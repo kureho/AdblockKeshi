@@ -1,0 +1,60 @@
+# NOTE: triggers are limited to schedule + workflow_dispatch.
+# If you ever add issue / PR / comment / repository_dispatch triggers,
+# DO NOT interpolate untrusted fields (github.event.issue.title etc.)
+# into `run:` directly. Use env: vars with $VAR + quoting.
+# See: https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+
+name: Monthly Filter Update
+
+on:
+  schedule:
+    - cron: '0 3 1 * *'  # 毎月1日 03:00 UTC (JST 12:00)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-filters:
+    runs-on: macos-latest  # SafariConverterLib (Swift) が macOS 必須
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Clone and build SafariConverterLib
+        run: |
+          mkdir -p scripts/converter-build
+          cd scripts/converter-build
+          git clone --depth 1 https://github.com/AdguardTeam/SafariConverterLib.git
+          cd SafariConverterLib
+          swift build -c release
+
+      - name: Install Python dependencies
+        run: python3 -m pip install --user pyyaml
+
+      - name: Run conversion
+        run: bash scripts/convert.sh
+
+      - name: Detect diff
+        id: diff
+        run: |
+          if git diff --quiet docs/cdn/; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No filter changes detected."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Changes detected, will commit and push."
+          fi
+
+      - name: Commit and push
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/cdn/
+          git commit -m "chore(filter): monthly auto-update $(date -u +%Y-%m-%d)"
+          git push

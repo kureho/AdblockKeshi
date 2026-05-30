@@ -1,10 +1,12 @@
 import SwiftUI
+import SafariServices
 
 struct ContentView: View {
     @State private var blockerState: BlockerState = .disabled
     @State private var isChecking: Bool = false
 
     private let checker = ContentBlockerStateChecker()
+    private let extensionIdentifier = "com.kureho.adblockkeshi.blocker"
 
     var body: some View {
         NavigationStack {
@@ -25,6 +27,9 @@ struct ContentView: View {
                 }
             }
         }
+        .task {
+            await downloadAndReload()
+        }
         .onAppear(perform: refreshState)
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
             refreshState()
@@ -44,6 +49,26 @@ struct ContentView: View {
     private func openAppSettings() {
         if let url = URL(string: UIApplication.openSettingsURLString) {
             UIApplication.shared.open(url)
+        }
+    }
+
+    private func downloadAndReload() async {
+        do {
+            let downloader = FilterDownloader()
+            let bytes = try await downloader.downloadAndStore()
+            print("[FilterDownloader] downloaded \(bytes) bytes")
+            SFContentBlockerManager.reloadContentBlocker(
+                withIdentifier: extensionIdentifier
+            ) { error in
+                if let error = error {
+                    print("[reload] error: \(error.localizedDescription)")
+                } else {
+                    print("[reload] success")
+                    refreshState()
+                }
+            }
+        } catch {
+            print("[FilterDownloader] failed: \(error.localizedDescription). Bundle fallback active.")
         }
     }
 }
