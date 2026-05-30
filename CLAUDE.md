@@ -2,7 +2,7 @@
 
 ## プロダクト
 - iOS Safari Content Blocker、買い切り ¥400、シンプル極限訴求
-- ターゲット: 「アドブロック」を知らない、Safariで広告にイライラしてる層
+- ターゲット: 「アドブロック」という言葉を知らない、Safari をもっと快適に使いたい層
 - spec: `~/claude/docs/superpowers/specs/2026-05-30-adblock-design.md`
 
 ## 開発ルール

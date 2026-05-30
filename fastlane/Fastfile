@@ -239,6 +239,37 @@ platform :ios do
     UI.message("https://appstoreconnect.apple.com/apps/#{app.id}/pricing")
   end
 
+  desc "Patch description/keywords/url metadata directly (full text refresh)"
+  lane :patch_metadata do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    versions = app.get_app_store_versions
+    target = versions.find { |v| v.app_store_state == "PREPARE_FOR_SUBMISSION" } || versions.first
+    UI.user_error!("editable version not found") unless target
+
+    locs = target.get_app_store_version_localizations
+    ja = locs.find { |l| l.locale == "ja" }
+    UI.user_error!("ja localization not found") unless ja
+
+    desc_text = File.read("metadata/ja/description.txt").strip
+    kw_text   = File.read("metadata/ja/keywords.txt").strip
+    rn_text   = File.read("metadata/ja/release_notes.txt").strip
+    mkt_url   = File.read("metadata/ja/marketing_url.txt").strip
+    sup_url   = File.read("metadata/ja/support_url.txt").strip
+    UI.message("description len=#{desc_text.length}, keywords len=#{kw_text.length}")
+
+    # whatsNew は初回バージョンで編集不可 → 除外
+    ja.update(attributes: {
+      description: desc_text,
+      keywords: kw_text,
+      marketingUrl: mkt_url,
+      supportUrl: sup_url
+    })
+    UI.success("✓ description / keywords / urls 更新完了")
+  end
+
   desc "Patch URLs directly via ASC API (bypass deliver's review_attachment_file bug)"
   lane :patch_urls do
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(

@@ -63,6 +63,46 @@ Submit screenshots only (after generation)
 
 Run 4-point audit (review/availability/price/IAP)
 
+### ios clone_review_info
+
+```sh
+[bundle exec] fastlane ios clone_review_info
+```
+
+Clone Review Information from an existing app (StillCam) to AdblockKeshi
+
+### ios set_category
+
+```sh
+[bundle exec] fastlane ios set_category
+```
+
+Set Primary Category (UTILITIES)
+
+### ios set_price
+
+```sh
+[bundle exec] fastlane ios set_price
+```
+
+Set Price (¥400 = price point JPY 400)
+
+### ios patch_metadata
+
+```sh
+[bundle exec] fastlane ios patch_metadata
+```
+
+Patch description/keywords/url metadata directly (full text refresh)
+
+### ios patch_urls
+
+```sh
+[bundle exec] fastlane ios patch_urls
+```
+
+Patch URLs directly via ASC API (bypass deliver's review_attachment_file bug)
+
 ### ios list_builds
 
 ```sh
