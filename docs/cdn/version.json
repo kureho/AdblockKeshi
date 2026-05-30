@@ -1,0 +1,28 @@
+{
+  "generated_at": "2026-05-30T07:28:20Z",
+  "rule_count": 150000,
+  "size_bytes": 23850776,
+  "blocker_list_sha256": "6c9252e5c42468baabddb911a28edcf8fa69eaa0855fbba7cdc726681852cd77",
+  "filters": [
+    {
+      "name": "easylist",
+      "license": "CC-BY-SA-3.0"
+    },
+    {
+      "name": "easyprivacy",
+      "license": "CC-BY-SA-3.0"
+    },
+    {
+      "name": "adguard-base",
+      "license": "GPL-3.0"
+    },
+    {
+      "name": "adguard-japanese",
+      "license": "GPL-3.0"
+    },
+    {
+      "name": "adguard-annoyances",
+      "license": "GPL-3.0"
+    }
+  ]
+}

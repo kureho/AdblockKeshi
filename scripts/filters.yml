@@ -1,0 +1,16 @@
+filters:
+  - name: easylist
+    url: https://easylist.to/easylist/easylist.txt
+    license: CC-BY-SA-3.0
+  - name: easyprivacy
+    url: https://easylist.to/easylist/easyprivacy.txt
+    license: CC-BY-SA-3.0
+  - name: adguard-base
+    url: https://filters.adtidy.org/extension/safari/filters/2.txt
+    license: GPL-3.0
+  - name: adguard-japanese
+    url: https://filters.adtidy.org/extension/safari/filters/7.txt
+    license: GPL-3.0
+  - name: adguard-annoyances
+    url: https://filters.adtidy.org/extension/safari/filters/14.txt
+    license: GPL-3.0

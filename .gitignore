@@ -33,3 +33,6 @@ fastlane/test_output
 *.cer
 *.mobileprovision
 AuthKey_*.p8
+
+# SafariConverterLib build artifacts (rebuilt per env)
+scripts/converter-build/
