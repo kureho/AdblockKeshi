@@ -4,11 +4,11 @@ URL: https://appstoreconnect.apple.com/apps/6774906945
 
 ## 1. App Review Information (App 情報 → App Review Information)
 
-StillCam 4K で使ってる値を**そのまま入力**:
+法人 KUREHO の連絡先で入力（個人情報は使わない / `feedback_corp_review_info_only` 遵守）:
 - First Name: Kureho
 - Last Name: Support
 - Email: info@kureho.app
-- Phone: (StillCam 4K と同じ番号)
+- Phone: 法人代表電話
 - Demo Account Required: OFF
 - Notes:
   ```
@@ -67,4 +67,3 @@ ChatGPT で 5 枚生成 → `fastlane/screenshots/ja/` に配置 → 私が `fas
 - Apple ASC API は AppStoreReviewDetail / Category / Privacy の POST/PATCH 対応が不完全
 - fastlane Spaceship gem も対応してない
 - ASC Web UI で 5分やる方が、API 探索に 30分使うより早い
-- (Review Info の値だけは私が StillCam から既に取得済: phone +81***40, email info@kureho.app)
