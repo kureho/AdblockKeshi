@@ -148,6 +148,97 @@ platform :ios do
     sh "python3 ../../tasks/scripts/audit_4points.py com.kureho.adblockkeshi || true"
   end
 
+  desc "Clone Review Information from an existing app (StillCam) to AdblockKeshi"
+  lane :clone_review_info do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+
+    # Source: StillCam 4K (id=6760555855) の最新 version の Review Detail
+    source_app = Spaceship::ConnectAPI::App.find("com.Kureho.MannerCamera4K")
+    UI.user_error!("source app not found") unless source_app
+    src_versions = source_app.get_app_store_versions
+    src_target = src_versions.find { |v| v.app_store_state == "READY_FOR_SALE" } || src_versions.first
+    src_detail = src_target.fetch_app_store_review_detail
+    UI.message("Source review detail (StillCam):")
+    UI.message("  email: #{src_detail.contact_email}")
+    UI.message("  phone: #{src_detail.contact_phone[0..2]}***#{src_detail.contact_phone[-2..-1]} (masked)")
+    UI.message("  first: #{src_detail.contact_first_name}")
+    UI.message("  last:  #{src_detail.contact_last_name}")
+
+    # Target: AdblockKeshi
+    target_app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    target_versions = target_app.get_app_store_versions
+    target_v = target_versions.find { |v| v.app_store_state == "PREPARE_FOR_SUBMISSION" } || target_versions.first
+    UI.user_error!("editable version not found") unless target_v
+
+    attrs = {
+      contactFirstName: src_detail.contact_first_name,
+      contactLastName: src_detail.contact_last_name,
+      contactEmail: src_detail.contact_email,
+      contactPhone: src_detail.contact_phone,
+      demoAccountRequired: false,
+      notes: "本アプリは Safari Content Blocker です。Safari 設定 > 機能拡張 > 「広告消し」を ON にして adblock-tester.com を開くと広告ブロック動作が確認できます。アプリ内画面は最小構成で、設定項目はありません。"
+    }
+
+    begin
+      existing = target_v.fetch_app_store_review_detail
+      existing.update(attributes: attrs)
+      UI.success("✓ Review Information updated (existing)")
+    rescue => e
+      # 新規作成: Tunes クライアント経由で raw POST
+      UI.message("Existing not found (#{e.message[0..100]}). Creating new via Tunes client...")
+      body = {
+        data: {
+          type: "appStoreReviewDetails",
+          attributes: attrs,
+          relationships: {
+            appStoreVersion: {
+              data: { type: "appStoreVersions", id: target_v.id }
+            }
+          }
+        }
+      }
+      Spaceship::ConnectAPI::Tunes.client.post("appStoreReviewDetails", body)
+      UI.success("✓ Review Information created (Tunes raw POST)")
+    end
+  end
+
+  desc "Set Primary Category (UTILITIES)"
+  lane :set_category do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    app_info = app.fetch_edit_app_info || app.fetch_live_app_info
+    UI.user_error!("app_info not found") unless app_info
+
+    # Primary Category = UTILITIES
+    app_info.update_categories(
+      primary_category_id: "UTILITIES"
+    )
+    UI.success("✓ Primary Category = UTILITIES")
+  end
+
+  desc "Set Price (¥400 = price point JPY 400)"
+  lane :set_price do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+
+    # 新しい価格 API: AppPricePoint / AppPriceSchedule
+    # ¥400 = USD$2.99 相当 = tier 3 相当 (旧)
+    # 直接 fastlane action を使う
+    versions = app.get_app_store_versions
+    target = versions.find { |v| v.app_store_state == "PREPARE_FOR_SUBMISSION" } || versions.first
+    UI.message("Setting price for version #{target.version_string}...")
+
+    # ASC Web UI で行う方が確実な領域なので注意ログ
+    UI.important("価格設定は ASC Web UI 推奨。fastlane deliver の price_tier 4 (=¥400) を使うか、ASC で手動設定")
+    UI.message("https://appstoreconnect.apple.com/apps/#{app.id}/pricing")
+  end
+
   desc "Patch URLs directly via ASC API (bypass deliver's review_attachment_file bug)"
   lane :patch_urls do
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
