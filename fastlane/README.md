@@ -23,13 +23,13 @@ For _fastlane_ installation instructions, see [Installing _fastlane_](https://do
 
 ASC API key で接続テスト（既存アプリ一覧取得・副作用なし）
 
-### ios create_app
+### ios register_bundle_ids
 
 ```sh
-[bundle exec] fastlane ios create_app
+[bundle exec] fastlane ios register_bundle_ids
 ```
 
-[不可逆] App ID + ASC アプリ作成
+[不可逆] bundle id 登録 (ASC API 経由・2FA不要)
 
 ### ios beta
 
@@ -45,7 +45,15 @@ Build, archive, upload to TestFlight
 [bundle exec] fastlane ios submit_metadata
 ```
 
-Submit metadata + screenshots (does NOT submit for review)
+Submit text metadata only (no screenshots, no binary, no review submission)
+
+### ios submit_screenshots
+
+```sh
+[bundle exec] fastlane ios submit_screenshots
+```
+
+Submit screenshots only (after generation)
 
 ### ios audit
 
@@ -54,6 +62,22 @@ Submit metadata + screenshots (does NOT submit for review)
 ```
 
 Run 4-point audit (review/availability/price/IAP)
+
+### ios list_builds
+
+```sh
+[bundle exec] fastlane ios list_builds
+```
+
+List TestFlight builds for the app
+
+### ios check_state
+
+```sh
+[bundle exec] fastlane ios check_state
+```
+
+Check current ASC state (versions / localizations / metadata)
 
 ----
 
