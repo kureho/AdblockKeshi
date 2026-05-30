@@ -1,4 +1,9 @@
 filters:
+  # 検証経緯:
+  # - 旧 5本構成 (easylist 先頭, annoyances 末尾): yahoo.co.jp 70 / popin 11 (グローバル強・JP弱)
+  # - 試行: adguard-japanese 先頭にしたら yahoo.co.jp 70→0 で改悪
+  # - 結論: Annoyances (4MB cosmetic ルール) が大量に枠を奪ってる
+  #   → Annoyances を外して 4本構成で 150k 上限内に main rule をフィット
   - name: easylist
     url: https://easylist.to/easylist/easylist.txt
     license: CC-BY-SA-3.0
@@ -10,7 +15,4 @@ filters:
     license: GPL-3.0
   - name: adguard-japanese
     url: https://filters.adtidy.org/extension/safari/filters/7.txt
-    license: GPL-3.0
-  - name: adguard-annoyances
-    url: https://filters.adtidy.org/extension/safari/filters/14.txt
     license: GPL-3.0
