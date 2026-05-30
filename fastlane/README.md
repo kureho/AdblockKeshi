@@ -103,6 +103,30 @@ TestFlight build 1.0.0(3) を AppStoreVersion v1.0 に attach
 
 Set App Availability to all territories
 
+### ios set_secondary_category
+
+```sh
+[bundle exec] fastlane ios set_secondary_category
+```
+
+Set Secondary Category PRODUCTIVITY
+
+### ios patch_promo_desc_kw
+
+```sh
+[bundle exec] fastlane ios patch_promo_desc_kw
+```
+
+Patch promotional_text + extended description + keywords
+
+### ios compare_with_other_apps
+
+```sh
+[bundle exec] fastlane ios compare_with_other_apps
+```
+
+AdblockKeshi vs 他アプリの全メタデータ差分監査
+
 ### ios patch_app_name
 
 ```sh

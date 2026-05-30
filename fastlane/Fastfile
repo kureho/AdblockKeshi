@@ -361,6 +361,118 @@ platform :ios do
     end
   end
 
+  desc "Set Secondary Category PRODUCTIVITY"
+  lane :set_secondary_category do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    token_text = Spaceship::ConnectAPI.token.text
+    require 'json'
+
+    info_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}/appInfos" -H "Authorization: Bearer #{token_text}"`
+    info_p = JSON.parse(info_res)
+    info = info_p['data'].find { |i| %w[PREPARE_FOR_SUBMISSION].include?(i.dig('attributes', 'appStoreState')) } || info_p['data'].first
+
+    body = {
+      data: {
+        id: info['id'],
+        type: "appInfos",
+        relationships: {
+          secondaryCategory: { data: { type: "appCategories", id: "PRODUCTIVITY" } }
+        }
+      }
+    }
+    File.write("/tmp/scat-body.json", JSON.generate(body))
+    res = `curl -sS -X PATCH "https://api.appstoreconnect.apple.com/v1/appInfos/#{info['id']}" \
+      -H "Authorization: Bearer #{token_text}" \
+      -H "Content-Type: application/json" \
+      --data-binary @/tmp/scat-body.json -w "\\nHTTP_STATUS:%{http_code}"`
+    UI.message("Response: #{res[0..300]}")
+    if res =~ /HTTP_STATUS:(200|204)/
+      UI.success("✓ Secondary Category = PRODUCTIVITY")
+    else
+      UI.error("✗ Secondary Category failed")
+    end
+  end
+
+  desc "Patch promotional_text + extended description + keywords"
+  lane :patch_promo_desc_kw do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    target = app.get_app_store_versions(limit: 3).find { |v| v.app_store_state == "PREPARE_FOR_SUBMISSION" }
+    ja = target.get_app_store_version_localizations.find { |l| l.locale == "ja" }
+    promo = File.read("metadata/ja/promotional_text.txt").strip
+    desc = File.read("metadata/ja/description.txt").strip
+    kw = File.read("metadata/ja/keywords.txt").strip
+    UI.message("promo: #{promo.length} (170max), desc: #{desc.length} (4000max), kw: #{kw.length} (100max)")
+    UI.user_error!("promo > 170") if promo.length > 170
+    UI.user_error!("kw > 100") if kw.length > 100
+    ja.update(attributes: {
+      promotionalText: promo,
+      description: desc,
+      keywords: kw
+    })
+    UI.success("✓ promo/desc/keywords 更新完了")
+  end
+
+  desc "AdblockKeshi vs 他アプリの全メタデータ差分監査"
+  lane :compare_with_other_apps do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+    token = Spaceship::ConnectAPI.token.text
+    require 'json'
+
+    apps = Spaceship::ConnectAPI::App.all
+    UI.message("=== 全アプリ メタデータ比較 ===\n")
+
+    apps.each do |app|
+      bundle_short = app.bundle_id.sub(/^com\.[Kk]ureho\.?/, "")
+      puts "----- #{bundle_short.ljust(25)} (#{app.name}) -----"
+
+      # AppInfo
+      info_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}/appInfos?include=primaryCategory,secondaryCategory" -H "Authorization: Bearer #{token}"`
+      info_p = JSON.parse(info_res) rescue {}
+      info = info_p['data']&.find { |i| %w[PREPARE_FOR_SUBMISSION].include?(i.dig('attributes', 'appStoreState')) } || info_p['data']&.first
+      primary = info&.dig('relationships', 'primaryCategory', 'data', 'id') || "-"
+      secondary = info&.dig('relationships', 'secondaryCategory', 'data', 'id') || "-"
+
+      # AppInfoLocalization (ja) → name / subtitle / privacy policy URL
+      loc_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/appInfos/#{info['id']}/appInfoLocalizations" -H "Authorization: Bearer #{token}"` rescue ""
+      loc_p = JSON.parse(loc_res) rescue {}
+      ja_info = loc_p['data']&.find { |l| l.dig('attributes', 'locale') == "ja" }
+      name = ja_info&.dig('attributes', 'name') || "-"
+      subtitle = ja_info&.dig('attributes', 'subtitle') || "-"
+      pp_url = ja_info&.dig('attributes', 'privacyPolicyUrl') || "-"
+
+      # AppStoreVersion (latest editable or live) → description/keywords/marketingUrl/supportUrl/promotionalText
+      vers = app.get_app_store_versions(limit: 3)
+      v = vers.find { |x| %w[PREPARE_FOR_SUBMISSION WAITING_FOR_REVIEW READY_FOR_SALE].include?(x.app_store_state) } || vers.first
+      vja = v&.get_app_store_version_localizations&.find { |l| l.locale == "ja" }
+      desc_len = (vja&.description || "").length
+      kw = vja&.keywords || ""
+      kw_len = kw.length
+      promo = vja&.promotional_text || ""
+      promo_len = promo.length
+      mkt_url = vja&.marketing_url || "-"
+      sup_url = vja&.support_url || "-"
+
+      puts "  name       : #{name} (#{name.length} chars)"
+      puts "  subtitle   : #{subtitle}"
+      puts "  primary    : #{primary} / secondary: #{secondary}"
+      puts "  description: #{desc_len} chars"
+      puts "  keywords   : #{kw_len} chars: #{kw[0..60]}..."
+      puts "  promo_text : #{promo_len} chars: #{promo[0..60]}"
+      puts "  mkt_url    : #{mkt_url}"
+      puts "  sup_url    : #{sup_url}"
+      puts "  pp_url(loc): #{pp_url}"
+      puts ""
+    end
+  end
+
   desc "Update App Store name (with ASO suffix) via ASC API"
   lane :patch_app_name do
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
