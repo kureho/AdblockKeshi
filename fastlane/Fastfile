@@ -361,6 +361,117 @@ platform :ios do
     end
   end
 
+  desc "Set Content Rights Declaration (no third party content)"
+  lane :set_content_rights do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    token_text = Spaceship::ConnectAPI.token.text
+    require 'json'
+
+    # AppInfo 取得
+    info_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}/appInfos" -H "Authorization: Bearer #{token_text}"`
+    info_p = JSON.parse(info_res)
+    info = info_p['data'].find { |i| %w[PREPARE_FOR_SUBMISSION].include?(i.dig('attributes', 'appStoreState')) } || info_p['data'].first
+
+    # /v1/apps/{id} resource に PATCH (appInfos でなく apps)
+    candidates = ["DOES_NOT_USE_THIRD_PARTY_CONTENT", "USES_THIRD_PARTY_CONTENT"]
+    success = false
+    candidates.each do |val|
+      body = {
+        data: {
+          id: app.id,
+          type: "apps",
+          attributes: { contentRightsDeclaration: val }
+        }
+      }
+      File.write("/tmp/cr-body.json", JSON.generate(body))
+      res = `curl -sS -X PATCH "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}" \
+        -H "Authorization: Bearer #{token_text}" \
+        -H "Content-Type: application/json" \
+        --data-binary @/tmp/cr-body.json -w "\\nHTTP_STATUS:%{http_code}"`
+      UI.message("--- attempt '#{val}' ---")
+      UI.message(res[0..500])
+      if res =~ /HTTP_STATUS:(200|204)/
+        UI.success("✓ contentRightsDeclaration = #{val}")
+        success = true
+        break
+      end
+    end
+    UI.error("✗ all candidates failed") unless success
+  end
+
+  desc "スクショ + メタデータ最終全件確認"
+  lane :final_check do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: KEY_ID, issuer_id: ISSUER_ID, filepath: API_KEY_PATH
+    )
+    app = Spaceship::ConnectAPI::App.find("com.kureho.adblockkeshi")
+    token = Spaceship::ConnectAPI.token.text
+    require 'json'
+
+    target = app.get_app_store_versions(limit: 3).find { |v| v.app_store_state == "PREPARE_FOR_SUBMISSION" }
+    ja = target.get_app_store_version_localizations.find { |l| l.locale == "ja" }
+
+    # スクショ詳細
+    ss_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/appStoreVersionLocalizations/#{ja.id}/appScreenshotSets?include=appScreenshots" -H "Authorization: Bearer #{token}"`
+    ssp = JSON.parse(ss_res)
+    UI.message("=== Screenshot Sets ===")
+    (ssp['data'] || []).each do |s|
+      type = s.dig('attributes', 'screenshotDisplayType')
+      ss_ids = (s.dig('relationships', 'appScreenshots', 'data') || []).map { |x| x['id'] }
+      UI.message("  set #{type}: #{ss_ids.size} screenshots")
+    end
+    img_count = (ssp['included'] || []).count { |i| i['type'] == 'appScreenshots' }
+    UI.message("Total screenshot files: #{img_count}")
+
+    # Build 詳細
+    builds_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}/builds?limit=5&sort=-uploadedDate" -H "Authorization: Bearer #{token}"`
+    bs = JSON.parse(builds_res)
+    UI.message("=== Builds ===")
+    bs['data']&.each do |b|
+      UI.message("  v#{b.dig('attributes', 'version')} #{b.dig('attributes', 'processingState')} usesNonExempt=#{b.dig('attributes', 'usesNonExemptEncryption').inspect}")
+    end
+
+    # Attached build
+    attach_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/appStoreVersions/#{target.id}/build" -H "Authorization: Bearer #{token}"`
+    ap = JSON.parse(attach_res)
+    UI.message("=== Attached build to v#{target.version_string} ===")
+    UI.message("  build id: #{ap.dig('data', 'id') || '(not attached)'}")
+
+    # Pricing
+    UI.message("=== Pricing ===")
+    price_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}/appPriceSchedule?include=manualPrices" -H "Authorization: Bearer #{token}"`
+    pp = JSON.parse(price_res)
+    UI.message("  price schedule id: #{pp.dig('data', 'id') || '(none)'}")
+    (pp['included'] || []).each do |inc|
+      UI.message("  - #{inc['type']}: #{inc['id']} attrs=#{inc['attributes']}") if inc['type'] == 'appPrices'
+    end
+
+    # Territories (try /v1/apps/{id}/appAvailabilityV2/availableTerritories)
+    UI.message("=== Territories (sub-resource via v1) ===")
+    terr_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}/appAvailabilityV2/availableTerritories?limit=200" -H "Authorization: Bearer #{token}"`
+    tp = JSON.parse(terr_res) rescue {}
+    UI.message("  data count: #{(tp['data'] || []).size}")
+
+    # In-App Purchases (該当しないはずだが念のため)
+    UI.message("=== In-App Purchases (should be empty) ===")
+    iap_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}/inAppPurchasesV2" -H "Authorization: Bearer #{token}"`
+    ip = JSON.parse(iap_res) rescue {}
+    UI.message("  IAP count: #{(ip['data'] || []).size}")
+
+    # Subscriptions
+    sub_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}/subscriptionGroups" -H "Authorization: Bearer #{token}"`
+    sp = JSON.parse(sub_res) rescue {}
+    UI.message("  Subscription groups: #{(sp['data'] || []).size}")
+
+    # Game Center
+    gc_res = `curl -sS "https://api.appstoreconnect.apple.com/v1/apps/#{app.id}/gameCenterDetail" -H "Authorization: Bearer #{token}"`
+    UI.message("=== Game Center (should be empty) ===")
+    UI.message("  Response[0..150]: #{gc_res[0..150]}")
+  end
+
   desc "Set Secondary Category PRODUCTIVITY"
   lane :set_secondary_category do
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(

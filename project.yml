@@ -8,7 +8,7 @@ settings:
   base:
     DEVELOPMENT_TEAM: L455WPL8QZ
     MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: "4"
+    CURRENT_PROJECT_VERSION: "5"
     SWIFT_VERSION: "5.10"
     CODE_SIGN_STYLE: Automatic
     TARGETED_DEVICE_FAMILY: "1"  # iPhone only (iPad multitasking 対応不要にする)
@@ -30,11 +30,9 @@ targets:
           UIColorName: ""
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        "UISupportedInterfaceOrientations~ipad":
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationPortraitUpsideDown
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
+        # iPhone only (Info.plist で明示)。~ipad の orientation 宣言は外す → iPad 対応扱いを避ける
+        UIDeviceFamily:
+          - 1
         UIBackgroundModes:
           - fetch
           - processing
@@ -45,6 +43,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kureho.adblockkeshi
         CODE_SIGN_ENTITLEMENTS: App/App.entitlements
+        TARGETED_DEVICE_FAMILY: "1"  # iPhone only (target level でも厳密化)
     dependencies:
       - target: ContentBlockerExtension
         embed: true
