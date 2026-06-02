@@ -1,0 +1,39 @@
+[
+    {
+        "action": {
+            "type": "block"
+        },
+        "trigger": {
+            "url-filter": ".*",
+            "if-domain": [
+                "doubleclick.net",
+                "googlesyndication.com",
+                "googleadservices.com",
+                "google-analytics.com",
+                "adservice.google.com",
+                "amazon-adsystem.com",
+                "advertising.com",
+                "adnxs.com",
+                "adsrvr.org",
+                "criteo.com",
+                "criteo.net",
+                "rubiconproject.com",
+                "openx.net",
+                "pubmatic.com"
+            ]
+        }
+    },
+    {
+        "action": {
+            "type": "block-cookies"
+        },
+        "trigger": {
+            "url-filter": ".*",
+            "if-domain": [
+                "doubleclick.net",
+                "googlesyndication.com",
+                "google-analytics.com"
+            ]
+        }
+    }
+]
