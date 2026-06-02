@@ -1,0 +1,5 @@
+# Phishing.Database sample fixture
+phish-example-1.tk
+phish-example-2.ml
+google.com
+unverified-phish.example

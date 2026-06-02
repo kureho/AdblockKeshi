@@ -36,3 +36,8 @@ AuthKey_*.p8
 
 # SafariConverterLib build artifacts (rebuilt per env)
 scripts/converter-build/
+
+# Python cache
+scripts/__pycache__/
+scripts/tests/__pycache__/
+scripts/.pytest_cache/
