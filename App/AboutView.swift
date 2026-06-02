@@ -29,6 +29,22 @@ struct AboutView: View {
 
                 Divider()
 
+                Text("セキュリティルール提供（v2.0〜）")
+                    .font(.headline)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("• URLhaus by abuse.ch (CC0 1.0)")
+                    Text("• Phishing.Database by Mitchell Krog (MIT)")
+                }
+                .font(.body)
+                Text("Malware data: URLhaus (https://urlhaus.abuse.ch/)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text("Phishing data: Phishing.Database (https://github.com/mitchellkrogza/Phishing.Database)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Divider()
+
                 Text("ライセンス全文")
                     .font(.headline)
                 NavigationLink("EasyList (CC-BY-SA-3.0)") {
@@ -39,6 +55,9 @@ struct AboutView: View {
                 }
                 NavigationLink("SafariConverterLib") {
                     LicenseTextView(title: "SafariConverterLib", filename: "SafariConverterLib-LICENSE")
+                }
+                NavigationLink("Phishing.Database (MIT)") {
+                    LicenseTextView(title: "MIT", filename: "PhishingDatabase-MIT")
                 }
 
                 Spacer()
