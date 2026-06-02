@@ -1,0 +1,108 @@
+# NOTE: triggers limited to schedule + workflow_dispatch.
+# Do NOT add issue / PR / repository_dispatch triggers without sanitizing untrusted fields.
+# See: https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+name: Weekly Security Rules Update
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # 毎週日曜 0:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-security-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch URLhaus host file (public, no auth required)
+        run: |
+          curl -fsSL "https://urlhaus.abuse.ch/downloads/hostfile/" \
+            -o /tmp/urlhaus-hosts.txt
+          echo "URLhaus lines: $(wc -l < /tmp/urlhaus-hosts.txt)"
+
+      - name: Fetch Phishing.Database active domains (public, no auth required)
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/mitchellkrogza/Phishing.Database/master/phishing-domains-ACTIVE.txt" \
+            -o /tmp/phishing-db-active.txt
+          echo "Phishing.Database lines: $(wc -l < /tmp/phishing-db-active.txt)"
+
+      - name: Fetch Tranco top 1M
+        run: |
+          LATEST_ID=$(curl -fsSL "https://tranco-list.eu/api/lists/date/latest" | python3 -c "import sys, json; print(json.load(sys.stdin)['list_id'])")
+          curl -fsSL "https://tranco-list.eu/download/${LATEST_ID}/1000000" \
+            -o /tmp/tranco-top-1m.csv
+          echo "Tranco lines: $(wc -l < /tmp/tranco-top-1m.csv)"
+
+      - name: Build security-rules.json
+        run: |
+          python3 scripts/build_security_rules.py \
+            --urlhaus /tmp/urlhaus-hosts.txt \
+            --phishing-db /tmp/phishing-db-active.txt \
+            --tranco /tmp/tranco-top-1m.csv \
+            --output /tmp/security-rules.json \
+            --limit 30000
+
+      - name: Build empty-rules.json
+        run: |
+          python3 scripts/build_empty_rules.py --output /tmp/empty-rules.json
+
+      - name: Download current ad-rules from CDN
+        run: |
+          # ad-rules.json は monthly-filter-update.yml が生成する。
+          # 同じ CDN に存在する前提（無ければ空配列 fallback）
+          curl -fsSL "https://kureho.github.io/AdblockKeshi/cdn/blockerList.json" \
+            -o /tmp/ad-rules.json || echo "[]" > /tmp/ad-rules.json
+          echo "ad-rules size: $(wc -c < /tmp/ad-rules.json)"
+
+      - name: Build merged-rules.json
+        run: |
+          python3 scripts/build_merged_rules.py \
+            --ad /tmp/ad-rules.json \
+            --security /tmp/security-rules.json \
+            --output /tmp/merged-rules.json \
+            --limit 130000
+
+      - name: Compute SHAs and prepare version manifest
+        run: |
+          mkdir -p /tmp/cdn
+          for name in security-rules merged-rules empty-rules; do
+            cp /tmp/${name}.json /tmp/cdn/${name}.json
+          done
+          python3 - <<'PY'
+          import json, hashlib, datetime
+          from pathlib import Path
+          out = {}
+          for name in ['security-rules', 'merged-rules', 'empty-rules']:
+              data = Path(f'/tmp/cdn/{name}.json').read_bytes()
+              out[name + '_sha256'] = hashlib.sha256(data).hexdigest()
+              out[name + '_bytes'] = len(data)
+          out['generated_at'] = datetime.datetime.utcnow().isoformat() + 'Z'
+          Path('/tmp/cdn/version-security.json').write_text(json.dumps(out, indent=2))
+          print(json.dumps(out, indent=2))
+          PY
+
+      - name: Deploy to gh-pages CDN
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: /tmp/cdn
+          destination_dir: cdn
+          keep_files: true  # 既存 blockerList.json などを保持
+          commit_message: "Update security rules (weekly)"
+          user_name: "github-actions[bot]"
+          user_email: "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Security rules build FAILED. CDN keeps previous version."

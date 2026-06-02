@@ -103,6 +103,22 @@ TestFlight build 1.0.0(3) を AppStoreVersion v1.0 に attach
 
 Set App Availability to all territories
 
+### ios set_content_rights
+
+```sh
+[bundle exec] fastlane ios set_content_rights
+```
+
+Set Content Rights Declaration (no third party content)
+
+### ios final_check
+
+```sh
+[bundle exec] fastlane ios final_check
+```
+
+スクショ + メタデータ最終全件確認
+
 ### ios set_secondary_category
 
 ```sh
