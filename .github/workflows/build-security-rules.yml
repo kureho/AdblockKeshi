@@ -72,35 +72,44 @@ jobs:
             --output /tmp/merged-rules.json \
             --limit 130000
 
-      - name: Compute SHAs and prepare version manifest
+      - name: Compute SHAs and copy to docs/cdn (main/docs/cdn は GH Pages source)
         run: |
-          mkdir -p /tmp/cdn
+          mkdir -p docs/cdn
           for name in security-rules merged-rules empty-rules; do
-            cp /tmp/${name}.json /tmp/cdn/${name}.json
+            cp /tmp/${name}.json docs/cdn/${name}.json
           done
           python3 - <<'PY'
           import json, hashlib, datetime
           from pathlib import Path
           out = {}
           for name in ['security-rules', 'merged-rules', 'empty-rules']:
-              data = Path(f'/tmp/cdn/{name}.json').read_bytes()
+              data = Path(f'docs/cdn/{name}.json').read_bytes()
               out[name + '_sha256'] = hashlib.sha256(data).hexdigest()
               out[name + '_bytes'] = len(data)
           out['generated_at'] = datetime.datetime.utcnow().isoformat() + 'Z'
-          Path('/tmp/cdn/version-security.json').write_text(json.dumps(out, indent=2))
+          Path('docs/cdn/version-security.json').write_text(json.dumps(out, indent=2))
           print(json.dumps(out, indent=2))
           PY
 
-      - name: Deploy to gh-pages CDN
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: /tmp/cdn
-          destination_dir: cdn
-          keep_files: true  # 既存 blockerList.json などを保持
-          commit_message: "Update security rules (weekly)"
-          user_name: "github-actions[bot]"
-          user_email: "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Detect diff
+        id: diff
+        run: |
+          if git diff --quiet docs/cdn/; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No changes detected."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Changes detected, will commit and push."
+          fi
+
+      - name: Commit and push to main/docs/cdn
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/cdn/security-rules.json docs/cdn/merged-rules.json docs/cdn/empty-rules.json docs/cdn/version-security.json
+          git commit -m "chore(security): weekly auto-update $(date -u +%Y-%m-%d)"
+          git push
 
       - name: Notify on failure
         if: failure()
