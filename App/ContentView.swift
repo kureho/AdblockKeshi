@@ -88,6 +88,24 @@ struct ContentView: View {
 
 struct CompletedView: View {
     @State private var pulse = false
+    @StateObject private var controlVM: BlockerControlViewModel
+
+    init() {
+        let store = StateStore.sharedAppGroup()
+            ?? StateStore(stateFileURL: URL(fileURLWithPath: NSTemporaryDirectory() + "fallback-state.json"))
+        _controlVM = StateObject(
+            wrappedValue: BlockerControlViewModel(
+                store: store,
+                reloader: { identifier in
+                    SFContentBlockerManager.reloadContentBlocker(withIdentifier: identifier) { error in
+                        if let error = error {
+                            print("[reload] error: \(error.localizedDescription)")
+                        }
+                    }
+                }
+            )
+        )
+    }
 
     var body: some View {
         ScrollView {
@@ -131,21 +149,19 @@ struct CompletedView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                // v2.0: 2 トグル UI (広告 / セキュリティ)
+                BlockerControlView(viewModel: controlVM)
+
                 VStack(alignment: .leading, spacing: 10) {
-                    InfoRow(
-                        icon: "checkmark.circle.fill",
-                        iconColor: .green,
-                        text: "ブロックは自動で有効化されています"
-                    )
                     InfoRow(
                         icon: "arrow.triangle.2.circlepath",
                         iconColor: .accentColor,
-                        text: "フィルタは月次で自動更新されます"
+                        text: "フィルタは自動で最新の状態に保たれます"
                     )
                     InfoRow(
                         icon: "moon.zzz.fill",
                         iconColor: .purple,
-                        text: "このアプリは、もう開かなくて大丈夫です"
+                        text: "設定は一度だけ。あとはお任せください"
                     )
                 }
                 .padding(16)
