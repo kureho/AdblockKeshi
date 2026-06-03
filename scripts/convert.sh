@@ -99,7 +99,11 @@ jq -n \
   '{generated_at: $generated_at, rule_count: $rule_count, size_bytes: $size_bytes, blocker_list_sha256: $sha256, filters: $filters}' \
   > "$CDN_DIR/version.json"
 
+# bundle 同梱: CDN DL 失敗時の初回起動でも「最終更新日」を表示できるよう App/Resources に同期
+cp "$CDN_DIR/version.json" "$PROJECT_DIR/App/Resources/version.json"
+
 echo "[done]"
 echo "  $CDN_DIR/blockerList.json ($RULE_COUNT rules, $JSON_BYTES bytes)"
 echo "  $CDN_DIR/version.json"
+echo "  $PROJECT_DIR/App/Resources/version.json (bundle copy)"
 cat "$CDN_DIR/version.json"

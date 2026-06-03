@@ -52,6 +52,24 @@ actor FilterDownloader {
 
         let destination = containerURL.appendingPathComponent(filename)
         try data.write(to: destination, options: [.atomic])
+
+        // version.json は補助情報。失敗しても blockerList の DL 結果は維持する。
+        await downloadVersionInfoBestEffort(containerURL: containerURL)
+
         return data.count
+    }
+
+    /// CDN の version.json を取得して App Group コンテナに atomic write する。
+    /// 失敗時は黙って戻る (補助情報のため UI 上 fallback 表示できれば良い)。
+    private func downloadVersionInfoBestEffort(containerURL: URL) async {
+        do {
+            let (data, response) = try await session.data(from: versionURL)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return }
+            _ = try JSONSerialization.jsonObject(with: data, options: [])
+            let destination = containerURL.appendingPathComponent("version.json")
+            try data.write(to: destination, options: [.atomic])
+        } catch {
+            return
+        }
     }
 }

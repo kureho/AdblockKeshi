@@ -102,7 +102,7 @@ platform :ios do
     upload_to_testflight(
       api_key: asc_api_key,
       skip_waiting_for_build_processing: false,
-      changelog: "v0.2.0-plan-b 完了。Plan A+B 統合動作確認版。"
+      changelog: "v2.1.0 build 9: Safari ボタン廃止 + フィルタ最終更新日表示。"
     )
   end
 

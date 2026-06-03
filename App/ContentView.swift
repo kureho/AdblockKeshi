@@ -88,9 +88,11 @@ struct ContentView: View {
 
 struct CompletedView: View {
     @State private var pulse = false
+    @State private var versionInfo: VersionInfo? = nil
     @StateObject private var controlVM: BlockerControlViewModel
+    private let versionStore: VersionInfoStore
 
-    init() {
+    init(versionStore: VersionInfoStore = VersionInfoStore()) {
         let store = StateStore.sharedAppGroup()
             ?? StateStore(stateFileURL: URL(fileURLWithPath: NSTemporaryDirectory() + "fallback-state.json"))
         _controlVM = StateObject(
@@ -105,6 +107,7 @@ struct CompletedView: View {
                 }
             )
         )
+        self.versionStore = versionStore
     }
 
     var body: some View {
@@ -156,7 +159,7 @@ struct CompletedView: View {
                     InfoRow(
                         icon: "arrow.triangle.2.circlepath",
                         iconColor: .accentColor,
-                        text: "フィルタは自動で最新の状態に保たれます"
+                        text: filterUpdateText
                     )
                     InfoRow(
                         icon: "moon.zzz.fill",
@@ -169,31 +172,6 @@ struct CompletedView: View {
                     RoundedRectangle(cornerRadius: 16)
                         .fill(Color(UIColor.secondarySystemBackground))
                 )
-                .padding(.horizontal, 20)
-
-                Button {
-                    if let url = URL(string: "https://www.apple.com") {
-                        UIApplication.shared.open(url)
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "safari.fill")
-                            .font(.system(size: 18, weight: .semibold))
-                        Text("Safari を開く")
-                            .font(.system(.title3, design: .rounded, weight: .bold))
-                    }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 18)
-                    .background(
-                        LinearGradient(
-                            colors: [Color.accentColor, Color.accentColor.opacity(0.85)],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .shadow(color: Color.accentColor.opacity(0.3), radius: 12, x: 0, y: 6)
-                }
                 .padding(.horizontal, 20)
 
                 Spacer(minLength: 20)
@@ -217,6 +195,21 @@ struct CompletedView: View {
             )
             .ignoresSafeArea()
         )
+        .onAppear {
+            versionInfo = versionStore.read()
+        }
+    }
+
+    /// フィルタ更新状況の表示テキスト。version.json が読めれば日付を出し、無ければ既存文言。
+    private var filterUpdateText: String {
+        guard let info = versionInfo else {
+            return "フィルタは自動で最新の状態に保たれます"
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.dateFormat = "yyyy/MM/dd"
+        let dateString = formatter.string(from: info.generatedAt)
+        return "フィルタ最終更新: \(dateString)"
     }
 }
 
