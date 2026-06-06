@@ -1,8 +1,8 @@
 <!-- [paid-approved-by-kureho] spec doc 文書のみ、ASC API 呼び出しなし、課金影響なし -->
 # 広告消し v3.0「学習する広告消し」設計 spec
 
-**日付**: 2026-06-06 (rev2 2026-06-07: spec review #1 反映)
-**status**: Draft (spec review #1 反映済、#2 dispatch 予定)
+**日付**: 2026-06-06 (rev2 2026-06-07: spec review #1 反映 / rev3 2026-06-07: spec review #2 反映)
+**status**: Draft (spec review #2 反映済、#3 dispatch 予定)
 **対象アプリ**: 広告消し (com.kureho.adblockkeshi、App ID 6774906945)
 **現配信中**: v2.1.1 (READY_FOR_SALE、2026-06-04 配信開始、ASC API verify 済)
 **提出予定**: v3.0.0 build 12
@@ -97,23 +97,28 @@ v3.0: TabView 2 タブ
 | 項目 | 端末側 | サーバ側 |
 |---|---|---|
 | URL | `https://` 必須、200 字以内 | + URL 構文検証 + Tranco Top 1M 即時拒否 |
-| メモ | 200 字以内、URL 含むと拒否 | + **PII regex filter** (rev2 追加、後述) |
+| メモ | 200 字以内、URL 含むと拒否 | + **PII regex redact** (rev3 改訂、後述) |
 | Turnstile | 透明 challenge | サーバ検証 |
 | rate limit | 端末側 UI で抑止 | サーバ側 D1 で hard enforce |
 
-### 🆕 memo PII filter (rev2 追加、kureho 推奨採用)
+### 🆕 memo PII filter (rev3 全面改訂: redact 方式)
 
-サーバ側 (Workers `/v1/reports/submit`) で受信時に regex filter:
+**rev2 の reject 方式は廃止** (「0120-XXX-XXXX」「03-XXXX-XXXX」等が正当な広告報告 context で誤 reject される実害大、reviewer 指摘)。
 
-| 検出パターン | regex 例 | 検出時挙動 |
+rev3 方式: **サーバ側で mask/redact してから保存**、ユーザーには成功 response 返す。
+
+| 検出パターン | regex 例 | 受信時挙動 |
 |---|---|---|
-| 電話番号 (日本) | `0\d{1,4}-?\d{1,4}-?\d{4}` | HTTP 400 「個人情報が含まれています」 |
-| 電話番号 (国際) | `\+\d{1,3}[\s-]?\d+` | 同上 |
-| メールアドレス | `[\w._%+-]+@[\w.-]+\.\w+` | 同上 |
-| クレジットカード番号 | `\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}` (Luhn 後検証) | 同上 |
-| マイナンバー (12 桁) | `\d{12}` (隔離オプション) | 同上 |
+| 電話番号 (日本) | `0\d{1,4}-?\d{1,4}-?\d{4}` | `***-****-****` に置換、memo 自体は保存 |
+| 電話番号 (国際) | `\+\d{1,3}[\s-]?\d+` | `+**-***-****` に置換 |
+| メールアドレス | `[\w._%+-]+@[\w.-]+\.\w+` | `***@***.***` に置換 |
+| クレジットカード番号 | `\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}` (Luhn 検証で精度上げ) | `****-****-****-****` に置換 |
+| ~~マイナンバー (12 桁)~~ | ~~`\d{12}`~~ | **削除** (誤検出率高すぎ、タイムスタンプ・URL ID と区別不能) |
 
-検出時は D1 INSERT 前に reject、`abuse_log` に `reason='pii_detected'` で記録。
+- 検出時は **redact 済 memo で D1 INSERT**、`abuse_log` に `reason='pii_redacted'` で記録 (informational)
+- **ban 加算には使わない** (誤検出の善意ユーザーを誤 ban 防止)
+- ユーザーには HTTP 200 + 「報告を受け付けました」を返す (silent redact)
+- ★ rev3 設計思想: 「PII を含む正当な広告報告は阻害せず、保存時に匿名化のみする」
 
 ### Privacy
 
@@ -142,7 +147,7 @@ v3.0: TabView 2 タブ
 
 | Method | Path | 認証 | 用途 |
 |---|---|---|---|
-| POST | `/v1/reports/token` | Turnstile | ephemeral HMAC token (5分有効) |
+| POST | `/v1/reports/token` | Turnstile | ephemeral HMAC token (5分有効、payload: `{subject: uuid_hash, expires, scope: "submit|history|delete"}`、rev3 明示) |
 | POST | `/v1/reports/submit` | token | 報告本体 (URL + memo) |
 | POST | `/v1/reports/history` | token | **🆕 自分の履歴取得 (rev2: GET から POST + token に変更)** |
 | POST | `/v1/reports/delete` | token | **🆕 自分のデータ削除依頼 (rev2: 24h 内自動削除)** |
@@ -333,16 +338,23 @@ iOS Safari Content Blocker の単一 extension 上限 (公式未明示、実装�
 4. memo に spam pattern (重複 URL, 既知 spam keyword) → abuse_log INSERT (reason='spam_memo')
 ```
 
-#### GitHub Actions (`hourly-aggregation.yml`) 内 ban level 自動 up
+#### GitHub Actions (`hourly-aggregation.yml`) 内 ban level 自動 up (rev3: 種別重み付け)
 
 ```
-過去 24h で abuse_log を集計:
-  abuse_count ≥ 3   → ban level 1 (24h)
-  abuse_count ≥ 10  → ban level 2 (7d)
-  abuse_count ≥ 30  → ban level 3 (30d)
-  abuse_count ≥ 100 → ban level 4 (permanent)
+過去 24h で abuse_log を「ban 加算対象 reason」のみ集計:
+  ban 加算対象: rate_limit / invalid_url / spam_memo / critical_domain (重み 0)
+  ban 加算非対象 (informational のみ): pii_redacted
+  
+加算 abuse_count:
+  ≥ 3   → ban level 1 (24h)
+  ≥ 10  → ban level 2 (7d)
+  ≥ 30  → ban level 3 (30d)
+  ≥ 100 → ban level 4 (permanent)
+
 bans table を upsert、expires_at 更新
 ```
+
+★ rev3: 善意ユーザーの PII redact 発火を ban 加算から除外。閾値 3/10/30/100 は **初期値、配信後 abuse_log 実データで調整** (付録 B 参照)。
 
 #### deletion_requests 自動処理 (`hourly-deletion-processor.yml`、🆕 workflow 追加)
 
@@ -370,13 +382,13 @@ SLA: 受信から最大 1 時間以内に削除完了 (24h コミットに余裕
 | `daily-validation.yml` | 新規 | daily 03:00 UTC | 30 分 | L3-L6 validation |
 | `weekly-stable-promotion.yml` | 新規 | weekly 月 04:00 UTC | 10 分 | L7 β tier → stable 昇格 (L8 苦情なし条件) |
 | `weekly-cdn-sync.yml` | 新規 | weekly 火 05:00 UTC | 20 分 | rules-reported.json 生成 → bundle 同期 → CDN push |
-| `tranco-sync.yml` | 新規 | monthly | 30 分 | Tranco Top 1M sync |
+| `weekly-tranco-sync.yml` | 新規 (rev3: 月次→週次) | weekly 日 02:00 UTC | 30 分 | Tranco Top 1M sync (週次で鮮度確保) |
 | `complaint-monitor.yml` | 新規 | hourly | 5 分 | L8 苦情監視 → rollback trigger |
 | **`hourly-deletion-processor.yml`** | **新規 (rev2)** | hourly | 5 分 | データ削除依頼自動処理 (1.2 UGC 24h コミット) |
 
 🚨 全 workflow に `timeout-minutes` 必須、Linux runner のみ ($113 損失再発防止)。
 
-### concurrency 制御 (rev2: 全 group 明示)
+### concurrency 制御 (rev3: トリガ時刻分散で queue 競合回避)
 
 ```yaml
 # rules-base / rules-reported の CDN push 排他
@@ -394,13 +406,25 @@ concurrency:
 ```
 
 ```yaml
-# D1 read-heavy (daily-validation / tranco-sync)
+# D1 read-heavy (daily-validation / weekly-tranco-sync)
 concurrency:
   group: d1-read-heavy
   cancel-in-progress: false
 ```
 
-- L2 (承認方向、hourly-aggregation) と L8 (rollback 方向、complaint-monitor) は同じ `d1-write` group で **必ず直列実行** → race 解消
+### 🆕 hourly workflow トリガ時刻分散 (rev3 追加)
+
+3 つの d1-write hourly workflow が同 `:00` トリガで queue 順非決定になる問題を回避:
+
+| Workflow | trigger 時刻 |
+|---|---|
+| `hourly-aggregation.yml` | `0 * * * *` (毎時 :00) |
+| `complaint-monitor.yml` | `15 * * * *` (毎時 :15) |
+| `hourly-deletion-processor.yml` | `30 * * * *` (毎時 :30) |
+
+各 5 分 timeout、間に 10 分の buffer。直列化されても 1 時間内に必ず完走する保証。
+
+- L2 (承認方向、hourly-aggregation) と L8 (rollback 方向、complaint-monitor) は同 `d1-write` group で **必ず直列実行** → race 解消
 - tranco-sync は読み主体だが daily-validation と D1 同時読みすると性能影響、別 group で直列化
 
 ### CDN 構造
@@ -435,7 +459,7 @@ docs/cdn/
 | weekly-cdn-sync で rules-reported.json 生成 | **+最大 7d (火曜まで)** | 193h + 168h = 361h | weekly 火 05:00 UTC |
 | 端末 BGTaskScheduler DL | +最大 24h | 361h + 24h = **385h ≒ 16 日** | bg fetch task |
 
-★ **最悪 16 日 (約 385 時間)**、最短約 8 日。報告タブで「通常 7-14 日以内」と告知 (Section 2)、最悪ケース超過時は将来 v3.1 で短縮検討。
+★ **最悪 16 日 (約 385 時間)**、最短約 8 日。**端末 BGTaskScheduler は実機状態で数日遅延あり** (rev3: 楽観値修正) → 報告タブの告知は **「通常 7-14 日以内、最悪 30 日」** に正直化。将来 v3.1 で短縮検討。
 
 ---
 
@@ -445,7 +469,7 @@ docs/cdn/
 
 | Guideline | 該当性 | リスク |
 |---|---|---|
-| 1.2 (Safety - UGC) | ✅ | yellow → **green (rev2 自動化完備で)** |
+| 1.2 (Safety - UGC) | ✅ | yellow (rev3 再評価: 「完全自動 = 無人 moderation」は Apple が暗黙に嫌う可能性、トーンダウン推奨) |
 | 5.2.5 (Intellectual Property) | ⚠️ 直前事故 | 要厳格対応 |
 | 2.3.7 (Pricing metadata) | ⚠️ 4 回違反済 | 要厳格対応 |
 | 5.1.1 / 5.1.2 (Privacy) | ✅ | medium |
@@ -461,32 +485,34 @@ docs/cdn/
 | (d) 連絡先 | published contact | info@kureho.app + https://kureho.app/contact?product=adblockkeshi | 静的 |
 | (e) 対応時間 | timely response | **データ削除依頼 = hourly-deletion-processor で 1 時間以内自動処理 (24h SLA 余裕クリア)**、Resolution Center reply のみ kureho 24h | **削除は 100% 自動 (rev2)** |
 
-### Review Notes (英語、提出時、rev2 更新)
+### Review Notes (英語、提出時、rev3: Apple 1.2 トーンダウン)
 
 ```
 === App Review Notes (v3.0 build 12) ===
 
 NEW FEATURE in v3.0: Report Tab (Tab B)
 Users can submit URLs where ads were not blocked. These submissions are NOT 
-user-to-user content sharing — they are inputs for our FULLY AUTOMATED backend
-filter rule generation pipeline.
+user-to-user content sharing — they are inputs for our automated backend
+filter rule generation pipeline, with developer escalation path via the
+Resolution Center for any issues that automation cannot handle.
 
-GUIDELINE 1.2 COMPLIANCE (all 5 elements fully automated):
+GUIDELINE 1.2 COMPLIANCE (all 5 elements addressed):
 (a) Filtering: URL validated against Tranco Top 1M whitelist + 50-domain critical
-    blocklist (apple.com, google.com etc.) + memo PII regex filter (phone/email/
-    credit card numbers rejected at ingress) + CSS selector scope restriction
-    (no full-page blocking).
+    blocklist (apple.com, google.com etc.) + memo PII redaction at ingress
+    (phone/email/credit card patterns auto-masked) + CSS selector scope
+    restriction (no full-page blocking).
 (b) Reporting: In-app "Report inappropriate submissions" mailto: link in Tab B
-    footer → info@kureho.app.
+    footer → info@kureho.app. Developer monitors and responds within 24 hours.
 (c) Abuse blocking: Per-device UUID-hash + IP-hash rate limiting + 4-tier
-    automatic ban escalation (24h/7d/30d/permanent) based on abuse_log
-    aggregation. Fully automated, no developer intervention.
+    automatic ban escalation (24h/7d/30d/permanent) based on weighted abuse_log
+    aggregation. Developer can manually override bans via support email.
 (d) Contact: info@kureho.app + https://kureho.app/contact?product=adblockkeshi
-    published in Privacy Policy and App Store listing.
+    published in Privacy Policy and App Store listing. Corporate phone in
+    Review Information (corporate info only, per Apple policy).
 (e) Response time: User data deletion requests processed automatically within
-    1 hour by hourly-deletion-processor workflow. Far exceeds the 24h commitment
-    in Privacy Policy. Developer intervention only for Apple Review Resolution
-    Center replies.
+    1 hour by hourly-deletion-processor workflow (within the 24h commitment in
+    Privacy Policy). Developer responds to all other reports within 24 hours
+    via email or Resolution Center.
 
 AUTOMATIC RULE APPLICATION SAFETY (8-layer pipeline):
 L1 Turnstile + rate limit + PII filter
@@ -556,15 +582,15 @@ Reviewer questions: info@kureho.app, +81 75 313 3700
 - abuse 対応: 自動 ban システム (4 段階)
 - 保管インフラ (Cloudflare Workers/D1 APAC)
 
-### Nutrition Label (rev2: IP hash type 確定)
+### Nutrition Label (rev3: 安全側で Linked 判定)
 
 | Data Type | Linked? | Tracking? | Purpose |
 |---|---|---|---|
-| **User Content** > Other User Content (報告 URL/メモ) | ❌ Not Linked | ❌ | App Functionality |
-| **Identifiers** > Device ID (UUID hash) | ❌ Not Linked | ❌ | App Functionality |
-| **Identifiers** > Device ID (IP hash、🆕 rev2 declare) | ❌ Not Linked | ❌ | App Functionality (rate limit) |
+| **User Content** > Other User Content (報告 URL/メモ) | ✅ **Linked (rev3: 安全側)** | ❌ | App Functionality |
+| **Identifiers** > Device ID (UUID hash) | ✅ **Linked (rev3)** | ❌ | App Functionality |
+| **Identifiers** > Device ID (IP hash) | ✅ **Linked (rev3)** | ❌ | App Functionality (rate limit) |
 
-★ rev2: IP も declare に加える (Apple 公式は IP address を Device ID 扱い、即ハッシュ化でも収集に該当)。安全側で declare、Not Linked + No Tracking 維持で「データ収集はあるが個人特定不可」を明示。
+★ rev3: `uuid_hash + ip_hash` 複合キーで同一ユーザー追跡が可能なスキーマのため、Apple "Not Linked" の判定 (個別ユーザーへ traceback できない) を厳密に解釈すると **Linked** が安全。Tracking なし + Purpose を App Functionality 限定で「データ収集はあるが個人特定不可、解析用ではない」を明示。Privacy Policy にも同様の正直な記述を追記する。
 
 ### 🆕 RemoteConfigStore 仕様 (rev2 追加)
 
@@ -596,9 +622,10 @@ final class RemoteConfigStore {
 | fetch interval | 起動時 + 60 分ごと |
 | cache TTL | 60 分 |
 | 永続キャッシュ | UserDefaults (App Group) |
-| network 失敗時 (初回) | `default=true` (機能 ON 維持、fail-open) |
+| network 失敗時 (初回、通常 flag) | `default=true` (機能 ON 維持、fail-open) |
+| **emergency_kill_switch (rev3 追加、Apple 緊急 OFF 用)** | **fail-CLOSED**: 初回 network 失敗時 = `true` 扱い (機能 OFF)、CDN reachable で `false` を確認するまで報告タブ非表示 |
 | network 失敗時 (2 回目以降) | 直近成功値を使用 (永続キャッシュ) |
-| feature-flags.json 構造 | `{ "report_tab_enabled": true, "version": "v1" }` |
+| feature-flags.json 構造 (rev3 拡張) | `{ "report_tab_enabled": true, "emergency_kill_switch": false, "version": "v2" }` |
 
 ★ kureho が CDN で `report_tab_enabled=false` に編集 → 端末次回起動 (or 60 分以内) で OFF 反映。新 build 提出不要。Apple へは「server-side toggleable」を review notes に明示済。
 
@@ -638,6 +665,14 @@ v3.0 リリース 4 週後 KPI 評価:
 - subtitle / promotional_text / keywords / screenshots に **¥/Free/無料/割引** NG
 - 「買い切り」「サブスクなし」のみ subtitle/promo/keywords でも OK
 
+### 🆕 description の価格表記方針 (rev3)
+
+retreat 時の手間 (binary submit 必要) を排除するため、**description にも価格数字「¥700」を書かない**方針を推奨:
+
+- 値上げ説明文面は「**買い切り価格を改定しました**」のみ (具体的金額を書かない)
+- 価格は App Store の Price 表示でユーザーが確認、本文では言及しない
+- これで Price Tier 変更だけで retreat 完結、description 修正の binary submit 不要
+
 ### version ロードマップ
 
 | Version | 主要変更 | 価格 |
@@ -652,7 +687,7 @@ v3.0 リリース 4 週後 KPI 評価:
 
 | Phase | DoD |
 |---|---|
-| Phase 1-2: Infra | Cloudflare Workers `health` endpoint で 200 OK、D1 全テーブル作成、Turnstile site key 発行、project.yml に 2 extension target 追加、xcodegen ビルド成功 |
+| Phase 1-2: Infra | Cloudflare Workers `health` endpoint で 200 OK、D1 全テーブル作成、Turnstile site key 発行、project.yml に 2 extension target 追加、xcodegen ビルド成功、**🆕 rev3: 2 extension がシミュレータで両方 ON 状態で実動作する screencast 必須提出** (extension 数上限 verify) |
 | Phase 3-4: safety gate | 8 層各層の unit test pass (L1-L8 別々の test、Workers Vitest)、Actions 8 workflow が workflow_dispatch で手動成功実行 |
 | Phase 5: UI 仕上げ | UI test 全 4 パターン (両 ON/base ON/学習 ON/両 OFF) pass、履歴 UI スナップショットテスト pass、feature flag による Tab B 非表示確認 |
 | Phase 6: 検証 | シミュレータで 5 シナリオ pass (新規 onboarding / v2→v3 アップグレード / 報告送信 / 履歴確認 / feature flag OFF)、実機で同 5 シナリオ pass、Privacy Policy public 確認、4 点監査 ALL PASS |
@@ -720,6 +755,7 @@ main (v2.1.1 配信中、緊急 hotfix 余地確保)
 | 既存 extension | 継続、ON 状態維持 |
 | 新 extension | 追加、初期 OFF (WhatsNew + バナーで誘導、強制せず) |
 | 報告タブ | v3.0 から開始、空状態 |
+| 🆕 値上げ告知 (rev3) | WhatsNew に「**既にご購入のお客様は v3.0 を追加料金なしで受け取れます**」を強調表示、レビュー★低下リスク軽減 |
 
 ### TestFlight 検証
 
@@ -752,7 +788,7 @@ main (v2.1.1 配信中、緊急 hotfix 余地確保)
 
 | カテゴリ | リスク | 確率 | 影響 | 対応 |
 |---|---|---|---|---|
-| Apple 審査 | 1.2 UGC reject | **低 (rev2 自動化完備で低下)** | release 1-2 週遅延 | review notes で all-automated 強調、即 re-submit |
+| Apple 審査 | 1.2 UGC reject | **中 (rev3: Apple は人手 moderation を暗黙に期待する文化、過度な「全自動」訴求は逆効果)** | release 1-2 週遅延 | review notes でトーンダウン (automated + escalation via Resolution Center)、kureho が abuse 報告に 24h で人手対応する点も明示 |
 | Apple 審査 | 5.2.5 metadata 残骸 | 低 | 同上 | 提出前 grep、CI hook |
 | Apple 審査 | 5.1.1 Privacy 不整合 | 低 | 同上 | Privacy Policy + Nutrition Label 提出前完全一致 |
 | Apple 審査 | 「完全自動」誤読 → moderation 質問 | **低 (rev2)** | release +3-5 日 | review notes に "FULLY AUTOMATED, no human intervention except Resolution Center" 明示 |
@@ -796,6 +832,18 @@ main (v2.1.1 配信中、緊急 hotfix 余地確保)
 13. ✅ **データ削除依頼は自動処理 (hourly-deletion-processor、1h SLA、rev2)**
 14. ✅ **L2/L8 段階閾値 (β 中 L8=2、stable 後 L8=3、rev2)**
 15. ✅ **rate limit hard cap 80k/日 + tripwire 70k で warn (rev2)**
+16. ✅ **PII redact 方式 (reject ではなく mask、ban 加算しない、rev3)**
+17. ✅ **abuse reason 種別ごとの ban 加算重み付け (rev3)**
+18. ✅ **hourly workflow トリガ時刻分散 :00/:15/:30 (rev3)**
+19. ✅ **Apple 1.2 トーンダウン (review notes "automated with escalation"、rev3)**
+20. ✅ **HMAC token payload 明示 (subject/expires/scope、rev3)**
+21. ✅ **RemoteConfigStore emergency_kill_switch fail-closed (rev3)**
+22. ✅ **Nutrition Label 安全側で Linked declare (rev3)**
+23. ✅ **Phase 1 DoD に screencast 必須化 (rev3)**
+24. ✅ **BGTaskScheduler 楽観値修正 (通常 7-14 日、最悪 30 日、rev3)**
+25. ✅ **description 価格表記なし (retreat 軽量化、rev3)**
+26. ✅ **Tranco sync 月次→週次 (鮮度、rev3)**
+27. ✅ **WhatsNew で既存ユーザー無料受領強調 (rev3)**
 
 ---
 
@@ -837,7 +885,8 @@ main (v2.1.1 配信中、緊急 hotfix 余地確保)
 - Cloudflare D1 APAC region primary の latency 実測
 - Turnstile 透明 challenge の SwiftUI 統合方法 (WebView 経由 vs Safari)
 - **abuse 自動判定の閾値チューニング (3/10/30/100)** — 配信後実データで調整必要、初期値で開始
-- **PII regex の誤検出率** — 「03-1234-5678」と「0312345678」など全パターン、配信後 abuse_log で確認
+- **PII redact regex の誤検出率** — rev3 で redact 化したので誤 ban は発生しないが、redact 過多 (memo が空に近くなる) なら正規表現緩和、配信後 abuse_log で確認
+- **L8 cooldown 30 日の妥当性** — 攻撃者が 30 日後に同一 URL 再 ban 試行する経路あり、配信後 complaint_count 実データで調整 (60 日 / 90 日への延長検討)
 
 ---
 
