@@ -46,6 +46,8 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
   try {
     const payload = await verifyToken(body.token, env.HMAC_KEY)
     if (payload.scope !== 'submit') return jsonError(401, 'unauthorized', 'wrong scope')
+    // ★ IDOR防止: token は特定 uuid_hash に紐付き、別 uuid_hash での代理使用不可
+    if (payload.subject !== body.uuid_hash) return jsonError(401, 'unauthorized', 'token uuid_hash mismatch')
   } catch {
     return jsonError(401, 'unauthorized', 'invalid or expired token')
   }

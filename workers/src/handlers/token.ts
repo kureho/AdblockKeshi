@@ -5,23 +5,20 @@ import { signToken, type TokenPayload } from '../lib/hmac'
 interface TokenRequestBody {
   turnstile_response?: string
   scope?: string
+  uuid_hash?: string  // ★ rev2 security fix: bind token to device hash to prevent IDOR
 }
 
 const VALID_SCOPES = new Set<TokenPayload['scope']>(['submit', 'history', 'delete'])
-const TOKEN_TTL_SECONDS = 300  // 5 分
+const TOKEN_TTL_SECONDS = 300
 
 /**
  * POST /v1/reports/token
  *
- * Body: { turnstile_response: string, scope: 'submit'|'history'|'delete' }
+ * Body: { turnstile_response: string, scope: 'submit'|'history'|'delete', uuid_hash: string (64 hex) }
  * Returns: { token, expires_at, server_salt }
  *
- * 1. Validate body shape
- * 2. Verify Turnstile challenge with Cloudflare
- * 3. Sign HMAC token (5-minute TTL)
- * 4. Return token + expires_at + server_salt
- *    (server_salt is returned so client can compute SHA-256(uuid+salt)
- *     for submit/history/delete request bodies)
+ * Token payload binds {subject: uuid_hash} so subsequent submit/history/delete
+ * requests must match the same uuid_hash (prevents cross-account IDOR).
  */
 export async function handleToken(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
@@ -35,15 +32,17 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
     return jsonError(400, 'validation_failed', 'invalid JSON body')
   }
 
-  const { turnstile_response, scope } = body
+  const { turnstile_response, scope, uuid_hash } = body
   if (!turnstile_response || typeof turnstile_response !== 'string') {
     return jsonError(400, 'validation_failed', 'turnstile_response required')
   }
   if (!scope || !VALID_SCOPES.has(scope as TokenPayload['scope'])) {
     return jsonError(400, 'validation_failed', `scope must be one of: ${[...VALID_SCOPES].join(', ')}`)
   }
+  if (!uuid_hash || typeof uuid_hash !== 'string' || uuid_hash.length !== 64) {
+    return jsonError(400, 'validation_failed', 'uuid_hash must be 64 hex chars')
+  }
 
-  // Turnstile server-side verify
   try {
     const remoteip = request.headers.get('CF-Connecting-IP') ?? undefined
     await verifyTurnstile({
@@ -58,9 +57,8 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
     return jsonError(500, 'turnstile_internal', 'verification service error')
   }
 
-  // subject placeholder; submit handler enforces actual uuid_hash from body
   const payload: TokenPayload = {
-    subject: 'anonymous',
+    subject: uuid_hash,  // ★ bound to device
     expires: Date.now() + TOKEN_TTL_SECONDS * 1000,
     scope: scope as TokenPayload['scope'],
   }

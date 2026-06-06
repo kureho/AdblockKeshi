@@ -27,9 +27,13 @@ export async function handleDelete(request: Request, env: Env): Promise<Response
     return jsonError(400, 'validation_failed', 'token and uuid_hash required')
   }
 
+  let bindUUIDHash: string
   try {
     const payload = await verifyToken(body.token, env.HMAC_KEY)
     if (payload.scope !== 'delete') return jsonError(401, 'unauthorized', 'wrong scope')
+    if (payload.subject !== body.uuid_hash) return jsonError(401, 'unauthorized', 'token uuid_hash mismatch')
+    // ★ IDOR防止: INSERT には token に bound された uuid_hash (payload.subject) を使う
+    bindUUIDHash = payload.subject
   } catch {
     return jsonError(401, 'unauthorized', 'invalid token')
   }
@@ -40,7 +44,7 @@ export async function handleDelete(request: Request, env: Env): Promise<Response
   await env.DB.prepare(`
     INSERT INTO deletion_requests (id, uuid_hash, url_path_hash, requested_at, status)
     VALUES (?, ?, ?, ?, ?)
-  `).bind(id, body.uuid_hash, body.url_path_hash ?? null, now, 'pending').run()
+  `).bind(id, bindUUIDHash, body.url_path_hash ?? null, now, 'pending').run()
 
   return new Response(JSON.stringify({
     id,

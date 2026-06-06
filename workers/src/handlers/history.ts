@@ -25,9 +25,13 @@ export async function handleHistory(request: Request, env: Env): Promise<Respons
     return jsonError(400, 'validation_failed', 'token and uuid_hash required')
   }
 
+  let bindUUIDHash: string
   try {
     const payload = await verifyToken(body.token, env.HMAC_KEY)
     if (payload.scope !== 'history') return jsonError(401, 'unauthorized', 'wrong scope')
+    if (payload.subject !== body.uuid_hash) return jsonError(401, 'unauthorized', 'token uuid_hash mismatch')
+    // ★ IDOR防止: SQL query には token に bound された uuid_hash (payload.subject) を使う
+    bindUUIDHash = payload.subject
   } catch {
     return jsonError(401, 'unauthorized', 'invalid token')
   }
@@ -43,7 +47,7 @@ export async function handleHistory(request: Request, env: Env): Promise<Respons
       ) AS memo_redacted
     FROM reports r WHERE r.uuid_hash = ?
     ORDER BY r.created_at DESC LIMIT 50
-  `).bind(body.uuid_hash).all<any>()
+  `).bind(bindUUIDHash).all<any>()
 
   const items = (rows.results ?? []).map(r => ({
     id: r.id,
