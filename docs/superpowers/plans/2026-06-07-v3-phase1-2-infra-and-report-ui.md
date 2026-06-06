@@ -1234,40 +1234,1366 @@ final class ReportFormViewTests: XCTestCase {
 
 **目的: 端末側で UUID を Keychain に保管し、SHA-256 hash を Workers に送信できる ReportAPIClient を実装。Tab B フォームから submit が実通信で成功するまで**。
 
-### Task 4.1: 子ブランチ `feat/v3-device-uuid-and-api-client`
+### Task 4.1: 子ブランチ `feat/v3-device-uuid-and-api-client` 切る
 
-### Task 4.2: DeviceUUIDStore (Keychain 管理) TDD
+**Files:**
+- Modify: 既存 git 状態のみ
+
+- [ ] **Step 1: 親ブランチ最新化**
+
+```bash
+cd /Users/oharakureho/claude/AdblockKeshi
+git checkout feature/v3.0-learning-adblock
+git pull origin feature/v3.0-learning-adblock
+```
+
+- [ ] **Step 2: 子ブランチ作成**
+
+```bash
+git checkout -b feat/v3-device-uuid-and-api-client
+git status
+```
+
+Expected: `On branch feat/v3-device-uuid-and-api-client`、clean
+
+### Task 4.2: DeviceUUIDStore (Keychain UUID + SHA-256 hash) TDD
+
+spec §2 §3: 端末 UUID は Keychain (App Group) のみ保管、サーバへは `SHA-256(uuid + server_salt)` のハッシュのみ送信。
 
 **Files:**
 - Create: `App/Storage/DeviceUUIDStore.swift`
+- Create: `App/Storage/KeychainHelper.swift` (Keychain CRUD ラッパー、テスト可能性のため抽象化)
 - Create: `Tests/App/Storage/DeviceUUIDStoreTests.swift`
+- Create: `Tests/App/Storage/KeychainHelperTests.swift`
 
-- [ ] **Step 1-5: Keychain UUID 取得/生成、SHA-256(uuid + server_salt) ハッシュ生成、TDD で test → impl → commit**
+#### 仕様詳細 (実装前に固める)
 
-注意: server_salt は CDN feature-flags.json から取得 (Workers /v1/reports/token response にも含める)。詳細は Phase 5 で確定、Phase 2 は hardcoded test value で進める。
+| 項目 | 値 |
+|---|---|
+| Keychain attrs | `kSecClassGenericPassword`, `kSecAttrService = "com.kureho.adblockkeshi.report.uuid"`, `kSecAttrAccount = "device-uuid"` |
+| App Group 共有 | `kSecAttrAccessGroup = "L455WPL8QZ.group.com.kureho.adblockkeshi.shared"` (Team ID + App Group) |
+| UUID 形式 | `UUID().uuidString` (例: `E621E1F8-C36C-495A-93FC-0C247A3E6E5F`) — 標準 RFC 4122 |
+| hash アルゴリズム | SHA-256 (CryptoKit `SHA256.hash`) |
+| hash 入力 | `"\(uuid):\(server_salt)"` (区切り `:` で salt と UUID を結合、salt 部分文字列衝突防止) |
+| hash 出力 | 16 進 64 文字小文字 (Workers 側も同じ format) |
+| server_salt 取得 | Phase 2 では config 経由 hardcoded (`Bundle.main.object(forInfoDictionaryKey: "DEV_SERVER_SALT")`)、Phase 5 で feature-flags.json 経由に変更 |
+| 初回起動 | UUID 不在 → 新規生成 → Keychain 保存 |
+| 2 回目以降 | Keychain から read、生成しない |
 
-### Task 4.3: HMACTokenStore (token caching) TDD
+- [ ] **Step 1: KeychainHelper failing test 書く**
 
-### Task 4.4: ReportAPIClient (URLSession + Workers endpoint client) TDD
+`Tests/App/Storage/KeychainHelperTests.swift`:
+
+```swift
+import XCTest
+@testable import AdblockKeshi
+
+final class KeychainHelperTests: XCTestCase {
+    private var helper: KeychainHelper!
+    private let testService = "test.com.kureho.adblockkeshi.keychain.\(UUID().uuidString)"
+
+    override func setUp() {
+        super.setUp()
+        helper = KeychainHelper(service: testService, accessGroup: nil)  // app group 無しでテスト
+    }
+
+    override func tearDown() {
+        helper.delete(account: "test-account")
+        super.tearDown()
+    }
+
+    func testLoad_returnsNilWhenAbsent() throws {
+        let data = try helper.load(account: "non-existent-account")
+        XCTAssertNil(data)
+    }
+
+    func testSave_andLoad_roundTrip() throws {
+        let original = "secret-value-1234".data(using: .utf8)!
+        try helper.save(account: "test-account", data: original)
+
+        let loaded = try helper.load(account: "test-account")
+        XCTAssertEqual(loaded, original)
+    }
+
+    func testSave_overwritesExisting() throws {
+        let first = "first-value".data(using: .utf8)!
+        let second = "second-value".data(using: .utf8)!
+
+        try helper.save(account: "test-account", data: first)
+        try helper.save(account: "test-account", data: second)
+
+        let loaded = try helper.load(account: "test-account")
+        XCTAssertEqual(loaded, second)
+    }
+
+    func testDelete_removesData() throws {
+        try helper.save(account: "test-account", data: "x".data(using: .utf8)!)
+        try helper.delete(account: "test-account")
+        let loaded = try helper.load(account: "test-account")
+        XCTAssertNil(loaded)
+    }
+
+    func testDelete_nonExistentDoesNotThrow() throws {
+        XCTAssertNoThrow(try helper.delete(account: "non-existent"))
+    }
+}
+```
+
+- [ ] **Step 2: test 実行 → fail 確認**
+
+Expected: FAIL (KeychainHelper 未定義)
+
+- [ ] **Step 3: KeychainHelper.swift 実装**
+
+`App/Storage/KeychainHelper.swift`:
+
+```swift
+import Foundation
+import Security
+
+enum KeychainError: Error, Equatable {
+    case unexpectedStatus(OSStatus)
+    case dataConversionFailed
+}
+
+struct KeychainHelper {
+    let service: String
+    let accessGroup: String?
+
+    init(service: String = "com.kureho.adblockkeshi.report.uuid",
+         accessGroup: String? = "L455WPL8QZ.group.com.kureho.adblockkeshi.shared") {
+        self.service = service
+        self.accessGroup = accessGroup
+    }
+
+    private func baseQuery(account: String) -> [String: Any] {
+        var q: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        if let group = accessGroup {
+            q[kSecAttrAccessGroup as String] = group
+        }
+        return q
+    }
+
+    func save(account: String, data: Data) throws {
+        // upsert: 既存があれば update、無ければ add
+        var query = baseQuery(account: account)
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
+
+        if status == errSecSuccess {
+            let attrs: [String: Any] = [kSecValueData as String: data]
+            let updateStatus = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
+            guard updateStatus == errSecSuccess else {
+                throw KeychainError.unexpectedStatus(updateStatus)
+            }
+        } else if status == errSecItemNotFound {
+            query[kSecValueData as String] = data
+            query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            let addStatus = SecItemAdd(query as CFDictionary, nil)
+            guard addStatus == errSecSuccess else {
+                throw KeychainError.unexpectedStatus(addStatus)
+            }
+        } else {
+            throw KeychainError.unexpectedStatus(status)
+        }
+    }
+
+    func load(account: String) throws -> Data? {
+        var query = baseQuery(account: account)
+        query[kSecReturnData as String] = kCFBooleanTrue
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var ref: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &ref)
+
+        switch status {
+        case errSecSuccess:
+            return ref as? Data
+        case errSecItemNotFound:
+            return nil
+        default:
+            throw KeychainError.unexpectedStatus(status)
+        }
+    }
+
+    func delete(account: String) throws {
+        let query = baseQuery(account: account)
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw KeychainError.unexpectedStatus(status)
+        }
+    }
+}
+```
+
+- [ ] **Step 4: test pass 確認**
+
+```bash
+xcodebuild test ... -only-testing:AdblockKeshiTests/KeychainHelperTests
+```
+
+Expected: 5 tests passed
+
+- [ ] **Step 5: DeviceUUIDStore failing test 書く**
+
+`Tests/App/Storage/DeviceUUIDStoreTests.swift`:
+
+```swift
+import XCTest
+import CryptoKit
+@testable import AdblockKeshi
+
+final class DeviceUUIDStoreTests: XCTestCase {
+    private var helper: KeychainHelper!
+    private var store: DeviceUUIDStore!
+
+    override func setUp() {
+        super.setUp()
+        let service = "test.uuid.\(UUID().uuidString)"
+        helper = KeychainHelper(service: service, accessGroup: nil)
+        store = DeviceUUIDStore(keychain: helper, serverSalt: "test-salt-XYZ")
+    }
+
+    override func tearDown() {
+        try? helper.delete(account: DeviceUUIDStore.account)
+        super.tearDown()
+    }
+
+    func testGetUUID_firstCall_generatesNewUUID() throws {
+        let uuid = try store.getUUID()
+        XCTAssertNotNil(UUID(uuidString: uuid))
+    }
+
+    func testGetUUID_secondCall_returnsSameUUID() throws {
+        let first = try store.getUUID()
+        let second = try store.getUUID()
+        XCTAssertEqual(first, second)
+    }
+
+    func testGetUUID_persistsAcrossInstances() throws {
+        let first = try store.getUUID()
+        let newStore = DeviceUUIDStore(keychain: helper, serverSalt: "test-salt-XYZ")
+        let second = try newStore.getUUID()
+        XCTAssertEqual(first, second)
+    }
+
+    func testGetUUIDHash_returns64HexChars() throws {
+        let hash = try store.getUUIDHash()
+        XCTAssertEqual(hash.count, 64)
+        XCTAssertTrue(hash.allSatisfy { $0.isHexDigit })
+    }
+
+    func testGetUUIDHash_deterministic_sameSalt() throws {
+        let h1 = try store.getUUIDHash()
+        let h2 = try store.getUUIDHash()
+        XCTAssertEqual(h1, h2)
+    }
+
+    func testGetUUIDHash_differentSalt_differentHash() throws {
+        let store2 = DeviceUUIDStore(keychain: helper, serverSalt: "different-salt")
+        let h1 = try store.getUUIDHash()
+        let h2 = try store2.getUUIDHash()
+        XCTAssertNotEqual(h1, h2)
+    }
+
+    func testGetUUIDHash_matchesManualSHA256() throws {
+        let uuid = try store.getUUID()
+        let expected = sha256Hex("\(uuid):test-salt-XYZ")
+        let actual = try store.getUUIDHash()
+        XCTAssertEqual(actual, expected)
+    }
+
+    func testReset_generatesNewUUIDOnNextCall() throws {
+        let first = try store.getUUID()
+        try store.reset()
+        let second = try store.getUUID()
+        XCTAssertNotEqual(first, second)
+    }
+
+    private func sha256Hex(_ input: String) -> String {
+        let data = Data(input.utf8)
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+private extension Character {
+    var isHexDigit: Bool {
+        return isHexDigit  // SwiftStdlib provides this
+    }
+}
+```
+
+- [ ] **Step 6: test 実行 → fail 確認**
+
+Expected: FAIL (DeviceUUIDStore 未定義)
+
+- [ ] **Step 7: DeviceUUIDStore.swift 実装**
+
+`App/Storage/DeviceUUIDStore.swift`:
+
+```swift
+import Foundation
+import CryptoKit
+
+struct DeviceUUIDStore {
+    static let account = "device-uuid"
+
+    private let keychain: KeychainHelper
+    private let serverSalt: String
+
+    init(keychain: KeychainHelper = KeychainHelper(),
+         serverSalt: String) {
+        self.keychain = keychain
+        self.serverSalt = serverSalt
+    }
+
+    /// Phase 2 で読み込む server_salt の取得経路。Phase 5 で feature-flags.json 経由に変更。
+    static func loadServerSaltFromBundle() -> String {
+        guard let salt = Bundle.main.object(forInfoDictionaryKey: "DEV_SERVER_SALT") as? String,
+              !salt.isEmpty else {
+            assertionFailure("DEV_SERVER_SALT not set in Info.plist (Phase 2 only)")
+            return "placeholder-salt-phase2"
+        }
+        return salt
+    }
+
+    /// 既存 UUID を読み込み、なければ生成して Keychain に保存。
+    func getUUID() throws -> String {
+        if let data = try keychain.load(account: Self.account),
+           let uuid = String(data: data, encoding: .utf8) {
+            return uuid
+        }
+        let newUUID = UUID().uuidString
+        try keychain.save(account: Self.account, data: newUUID.data(using: .utf8)!)
+        return newUUID
+    }
+
+    /// `SHA-256("\(uuid):\(serverSalt)")` の hex (64 文字小文字)
+    func getUUIDHash() throws -> String {
+        let uuid = try getUUID()
+        let input = "\(uuid):\(serverSalt)"
+        let digest = SHA256.hash(data: Data(input.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// テスト用 or kureho 経由のリセット (再現問題報告時)
+    func reset() throws {
+        try keychain.delete(account: Self.account)
+    }
+}
+```
+
+- [ ] **Step 8: project.yml の `Info.plist properties` に `DEV_SERVER_SALT` を追加** (debug 用)
+
+```yaml
+  AdblockKeshi:
+    ...
+    info:
+      properties:
+        ...
+        DEV_SERVER_SALT: "phase2-dev-salt-do-not-use-in-prod"
+```
+
+xcodegen 再実行。
+
+- [ ] **Step 9: test pass 確認**
+
+```bash
+xcodebuild test ... -only-testing:AdblockKeshiTests/DeviceUUIDStoreTests
+```
+
+Expected: 7 tests passed (testGetUUIDHash_matchesManualSHA256 も含む)
+
+- [ ] **Step 10: commit**
+
+```bash
+git add App/Storage/KeychainHelper.swift App/Storage/DeviceUUIDStore.swift \
+        Tests/App/Storage/KeychainHelperTests.swift Tests/App/Storage/DeviceUUIDStoreTests.swift \
+        project.yml
+git commit -m "feat(v3): add DeviceUUIDStore + KeychainHelper for app-group-shared device UUID
+
+spec §2 §3: UUID Keychain-only, SHA-256(uuid:salt) sent to server.
+- KeychainHelper: upsert/load/delete CRUD with app group accessGroup
+- DeviceUUIDStore: lazy UUID generation, hex-encoded SHA-256 hash
+- Phase 2: salt from Info.plist (DEV_SERVER_SALT), Phase 5 switches to feature-flags.json"
+```
+
+### Task 4.3: HMACTokenStore (token caching, thread-safe) TDD
+
+ephemeral HMAC token は 5 分有効。連続報告時に毎回 `/v1/reports/token` を叩くと帯域・rate limit 損失。scope ごとにキャッシュ。
+
+**Files:**
+- Create: `App/Networking/HMACTokenStore.swift`
+- Create: `Tests/App/Networking/HMACTokenStoreTests.swift`
+
+#### 仕様詳細
+
+| 項目 | 値 |
+|---|---|
+| 保存先 | in-memory (起動間で持ち越さず、毎セッション再取得) |
+| キー | `TokenScope` enum (`.submit`, `.history`, `.delete`) |
+| 有効性判定 | `expiresAt > Date() + 30秒` (clock skew 余裕 30 秒) |
+| thread safety | `actor HMACTokenStore` で隔離 |
+| 失敗時の状態 | キャッシュ無し、次回 API 取得 |
+
+- [ ] **Step 1: TokenScope と HMACToken 型定義 (まず型から)**
+
+`App/Networking/HMACTokenStore.swift` の先頭部分:
+
+```swift
+import Foundation
+
+enum TokenScope: String, Codable, CaseIterable {
+    case submit
+    case history
+    case delete
+}
+
+struct HMACToken: Equatable, Codable {
+    let value: String                  // signed token string
+    let scope: TokenScope
+    let expiresAt: Date
+
+    func isValid(now: Date = Date(), skew: TimeInterval = 30) -> Bool {
+        return expiresAt > now.addingTimeInterval(skew)
+    }
+}
+```
+
+- [ ] **Step 2: Failing test**
+
+`Tests/App/Networking/HMACTokenStoreTests.swift`:
+
+```swift
+import XCTest
+@testable import AdblockKeshi
+
+final class HMACTokenStoreTests: XCTestCase {
+    func testStore_initiallyEmpty() async {
+        let store = HMACTokenStore()
+        let token = await store.get(scope: .submit)
+        XCTAssertNil(token)
+    }
+
+    func testStore_saveAndGet() async {
+        let store = HMACTokenStore()
+        let token = HMACToken(
+            value: "abc.def",
+            scope: .submit,
+            expiresAt: Date().addingTimeInterval(300)
+        )
+        await store.set(token)
+        let loaded = await store.get(scope: .submit)
+        XCTAssertEqual(loaded, token)
+    }
+
+    func testStore_returnsNilForExpiredToken() async {
+        let store = HMACTokenStore()
+        let expiredToken = HMACToken(
+            value: "old.token",
+            scope: .submit,
+            expiresAt: Date().addingTimeInterval(-60)
+        )
+        await store.set(expiredToken)
+        let loaded = await store.get(scope: .submit)
+        XCTAssertNil(loaded, "Expired token should not be returned")
+    }
+
+    func testStore_returnsNilForNearExpiryToken_skewBuffer() async {
+        let store = HMACTokenStore()
+        // 残り 20 秒 = skew 30 秒以下 → 無効扱い
+        let token = HMACToken(
+            value: "near-expiry",
+            scope: .submit,
+            expiresAt: Date().addingTimeInterval(20)
+        )
+        await store.set(token)
+        let loaded = await store.get(scope: .submit)
+        XCTAssertNil(loaded, "Token within skew buffer should be invalid")
+    }
+
+    func testStore_scopeKeyed() async {
+        let store = HMACTokenStore()
+        let submitToken = HMACToken(value: "s.token", scope: .submit, expiresAt: Date().addingTimeInterval(300))
+        let historyToken = HMACToken(value: "h.token", scope: .history, expiresAt: Date().addingTimeInterval(300))
+
+        await store.set(submitToken)
+        await store.set(historyToken)
+
+        let s = await store.get(scope: .submit)
+        let h = await store.get(scope: .history)
+        let d = await store.get(scope: .delete)
+
+        XCTAssertEqual(s, submitToken)
+        XCTAssertEqual(h, historyToken)
+        XCTAssertNil(d)
+    }
+
+    func testStore_invalidateRemovesToken() async {
+        let store = HMACTokenStore()
+        let token = HMACToken(value: "abc", scope: .submit, expiresAt: Date().addingTimeInterval(300))
+        await store.set(token)
+        await store.invalidate(scope: .submit)
+        let loaded = await store.get(scope: .submit)
+        XCTAssertNil(loaded)
+    }
+
+    func testStore_concurrentReadsAreThreadSafe() async {
+        let store = HMACTokenStore()
+        let token = HMACToken(value: "concurrent", scope: .submit, expiresAt: Date().addingTimeInterval(300))
+        await store.set(token)
+
+        await withTaskGroup(of: HMACToken?.self) { group in
+            for _ in 0..<50 {
+                group.addTask { await store.get(scope: .submit) }
+            }
+            var results: [HMACToken?] = []
+            for await result in group { results.append(result) }
+            XCTAssertEqual(results.compactMap { $0 }.count, 50)
+        }
+    }
+}
+```
+
+- [ ] **Step 3: test 実行 → fail 確認**
+
+Expected: FAIL (HMACTokenStore actor 未定義)
+
+- [ ] **Step 4: HMACTokenStore actor 実装**
+
+`App/Networking/HMACTokenStore.swift` に追加:
+
+```swift
+actor HMACTokenStore {
+    private var tokens: [TokenScope: HMACToken] = [:]
+
+    func get(scope: TokenScope) -> HMACToken? {
+        guard let token = tokens[scope], token.isValid() else {
+            tokens.removeValue(forKey: scope)
+            return nil
+        }
+        return token
+    }
+
+    func set(_ token: HMACToken) {
+        tokens[token.scope] = token
+    }
+
+    func invalidate(scope: TokenScope) {
+        tokens.removeValue(forKey: scope)
+    }
+
+    func invalidateAll() {
+        tokens.removeAll()
+    }
+}
+```
+
+- [ ] **Step 5: test pass 確認**
+
+```bash
+xcodebuild test ... -only-testing:AdblockKeshiTests/HMACTokenStoreTests
+```
+
+Expected: 7 tests passed (concurrent も)
+
+- [ ] **Step 6: commit**
+
+```bash
+git add App/Networking/HMACTokenStore.swift Tests/App/Networking/HMACTokenStoreTests.swift
+git commit -m "feat(v3): add HMACTokenStore (actor) with scope-keyed cache + 30s skew
+
+- ephemeral 5min tokens, in-memory only, per-scope
+- skew buffer for near-expiry rejection
+- thread-safe via actor isolation"
+```
+
+### Task 4.4: APIError + Workers レスポンス型定義 (TDD)
+
+API 通信の error 型と Workers レスポンス DTO を独立 module に。
+
+**Files:**
+- Create: `App/Networking/APIError.swift`
+- Create: `App/Networking/WorkersResponseDTO.swift`
+- Create: `Tests/App/Networking/APIErrorTests.swift`
+- Create: `Tests/App/Networking/WorkersResponseDTOTests.swift`
+- Create: `Tests/Fixtures/workers_responses/submit_success.json`
+- Create: `Tests/Fixtures/workers_responses/submit_rate_limited.json`
+- Create: `Tests/Fixtures/workers_responses/token_response.json`
+
+- [ ] **Step 1: Fixture 作成**
+
+`Tests/Fixtures/workers_responses/submit_success.json`:
+
+```json
+{
+  "id": "01HYZ1234567890ABCDEFGHIJK",
+  "status": "pending",
+  "received_at": 1718000000,
+  "memo_redacted": false
+}
+```
+
+`Tests/Fixtures/workers_responses/submit_rate_limited.json`:
+
+```json
+{
+  "error": "rate_limit_exceeded",
+  "message": "1日5件の上限に達しました。明日また送信できます。",
+  "retry_after": 86400
+}
+```
+
+`Tests/Fixtures/workers_responses/token_response.json`:
+
+```json
+{
+  "token": "eyJzdWJqZWN0IjoiYWJjMTIzIiwiZXhwaXJlcyI6MTcxODAwMDMwMDAwMCwic2NvcGUiOiJzdWJtaXQifQ==.signature_base64",
+  "expires_at": 1718000300,
+  "server_salt": "phase2-server-salt-value"
+}
+```
+
+- [ ] **Step 2: APIError test**
+
+`Tests/App/Networking/APIErrorTests.swift`:
+
+```swift
+import XCTest
+@testable import AdblockKeshi
+
+final class APIErrorTests: XCTestCase {
+    func testNetworkUnavailable_localizedDescription() {
+        let err = APIError.networkUnavailable
+        XCTAssertTrue(err.localizedDescription.contains("インターネット") || err.localizedDescription.contains("接続"))
+    }
+
+    func testRateLimitExceeded_includesRetryAfter() {
+        let err = APIError.rateLimitExceeded(retryAfter: 86400)
+        XCTAssertTrue(err.localizedDescription.contains("上限") || err.localizedDescription.contains("明日"))
+    }
+
+    func testValidationFailed_includesField() {
+        let err = APIError.validationFailed(field: "url", reason: "invalid_format")
+        XCTAssertTrue(err.localizedDescription.contains("url") || err.localizedDescription.contains("URL"))
+    }
+
+    func testServerError_5xxIsRetryable() {
+        XCTAssertTrue(APIError.serverError(statusCode: 500, body: nil).isRetryable)
+        XCTAssertTrue(APIError.serverError(statusCode: 503, body: nil).isRetryable)
+    }
+
+    func testServerError_4xxIsNotRetryable() {
+        XCTAssertFalse(APIError.serverError(statusCode: 400, body: nil).isRetryable)
+        XCTAssertFalse(APIError.serverError(statusCode: 404, body: nil).isRetryable)
+    }
+
+    func testRateLimitIsNotRetryable_inShortTerm() {
+        XCTAssertFalse(APIError.rateLimitExceeded(retryAfter: 86400).isRetryable)
+    }
+
+    func testNetworkErrorIsRetryable() {
+        XCTAssertTrue(APIError.networkUnavailable.isRetryable)
+    }
+}
+```
+
+- [ ] **Step 3: APIError 実装**
+
+`App/Networking/APIError.swift`:
+
+```swift
+import Foundation
+
+enum APIError: LocalizedError {
+    case networkUnavailable
+    case rateLimitExceeded(retryAfter: TimeInterval)
+    case validationFailed(field: String, reason: String)
+    case turnstileVerificationFailed
+    case unauthorized                      // token verify failed
+    case banned(level: Int, expiresAt: Date)
+    case serverError(statusCode: Int, body: Data?)
+    case decodingFailed(underlying: Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .networkUnavailable:
+            return "インターネット接続を確認してください"
+        case .rateLimitExceeded(let after):
+            let hours = Int(after / 3600)
+            if hours >= 24 {
+                return "1 日の上限に達しました。明日また送信できます"
+            } else if hours >= 1 {
+                return "送信間隔の上限に達しました。\(hours) 時間後にお試しください"
+            } else {
+                return "送信間隔が短すぎます。少し時間を空けてください"
+            }
+        case .validationFailed(let field, let reason):
+            return "入力エラー (\(field)): \(reason)"
+        case .turnstileVerificationFailed:
+            return "確認に失敗しました。もう一度お試しください"
+        case .unauthorized:
+            return "認証エラーです。アプリを再起動してください"
+        case .banned(let level, _):
+            return "報告機能が一時的に制限されています (level \(level))"
+        case .serverError(let code, _):
+            return "サーバエラー (HTTP \(code))。少し時間を空けて再試行してください"
+        case .decodingFailed:
+            return "サーバの応答を解釈できませんでした"
+        }
+    }
+
+    var isRetryable: Bool {
+        switch self {
+        case .networkUnavailable, .serverError(let code, _) where (500...599).contains(code):
+            return true
+        case .serverError:
+            return false
+        case .rateLimitExceeded, .validationFailed, .turnstileVerificationFailed,
+             .unauthorized, .banned, .decodingFailed:
+            return false
+        }
+    }
+}
+```
+
+- [ ] **Step 4: WorkersResponseDTO test と実装**
+
+`Tests/App/Networking/WorkersResponseDTOTests.swift`:
+
+```swift
+import XCTest
+@testable import AdblockKeshi
+
+final class WorkersResponseDTOTests: XCTestCase {
+    private func loadFixture(_ name: String) throws -> Data {
+        guard let url = Bundle(for: type(of: self)).url(
+            forResource: name, withExtension: "json", subdirectory: "Fixtures/workers_responses"
+        ) else { throw XCTSkip("missing fixture") }
+        return try Data(contentsOf: url)
+    }
+
+    func testTokenResponse_decode() throws {
+        let data = try loadFixture("token_response")
+        let dto = try JSONDecoder().decode(TokenResponseDTO.self, from: data)
+        XCTAssertFalse(dto.token.isEmpty)
+        XCTAssertEqual(dto.expiresAt, Date(timeIntervalSince1970: 1718000300))
+        XCTAssertEqual(dto.serverSalt, "phase2-server-salt-value")
+    }
+
+    func testSubmitSuccessResponse_decode() throws {
+        let data = try loadFixture("submit_success")
+        let dto = try JSONDecoder().decode(SubmitResponseDTO.self, from: data)
+        XCTAssertEqual(dto.id, "01HYZ1234567890ABCDEFGHIJK")
+        XCTAssertEqual(dto.status, "pending")
+        XCTAssertFalse(dto.memoRedacted)
+    }
+
+    func testRateLimitErrorResponse_decode() throws {
+        let data = try loadFixture("submit_rate_limited")
+        let dto = try JSONDecoder().decode(APIErrorResponseDTO.self, from: data)
+        XCTAssertEqual(dto.error, "rate_limit_exceeded")
+        XCTAssertNotNil(dto.retryAfter)
+        XCTAssertEqual(dto.retryAfter, 86400)
+    }
+}
+```
+
+`App/Networking/WorkersResponseDTO.swift`:
+
+```swift
+import Foundation
+
+// MARK: - Request DTOs
+
+struct TokenRequestDTO: Encodable {
+    let turnstileResponse: String
+    let scope: String
+
+    enum CodingKeys: String, CodingKey {
+        case turnstileResponse = "turnstile_response"
+        case scope
+    }
+}
+
+struct SubmitRequestDTO: Encodable {
+    let token: String
+    let uuidHash: String
+    let url: String
+    let memo: String?
+
+    enum CodingKeys: String, CodingKey {
+        case token
+        case uuidHash = "uuid_hash"
+        case url, memo
+    }
+}
+
+struct HistoryRequestDTO: Encodable {
+    let token: String
+    let uuidHash: String
+
+    enum CodingKeys: String, CodingKey {
+        case token
+        case uuidHash = "uuid_hash"
+    }
+}
+
+struct DeletionRequestDTO: Encodable {
+    let token: String
+    let uuidHash: String
+    let urlPathHash: String?
+
+    enum CodingKeys: String, CodingKey {
+        case token
+        case uuidHash = "uuid_hash"
+        case urlPathHash = "url_path_hash"
+    }
+}
+
+// MARK: - Response DTOs
+
+struct TokenResponseDTO: Decodable {
+    let token: String
+    let expiresAt: Date
+    let serverSalt: String
+
+    enum CodingKeys: String, CodingKey {
+        case token
+        case expiresAt = "expires_at"
+        case serverSalt = "server_salt"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.token = try c.decode(String.self, forKey: .token)
+        self.expiresAt = Date(timeIntervalSince1970: TimeInterval(try c.decode(Int64.self, forKey: .expiresAt)))
+        self.serverSalt = try c.decode(String.self, forKey: .serverSalt)
+    }
+}
+
+struct SubmitResponseDTO: Decodable {
+    let id: String
+    let status: String
+    let receivedAt: Date
+    let memoRedacted: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, status
+        case receivedAt = "received_at"
+        case memoRedacted = "memo_redacted"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.status = try c.decode(String.self, forKey: .status)
+        self.receivedAt = Date(timeIntervalSince1970: TimeInterval(try c.decode(Int64.self, forKey: .receivedAt)))
+        self.memoRedacted = try c.decode(Bool.self, forKey: .memoRedacted)
+    }
+}
+
+struct APIErrorResponseDTO: Decodable {
+    let error: String
+    let message: String
+    let retryAfter: TimeInterval?
+
+    enum CodingKeys: String, CodingKey {
+        case error, message
+        case retryAfter = "retry_after"
+    }
+}
+```
+
+- [ ] **Step 5: test pass + commit**
+
+```bash
+xcodebuild test ... -only-testing:AdblockKeshiTests/APIErrorTests \
+                   -only-testing:AdblockKeshiTests/WorkersResponseDTOTests
+
+git add App/Networking/APIError.swift App/Networking/WorkersResponseDTO.swift \
+        Tests/App/Networking/APIErrorTests.swift Tests/App/Networking/WorkersResponseDTOTests.swift \
+        Tests/Fixtures/workers_responses/submit_success.json \
+        Tests/Fixtures/workers_responses/submit_rate_limited.json \
+        Tests/Fixtures/workers_responses/token_response.json
+git commit -m "feat(v3): add APIError + Workers DTOs
+
+- APIError: 8 cases with Japanese localizedDescription
+- isRetryable for backoff logic
+- Encodable request DTOs + Decodable response DTOs
+- Fixtures for token/submit success+rate_limit"
+```
+
+### Task 4.5: ReportAPIClientProtocol + Mock URLProtocol テストハーネス
+
+URLSession を直接 inject せず、`URLProtocol` カスタム実装で test request を intercept する。これは Apple 公式パターン。
 
 **Files:**
 - Create: `App/Networking/ReportAPIClient.swift`
-- Create: `App/Networking/APIError.swift`
-- Create: `Tests/App/Networking/ReportAPIClientTests.swift`, `APIErrorTests.swift`
+- Create: `Tests/App/Networking/MockURLProtocol.swift`
+- Create: `Tests/App/Networking/ReportAPIClientTests.swift`
 
-API 仕様:
-- `func requestToken(turnstileResponse: String, scope: TokenScope) async throws -> Token`
-- `func submitReport(token: Token, url: URL, memo: String?) async throws`
-- `func fetchHistory(token: Token) async throws -> [ReportHistoryItem]`
-- `func requestDeletion(token: Token, urlPathHash: String?) async throws`
+#### 仕様詳細
 
-- [ ] **Step 1-N: URLSession の inject 可能なテストハーネス + Workers レスポンス fixture + mock URLProtocol で full coverage**
+| 観点 | 仕様 |
+|---|---|
+| baseURL | Phase 2 = `https://adblockkeshi-reports.kureho.workers.dev` (Phase 5 で feature-flags.json) |
+| timeout | 連結 timeout 30 秒、データ受信 60 秒 |
+| Content-Type | `application/json` |
+| Accept | `application/json` |
+| User-Agent | `AdblockKeshi/3.0 (iOS)` |
+| 認証 | token は body に含める (header ではない、IDOR 防止) |
 
-### Task 4.5: ReportFormView と APIClient の接続
+- [ ] **Step 1: ReportAPIClientProtocol 定義**
 
-- [ ] **Step 1-N: フォーム送信 → APIClient → Workers 実通信 → 成功 → SentView 遷移、エラー → Form に戻る + Toast**
+`App/Networking/ReportAPIClient.swift` の先頭:
 
-### Chunk 4 完了 → PR
+```swift
+import Foundation
+
+protocol ReportAPIClientProtocol {
+    func requestToken(turnstileResponse: String, scope: TokenScope) async throws -> (HMACToken, String /* server_salt */)
+    func submitReport(url: URL, memo: String?) async throws -> SubmitResponseDTO
+    func fetchHistory() async throws -> ReportHistoryResponse
+    func requestDeletion(urlPathHash: String?) async throws
+}
+```
+
+- [ ] **Step 2: MockURLProtocol 作成 (test 用 stub)**
+
+`Tests/App/Networking/MockURLProtocol.swift`:
+
+```swift
+import Foundation
+
+final class MockURLProtocol: URLProtocol {
+    static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data?))?
+    static var receivedRequests: [URLRequest] = []
+
+    static func reset() {
+        requestHandler = nil
+        receivedRequests = []
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = MockURLProtocol.requestHandler else {
+            client?.urlProtocol(self, didFailWithError: NSError(domain: "MockURLProtocol", code: -1))
+            return
+        }
+        MockURLProtocol.receivedRequests.append(request)
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            if let data { client?.urlProtocol(self, didLoad: data) }
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+extension URLSession {
+    static func makeMocked() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        return URLSession(configuration: config)
+    }
+}
+```
+
+- [ ] **Step 3: ReportAPIClient failing test (token request)**
+
+`Tests/App/Networking/ReportAPIClientTests.swift`:
+
+```swift
+import XCTest
+@testable import AdblockKeshi
+
+final class ReportAPIClientTests: XCTestCase {
+    private var session: URLSession!
+    private var uuidStore: DeviceUUIDStore!
+    private var tokenStore: HMACTokenStore!
+    private var client: ReportAPIClient!
+    private let baseURL = URL(string: "https://test.workers.dev")!
+
+    override func setUp() {
+        super.setUp()
+        MockURLProtocol.reset()
+        session = URLSession.makeMocked()
+        let keychain = KeychainHelper(service: "test.api.client.\(UUID())", accessGroup: nil)
+        uuidStore = DeviceUUIDStore(keychain: keychain, serverSalt: "test-salt")
+        tokenStore = HMACTokenStore()
+        client = ReportAPIClient(
+            baseURL: baseURL,
+            session: session,
+            uuidStore: uuidStore,
+            tokenStore: tokenStore
+        )
+    }
+
+    func testRequestToken_postsCorrectBody() async throws {
+        MockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.url?.absoluteString, "https://test.workers.dev/v1/reports/token")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+
+            let body = self.bodyOfRequest(request)
+            let dto = try JSONDecoder().decode(TokenRequestDTO.self, from: body)
+            XCTAssertEqual(dto.turnstileResponse, "tr-response-123")
+            XCTAssertEqual(dto.scope, "submit")
+
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let respData = """
+            {"token":"abc.def","expires_at":\(Int(Date().timeIntervalSince1970) + 300),"server_salt":"new-salt"}
+            """.data(using: .utf8)!
+            return (response, respData)
+        }
+
+        let (token, salt) = try await client.requestToken(turnstileResponse: "tr-response-123", scope: .submit)
+        XCTAssertEqual(token.value, "abc.def")
+        XCTAssertEqual(token.scope, .submit)
+        XCTAssertTrue(token.isValid())
+        XCTAssertEqual(salt, "new-salt")
+    }
+
+    func testRequestToken_400_throwsTurnstileFailed() async {
+        MockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 400, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {"error":"turnstile_failed","message":"verification failed"}
+            """.data(using: .utf8)!
+            return (response, body)
+        }
+
+        do {
+            _ = try await client.requestToken(turnstileResponse: "bad", scope: .submit)
+            XCTFail("Expected throw")
+        } catch let error as APIError {
+            if case .turnstileVerificationFailed = error {
+                // expected
+            } else {
+                XCTFail("Wrong error: \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
+    }
+
+    func testSubmitReport_postsTokenAndUUIDHashAndURL() async throws {
+        // 既に submit token がキャッシュにある状態
+        let cachedToken = HMACToken(value: "cached.token", scope: .submit, expiresAt: Date().addingTimeInterval(300))
+        await tokenStore.set(cachedToken)
+
+        MockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.url?.path, "/v1/reports/submit")
+            let body = self.bodyOfRequest(request)
+            let dto = try JSONDecoder().decode(SubmitRequestDTO.self, from: body)
+            XCTAssertEqual(dto.token, "cached.token")
+            XCTAssertEqual(dto.url, "https://example.com/article")
+            XCTAssertEqual(dto.memo, "オーバーレイ広告")
+            XCTAssertFalse(dto.uuidHash.isEmpty)
+
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let respData = """
+            {"id":"01HYZ","status":"pending","received_at":\(Int(Date().timeIntervalSince1970)),"memo_redacted":false}
+            """.data(using: .utf8)!
+            return (response, respData)
+        }
+
+        let result = try await client.submitReport(url: URL(string: "https://example.com/article")!, memo: "オーバーレイ広告")
+        XCTAssertEqual(result.id, "01HYZ")
+        XCTAssertEqual(result.status, "pending")
+    }
+
+    func testSubmitReport_429_throwsRateLimit() async {
+        let cachedToken = HMACToken(value: "t", scope: .submit, expiresAt: Date().addingTimeInterval(300))
+        await tokenStore.set(cachedToken)
+
+        MockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 429, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {"error":"rate_limit_exceeded","message":"daily limit","retry_after":86400}
+            """.data(using: .utf8)!
+            return (response, body)
+        }
+
+        do {
+            _ = try await client.submitReport(url: URL(string: "https://x.com")!, memo: nil)
+            XCTFail("Expected throw")
+        } catch let error as APIError {
+            if case .rateLimitExceeded(let after) = error {
+                XCTAssertEqual(after, 86400)
+            } else {
+                XCTFail("Wrong error: \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testFetchHistory_sendsTokenAndUUIDHash() async throws {
+        let cachedToken = HMACToken(value: "h.token", scope: .history, expiresAt: Date().addingTimeInterval(300))
+        await tokenStore.set(cachedToken)
+
+        MockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.url?.path, "/v1/reports/history")
+            let body = self.bodyOfRequest(request)
+            let dto = try JSONDecoder().decode(HistoryRequestDTO.self, from: body)
+            XCTAssertEqual(dto.token, "h.token")
+            XCTAssertFalse(dto.uuidHash.isEmpty)
+
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let respData = """
+            {"items":[],"fetched_at":\(Int(Date().timeIntervalSince1970))}
+            """.data(using: .utf8)!
+            return (response, respData)
+        }
+
+        let result = try await client.fetchHistory()
+        XCTAssertEqual(result.items.count, 0)
+    }
+
+    func testRequestToken_networkUnavailable_throwsNetworkError() async {
+        MockURLProtocol.requestHandler = { _ in
+            throw URLError(.notConnectedToInternet)
+        }
+
+        do {
+            _ = try await client.requestToken(turnstileResponse: "x", scope: .submit)
+            XCTFail("Expected throw")
+        } catch let error as APIError {
+            if case .networkUnavailable = error {
+                // expected
+            } else {
+                XCTFail("Wrong: \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected: \(error)")
+        }
+    }
+
+    // helper: HTTPBodyStream を Data に変換
+    private func bodyOfRequest(_ request: URLRequest) -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        var data = Data()
+        stream.open()
+        let bufferSize = 4096
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        defer { buffer.deallocate(); stream.close() }
+        while stream.hasBytesAvailable {
+            let read = stream.read(buffer, maxLength: bufferSize)
+            if read <= 0 { break }
+            data.append(buffer, count: read)
+        }
+        return data
+    }
+}
+```
+
+- [ ] **Step 4: test 実行 → fail 確認** (ReportAPIClient 未実装)
+
+- [ ] **Step 5: ReportAPIClient 本体実装**
+
+`App/Networking/ReportAPIClient.swift` に追加:
+
+```swift
+final class ReportAPIClient: ReportAPIClientProtocol {
+    private let baseURL: URL
+    private let session: URLSession
+    private let uuidStore: DeviceUUIDStore
+    private let tokenStore: HMACTokenStore
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
+
+    init(baseURL: URL,
+         session: URLSession = .shared,
+         uuidStore: DeviceUUIDStore,
+         tokenStore: HMACTokenStore = HMACTokenStore()) {
+        self.baseURL = baseURL
+        self.session = session
+        self.uuidStore = uuidStore
+        self.tokenStore = tokenStore
+        self.encoder = JSONEncoder()
+        self.decoder = JSONDecoder()
+    }
+
+    func requestToken(turnstileResponse: String, scope: TokenScope) async throws -> (HMACToken, String) {
+        let url = baseURL.appendingPathComponent("/v1/reports/token")
+        var request = makeBaseRequest(url: url)
+        let body = TokenRequestDTO(turnstileResponse: turnstileResponse, scope: scope.rawValue)
+        request.httpBody = try encoder.encode(body)
+
+        let dto: TokenResponseDTO = try await send(request, decodingErrorFor: .turnstileVerificationFailed)
+        let token = HMACToken(value: dto.token, scope: scope, expiresAt: dto.expiresAt)
+        await tokenStore.set(token)
+        return (token, dto.serverSalt)
+    }
+
+    func submitReport(url: URL, memo: String?) async throws -> SubmitResponseDTO {
+        let token = try await acquireToken(scope: .submit)
+        let uuidHash = try uuidStore.getUUIDHash()
+        let endpoint = baseURL.appendingPathComponent("/v1/reports/submit")
+        var request = makeBaseRequest(url: endpoint)
+        let body = SubmitRequestDTO(token: token.value, uuidHash: uuidHash, url: url.absoluteString, memo: memo)
+        request.httpBody = try encoder.encode(body)
+        return try await send(request, decodingErrorFor: nil)
+    }
+
+    func fetchHistory() async throws -> ReportHistoryResponse {
+        let token = try await acquireToken(scope: .history)
+        let uuidHash = try uuidStore.getUUIDHash()
+        let endpoint = baseURL.appendingPathComponent("/v1/reports/history")
+        var request = makeBaseRequest(url: endpoint)
+        let body = HistoryRequestDTO(token: token.value, uuidHash: uuidHash)
+        request.httpBody = try encoder.encode(body)
+        return try await send(request, decodingErrorFor: nil)
+    }
+
+    func requestDeletion(urlPathHash: String?) async throws {
+        let token = try await acquireToken(scope: .delete)
+        let uuidHash = try uuidStore.getUUIDHash()
+        let endpoint = baseURL.appendingPathComponent("/v1/reports/delete")
+        var request = makeBaseRequest(url: endpoint)
+        let body = DeletionRequestDTO(token: token.value, uuidHash: uuidHash, urlPathHash: urlPathHash)
+        request.httpBody = try encoder.encode(body)
+        let _: SubmitResponseDTO? = try? await send(request, decodingErrorFor: nil)
+    }
+
+    // MARK: - private
+
+    private func acquireToken(scope: TokenScope) async throws -> HMACToken {
+        if let cached = await tokenStore.get(scope: scope) { return cached }
+        // Phase 2 では Turnstile 連携が UI 側に無い場合のフォールバック:
+        // テスト時は事前に tokenStore に set される、本番は ReportFormView 経由で
+        // Turnstile WebView 完了後 requestToken 呼び出し済みであることが前提。
+        throw APIError.unauthorized
+    }
+
+    private func makeBaseRequest(url: URL) -> URLRequest {
+        var r = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
+        r.httpMethod = "POST"
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue("application/json", forHTTPHeaderField: "Accept")
+        r.setValue("AdblockKeshi/3.0 (iOS)", forHTTPHeaderField: "User-Agent")
+        return r
+    }
+
+    private func send<T: Decodable>(_ request: URLRequest, decodingErrorFor specificError: APIError?) async throws -> T {
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw APIError.networkUnavailable
+            }
+            switch http.statusCode {
+            case 200..<300:
+                do { return try decoder.decode(T.self, from: data) }
+                catch { throw APIError.decodingFailed(underlying: error) }
+            case 400:
+                if let err = specificError { throw err }
+                throw try APIError.fromBody(data: data, statusCode: 400)
+            case 401, 403:
+                throw APIError.unauthorized
+            case 429:
+                throw try APIError.fromBody(data: data, statusCode: 429)
+            case 500..<600:
+                throw APIError.serverError(statusCode: http.statusCode, body: data)
+            default:
+                throw APIError.serverError(statusCode: http.statusCode, body: data)
+            }
+        } catch let urlError as URLError where [.notConnectedToInternet, .networkConnectionLost, .timedOut].contains(urlError.code) {
+            throw APIError.networkUnavailable
+        } catch let apiError as APIError {
+            throw apiError
+        } catch {
+            throw APIError.decodingFailed(underlying: error)
+        }
+    }
+}
+
+extension APIError {
+    static func fromBody(data: Data, statusCode: Int) throws -> APIError {
+        let dto = try JSONDecoder().decode(APIErrorResponseDTO.self, from: data)
+        switch dto.error {
+        case "turnstile_failed": return .turnstileVerificationFailed
+        case "rate_limit_exceeded": return .rateLimitExceeded(retryAfter: dto.retryAfter ?? 3600)
+        case "validation_failed": return .validationFailed(field: "url", reason: dto.message)
+        case "banned": return .banned(level: 1, expiresAt: Date(timeIntervalSinceNow: dto.retryAfter ?? 86400))
+        default: return .serverError(statusCode: statusCode, body: data)
+        }
+    }
+}
+```
+
+- [ ] **Step 6: test pass 確認**
+
+```bash
+xcodebuild test ... -only-testing:AdblockKeshiTests/ReportAPIClientTests 2>&1 | tail -20
+```
+
+Expected: 6 tests passed
+
+- [ ] **Step 7: commit**
+
+```bash
+git add App/Networking/ReportAPIClient.swift Tests/App/Networking/MockURLProtocol.swift \
+        Tests/App/Networking/ReportAPIClientTests.swift
+git commit -m "feat(v3): add ReportAPIClient with URLProtocol-based test harness
+
+- Protocol-oriented ReportAPIClientProtocol (history tests already use it)
+- POST-only API, JSON body, no token in headers (IDOR防止)
+- HMAC token cache integration (acquireToken)
+- APIError.fromBody mapping for 400/429/banned response shapes
+- 6 test cases covering token/submit/history/network/rate limit/turnstile"
+```
+
+### Task 4.6: ReportFormView を APIClient に接続 (TDD + シミュレータ確認)
+
+Chunk 3 で作った ReportFormView の送信処理を実 API client に差し替え。Turnstile WebView 連携は Phase 2 では「open-text Turnstile site key で UI integration test」、Phase 5 で本番化。
+
+**Files:**
+- Modify: `App/ReportTab/ReportFormView.swift`
+- Modify: `App/ReportTab/ReportFormViewModel.swift` (新規 or 既存修正、Chunk 3 で先に作る前提)
+
+- [ ] **Step 1: ReportFormViewModel の failing test (submit 成功シナリオ)**
+
+```swift
+@MainActor
+final class ReportFormViewModelTests: XCTestCase {
+    func testSubmit_success_callsOnSuccess() async {
+        let api = MockReportAPIClient()
+        api.stubSubmitResult = .success(SubmitResponseDTO(
+            id: "01HYZ", status: "pending",
+            receivedAt: Date(), memoRedacted: false
+        ))
+        var successCalled = false
+        let vm = ReportFormViewModel(apiClient: api, onSuccess: { successCalled = true })
+        vm.url = "https://example.com/a"
+        vm.memo = "test"
+        await vm.submit()
+        XCTAssertTrue(successCalled)
+        XCTAssertEqual(vm.state, .idle)
+    }
+    // 他: error, validating, rate limit, 等
+}
+```
+
+- [ ] **Step 2-5: 実装、シミュレータでフォーム送信 → Sent 遷移確認、commit**
+
+### Task 4.7: Chunk 4 完了確認 + PR
+
+- [ ] **Step 1**: 全 test pass、シミュレータ E2E (フォーム → 送信 → Sent → 履歴で表示確認)、PR 作成、kureho 承認後 merge
+
+### Chunk 4 完了 → 次は Chunk 5 (履歴 UI、既に詳細化済み)
 
 ---
 
