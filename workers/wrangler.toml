@@ -3,7 +3,7 @@
 
 name = "adblockkeshi-reports"
 main = "src/index.ts"
-compatibility_date = "2026-06-07"
+compatibility_date = "2024-09-09"  # miniflare (vitest-pool-workers@0.5) サポート上限。production deploy 時は wrangler が最新 date で上書き可能。
 compatibility_flags = ["nodejs_compat"]
 
 # D1 binding (Task 2.2 で kureho の Cloudflare account に database 作成後、database_id を埋める)
