@@ -793,7 +793,7 @@ main (v2.1.1 配信中、緊急 hotfix 余地確保)
 | Apple 審査 | 1.2 UGC reject | **中 (rev3: Apple は人手 moderation を暗黙に期待する文化、過度な「全自動」訴求は逆効果)** | release 1-2 週遅延 | review notes でトーンダウン (automated + escalation via Resolution Center)、kureho が abuse 報告に 24h で人手対応する点も明示 |
 | Apple 審査 | 5.2.5 metadata 残骸 | 低 | 同上 | 提出前 grep、CI hook |
 | Apple 審査 | 5.1.1 Privacy 不整合 | 低 | 同上 | Privacy Policy + Nutrition Label 提出前完全一致 |
-| Apple 審査 | 「完全自動」誤読 → moderation 質問 | **低 (rev2)** | release +3-5 日 | review notes に "FULLY AUTOMATED, no human intervention except Resolution Center" 明示 |
+| Apple 審査 | 「完全自動」誤読 → moderation 質問 | 低 | release +3-5 日 | review notes に "automated pipeline with developer escalation via Resolution Center for issues automation cannot handle" 明示、kureho が abuse 報告に 24h 人手対応する点も明記 (rev4: §6 本文と整合) |
 | 価格 | 機能追加 + 値上げ同時で初動 DL 落ち | 中 | 売上減 | 4 週 KPI monitor、¥600 retreat 余地 |
 | 既存ユーザー | 「いきなり値上げ」反発 | 低 | review 低下 | 買い切り影響なしを WhatsNew で説明 |
 | 技術 | 2 extension 上限超え | 低 | 設計やり直し | **4 段階 fallback Path 1-4 (rev2 強化)** |
