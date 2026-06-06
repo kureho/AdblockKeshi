@@ -1,8 +1,8 @@
 <!-- [paid-approved-by-kureho] spec doc 文書のみ、ASC API 呼び出しなし、課金影響なし -->
 # 広告消し v3.0「学習する広告消し」設計 spec
 
-**日付**: 2026-06-06 (rev2 2026-06-07: spec review #1 反映 / rev3 2026-06-07: spec review #2 反映)
-**status**: Draft (spec review #2 反映済、#3 dispatch 予定)
+**日付**: 2026-06-06 (rev2 2026-06-07: spec review #1 反映 / rev3 2026-06-07: spec review #2 反映 / rev4 2026-06-07: spec review #3 反映)
+**status**: Draft (spec review #3 反映済、#4 で approval 期待)
 **対象アプリ**: 広告消し (com.kureho.adblockkeshi、App ID 6774906945)
 **現配信中**: v2.1.1 (READY_FOR_SALE、2026-06-04 配信開始、ASC API verify 済)
 **提出予定**: v3.0.0 build 12
@@ -85,6 +85,7 @@ v3.0: TabView 2 タブ
 [報告履歴] v3.0 で実装
   ・ステータス: pending / validating / approved / rejected_no_ad_detected / rejected_safety_gate
   ・取得: POST /v1/reports/history + HMAC token (IDOR 防止)
+  ・memo 表示: D1 保存値 (PII redact 済) を返す。redact 発火項目には「個人情報を含む可能性があるため一部を伏せて保存しました」の注記バッジを表示 (rev4: UI 透明性確保)
 ```
 
 ### 含めないもの (YAGNI)
@@ -626,6 +627,7 @@ final class RemoteConfigStore {
 | **emergency_kill_switch (rev3 追加、Apple 緊急 OFF 用)** | **fail-CLOSED**: 初回 network 失敗時 = `true` 扱い (機能 OFF)、CDN reachable で `false` を確認するまで報告タブ非表示 |
 | network 失敗時 (2 回目以降) | 直近成功値を使用 (永続キャッシュ) |
 | feature-flags.json 構造 (rev3 拡張) | `{ "report_tab_enabled": true, "emergency_kill_switch": false, "version": "v2" }` |
+| **🆕 evaluation order (rev4)** | **`emergency_kill_switch=true` は無条件で Tab B 非表示** (`report_tab_enabled` の値に関わらず優先)。初回 no-network 時は `emergency_kill_switch=true 扱い` を最終的に優先し Tab B 非表示。すなわち kill_switch > report_tab_enabled |
 
 ★ kureho が CDN で `report_tab_enabled=false` に編集 → 端末次回起動 (or 60 分以内) で OFF 反映。新 build 提出不要。Apple へは「server-side toggleable」を review notes に明示済。
 
@@ -815,35 +817,56 @@ main (v2.1.1 配信中、緊急 hotfix 余地確保)
 
 ---
 
-## 11. 確定済みの決定事項 (brainstorm 合意、rev2 反映)
+## 11. 確定済みの決定事項 (brainstorm 合意)
+
+### 11-A. brainstorm 初版 (rev1) で合意
 
 1. ✅ name: `学習する広告消し - 消えない広告もブロック`
 2. ✅ subtitle: `他で消えない広告も、報告で進化`
 3. ✅ 訴求軸: B 軸前面 + H 軸修飾 + moat 実態形成
 4. ✅ 価格: v3.0 ¥700 即値上げ
-5. ✅ 完全自動: T3 重量実装、8 層 safety gate、**abuse も自動化 (rev2)**
+5. ✅ 完全自動: T3 重量実装、8 層 safety gate
 6. ✅ 受信 infra: Cloudflare Workers + D1 + Turnstile (0 円 hard cap)
-7. ✅ Content Blocker: 2 extension 構成、**Path 1-4 fallback (rev2)**
-8. ✅ 報告タブ: URL + memo + **サーバ PII regex filter (rev2)**、履歴 UI 含む
+7. ✅ Content Blocker: 2 extension 構成
+8. ✅ 報告タブ: URL + memo、履歴 UI 含む
 9. ✅ 既存ユーザーへの強制誘導なし
-10. ✅ feature flag (RemoteConfigStore 仕様確定、rev2) で段階退避
+10. ✅ feature flag で段階退避
 11. ✅ v3.0 開発中 main は v2.1.x hotfix 余地維持
 12. ✅ TestFlight は提出直前の最終回帰のみ
-13. ✅ **データ削除依頼は自動処理 (hourly-deletion-processor、1h SLA、rev2)**
-14. ✅ **L2/L8 段階閾値 (β 中 L8=2、stable 後 L8=3、rev2)**
-15. ✅ **rate limit hard cap 80k/日 + tripwire 70k で warn (rev2)**
-16. ✅ **PII redact 方式 (reject ではなく mask、ban 加算しない、rev3)**
-17. ✅ **abuse reason 種別ごとの ban 加算重み付け (rev3)**
-18. ✅ **hourly workflow トリガ時刻分散 :00/:15/:30 (rev3)**
-19. ✅ **Apple 1.2 トーンダウン (review notes "automated with escalation"、rev3)**
-20. ✅ **HMAC token payload 明示 (subject/expires/scope、rev3)**
-21. ✅ **RemoteConfigStore emergency_kill_switch fail-closed (rev3)**
-22. ✅ **Nutrition Label 安全側で Linked declare (rev3)**
-23. ✅ **Phase 1 DoD に screencast 必須化 (rev3)**
-24. ✅ **BGTaskScheduler 楽観値修正 (通常 7-14 日、最悪 30 日、rev3)**
-25. ✅ **description 価格表記なし (retreat 軽量化、rev3)**
-26. ✅ **Tranco sync 月次→週次 (鮮度、rev3)**
-27. ✅ **WhatsNew で既存ユーザー無料受領強調 (rev3)**
+
+### 11-B. spec review #1 (rev2) で追加
+
+13. ✅ データ削除依頼は自動処理 (hourly-deletion-processor、1h SLA)
+14. ✅ L2/L8 段階閾値 (β 中 L8=2、stable 後 L8=3)
+15. ✅ rate limit hard cap 80k/日 + tripwire 70k で warn
+16. ✅ abuse 自動化 (4 段階 ban level up)
+17. ✅ Extension Path 1-4 fallback
+18. ✅ D1 全列確定 + deletion_requests テーブル追加
+19. ✅ rollback 経路訂正 (「以前バージョン rollback」誤記削除)
+20. ✅ retreat Price Tier 24h vs description 別経路明示
+21. ✅ 反映タイムライン 385h 内訳明示
+
+### 11-C. spec review #2 (rev3) で追加
+
+22. ✅ PII redact 方式 (reject ではなく mask、ban 加算しない)
+23. ✅ abuse reason 種別ごとの ban 加算重み付け
+24. ✅ hourly workflow トリガ時刻分散 :00/:15/:30
+25. ✅ Apple 1.2 トーンダウン (review notes "automated with escalation")
+26. ✅ HMAC token payload 明示 (subject/expires/scope)
+27. ✅ RemoteConfigStore emergency_kill_switch fail-closed
+28. ✅ Nutrition Label 安全側で Linked declare
+29. ✅ Phase 1 DoD に screencast 必須化
+30. ✅ BGTaskScheduler 楽観値修正 (通常 7-14 日、最悪 30 日)
+31. ✅ description 価格表記なし (retreat 軽量化)
+32. ✅ Tranco sync 月次→週次 (鮮度)
+33. ✅ WhatsNew で既存ユーザー無料受領強調
+
+### 11-D. spec review #3 (rev4) で追加
+
+34. ✅ §9 リスク表 review notes 表現を本文 (§6) と整合 (トーンダウン版に統一)
+35. ✅ feature flag evaluation order: `emergency_kill_switch > report_tab_enabled`
+36. ✅ PII redact 後の履歴 memo 表示仕様 (redact 済を返す + 注記バッジ)
+37. ✅ 付録 B 「未確認事項」に各調整トリガ指標を追加
 
 ---
 
@@ -885,8 +908,12 @@ main (v2.1.1 配信中、緊急 hotfix 余地確保)
 - Cloudflare D1 APAC region primary の latency 実測
 - Turnstile 透明 challenge の SwiftUI 統合方法 (WebView 経由 vs Safari)
 - **abuse 自動判定の閾値チューニング (3/10/30/100)** — 配信後実データで調整必要、初期値で開始
+  - 調整トリガ指標: 1 ヶ月の善意ユーザー誤 ban 苦情 ≥ 3 件 → 閾値緩和 (5/15/50/150)
 - **PII redact regex の誤検出率** — rev3 で redact 化したので誤 ban は発生しないが、redact 過多 (memo が空に近くなる) なら正規表現緩和、配信後 abuse_log で確認
+  - 調整トリガ指標: 全報告の memo に占める `pii_redacted` 発火率 ≥ 30% → 正規表現緩和
 - **L8 cooldown 30 日の妥当性** — 攻撃者が 30 日後に同一 URL 再 ban 試行する経路あり、配信後 complaint_count 実データで調整 (60 日 / 90 日への延長検討)
+  - 調整トリガ指標: 同一 selector の再 rollback 発生率 ≥ 5% → cooldown 60 日に延長
+- **BGTaskScheduler 実測値** — Phase 1 PoC で実機実観測値 (中央値 / p95 / p99 遅延) を取得、v3.1 で告知文言 (現「通常 7-14 日、最悪 30 日」) を再調整 (rev4 advisory)
 
 ---
 
