@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct AdblockKeshiApp: App {
     @State private var selectedTab: AppTab = .blocker
+    @StateObject private var appState = AppStateStore()
     private let stubClient = StubReportAPIClient()
     private var apiClient: ReportAPIClientProtocol { stubClient }
     private var historyFetcher: ReportHistoryFetcher { stubClient }
@@ -33,6 +34,8 @@ struct AdblockKeshiApp: App {
                 .tag(AppTab.report)
             }
             .preferredColorScheme(.light)
+            .environmentObject(appState)
+            .task { await appState.refresh() }
             .onAppear {
                 BackgroundTaskManager.schedule()
             }
