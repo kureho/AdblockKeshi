@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>標準フィルタ</string>
+	<string>自己学習フィルタ</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -30,7 +30,7 @@
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.Safari.content-blocker</string>
 		<key>NSExtensionPrincipalClass</key>
-		<string>$(PRODUCT_MODULE_NAME).ContentBlockerRequestHandler</string>
+		<string>$(PRODUCT_MODULE_NAME).ReportedContentBlockerRequestHandler</string>
 	</dict>
 </dict>
 </plist>
