@@ -8,9 +8,11 @@ enum ReportTabRoute: Hashable {
 
 struct ReportTabView: View {
     let apiClient: ReportAPIClientProtocol
+    let historyFetcher: ReportHistoryFetcher
     let onTabReturn: () -> Void
 
     @State private var path: [ReportTabRoute] = []
+    @State private var historyCache = ReportHistoryCache()
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -41,10 +43,12 @@ struct ReportTabView: View {
                         }
                     )
                 case .history:
-                    // Chunk 5 で実装
-                    Text("履歴 UI (Chunk 5 で実装)")
-                        .navigationTitle("報告履歴")
-                        .navigationBarTitleDisplayMode(.inline)
+                    ReportHistoryView(
+                        viewModel: ReportHistoryViewModel(
+                            apiClient: historyFetcher,
+                            cache: historyCache
+                        )
+                    )
                 }
             }
         }

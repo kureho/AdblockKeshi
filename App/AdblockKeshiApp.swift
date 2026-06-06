@@ -3,7 +3,9 @@ import SwiftUI
 @main
 struct AdblockKeshiApp: App {
     @State private var selectedTab: AppTab = .blocker
-    private let apiClient: ReportAPIClientProtocol = StubReportAPIClient()
+    private let stubClient = StubReportAPIClient()
+    private var apiClient: ReportAPIClientProtocol { stubClient }
+    private var historyFetcher: ReportHistoryFetcher { stubClient }
 
     init() {
         BackgroundTaskManager.register()
@@ -21,6 +23,7 @@ struct AdblockKeshiApp: App {
 
                 ReportTabView(
                     apiClient: apiClient,
+                    historyFetcher: historyFetcher,
                     onTabReturn: { selectedTab = .blocker }
                 )
                 .tabItem {
