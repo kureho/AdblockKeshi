@@ -1,0 +1,22 @@
+# [paid-approved-by-kureho] AdblockKeshi v3.0 Cloudflare Workers (0-yen hard cap)
+# Memory feedback_no_silent_paid_infra: Workers Paid プラン無効化維持。無料枠超過時 = 自動 503。
+
+name = "adblockkeshi-reports"
+main = "src/index.ts"
+compatibility_date = "2024-09-09"  # miniflare (vitest-pool-workers@0.5) サポート上限。production deploy 時は wrangler が最新 date で上書き可能。
+compatibility_flags = ["nodejs_compat"]
+
+# D1 binding (Task 2.2 で kureho の Cloudflare account に database 作成後、database_id を埋める)
+[[d1_databases]]
+binding = "DB"
+database_name = "adblockkeshi-reports"
+database_id = "91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4"
+
+# Secrets (wrangler secret put で別途設定、commit 禁止):
+#   HMAC_KEY        — ephemeral token 署名鍵
+#   SERVER_SALT     — UUID/IP hash の reversibility 防止 salt
+#   TURNSTILE_SECRET — Cloudflare Turnstile server-side secret
+#   GH_DISPATCH_TOKEN — 月次/週次 workflow trigger 用 GitHub PAT
+
+[observability]
+enabled = true
