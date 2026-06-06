@@ -872,10 +872,9 @@ main (v2.1.1 配信中、緊急 hotfix 余地確保)
 
 ## 12. 次のステップ
 
-1. **spec review loop #2** (本 rev2 で再 dispatch)
-2. issue 解消継続 (max 5 iter)
-3. **kureho による spec レビュー** (本ファイル approval)
-4. **writing-plans skill** で詳細実装プラン作成
+1. ✅ **spec review loop 完了** (iter#1-#4、iter#4 で reviewer approval 取得 2026-06-07)
+2. **kureho による spec レビュー** ← **今ここ** (本ファイル approval)
+3. **writing-plans skill** で詳細実装プラン作成
 
 ---
 
@@ -917,4 +916,4 @@ main (v2.1.1 配信中、緊急 hotfix 余地確保)
 
 ---
 
-**(end of spec, rev2 — 2026-06-07)**
+**(end of spec, rev4 — 2026-06-07 / reviewer approved iter#4)**
