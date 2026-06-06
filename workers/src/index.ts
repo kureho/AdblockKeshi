@@ -1,6 +1,7 @@
 import type { Env } from './env'
 import { handleHealth } from './handlers/health'
 import { handleToken } from './handlers/token'
+import { handleSubmit } from './handlers/submit'
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
@@ -15,6 +16,10 @@ export default {
 
     if (url.pathname === '/v1/reports/token') {
       return handleToken(request, env)
+    }
+
+    if (url.pathname === '/v1/reports/submit') {
+      return handleSubmit(request, env)
     }
 
     return new Response('Not Found', { status: 404 })
