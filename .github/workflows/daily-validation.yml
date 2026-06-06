@@ -1,0 +1,29 @@
+name: daily-validation
+on:
+  schedule:
+    - cron: '0 3 * * *'  # daily 03:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: d1-read-heavy
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: workers/package-lock.json
+      - run: cd workers && npm ci
+      - name: Install Playwright
+        run: cd workers && npx playwright install --with-deps chromium
+      - name: Run L3-L6 validation (Tranco + scope + CDN protection + Playwright)
+        run: cd workers && npx wrangler d1 execute adblockkeshi-reports --remote --command "SELECT 'TODO: daily-validation pipeline' AS placeholder"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}

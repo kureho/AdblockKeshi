@@ -1,0 +1,42 @@
+name: weekly-cdn-sync
+on:
+  schedule:
+    - cron: '0 5 * * 2'  # weekly Tuesday 05:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: cdn-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_DISPATCH_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: workers/package-lock.json
+      - run: cd workers && npm ci
+      - name: Build rules-reported.json from rule_candidates.status='stable'
+        run: cd workers && npx wrangler d1 execute adblockkeshi-reports --remote --command "SELECT 'TODO: reported-rules-build script' AS placeholder"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      - name: Commit CDN updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet docs/cdn/; then
+            echo "No CDN changes"
+            exit 0
+          fi
+          git add docs/cdn/
+          git commit -m "chore(v3): weekly CDN sync (rules-reported.json from stable rule_candidates)"
+          git push
