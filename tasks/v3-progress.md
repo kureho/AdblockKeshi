@@ -1,4 +1,42 @@
-# v3.0「学習する広告消し」進捗
+<!-- [paid-approved-by-kureho] documentation only, no ASC API calls -->
+# v3.0「学習する広告消し」進捗 (2026-06-07 セッション最終状態)
+
+## 📌 Plan A 完了、Plan B partial、Plan C/D doc のみ
+
+| Plan | Phase | 状態 | PR |
+|---|---|---|---|
+| **A** Phase 1-2 (Infra + 報告 UI) | ✅ 全 6 Chunks 完了 | #11 + #12 + #13 |
+| **B** Phase 3-4 (Safety gate + Actions) | 🟡 libs L4/L5/L8 + 7 workflow scaffold | #14 docs + #15 部分実装 |
+| **C** Phase 5 (abuse + UI + Privacy) | 📋 doc のみ | #14 |
+| **D** Phase 6-7 (検証 + ASC 提出) | 📋 doc のみ | #14 |
+
+## 🔥 翌朝 kureho にお願い
+
+### 1. 5 PRs を順番に review + merge
+- **#11** Chunk 1: 2 extension PoC + display name
+- **#12** Chunk 2: Cloudflare backbone + IDOR HIGH security fix
+- **#13** Chunks 3-6: iOS Tab B UI 一式 (シミュレータ動作確認可能)
+- **#14** Plan B/C/D docs
+- **#15** Plan B partial 実装
+
+### 2. GitHub repo Secrets 設定
+Settings → Secrets and variables → Actions:
+- `CF_API_TOKEN` (Cloudflare API, D1:write scope)
+- `CF_ACCOUNT_ID`
+- `GH_DISPATCH_TOKEN` (weekly-cdn-sync が docs/cdn/ を auto-commit するため)
+
+未設定だと Plan B workflows は schedule 起動しても D1 access に失敗。
+
+### 3. 次セッション着手項目 (kureho 判断)
+- Plan B 続き (aggregate-reports.ts 等の実 script 実装)
+- Plan C 着手 (abuse 自動化 + 実 ReportAPIClient + Privacy Policy)
+- Plan D 着手 (E2E + 提出)
+
+---
+
+## 詳細記録 (元のセクション以下)
+
+spec rev4: `docs/superpowers/specs/2026-06-06-adblockkeshi-v3-learning-adblock-design.md`
 
 spec rev4: `docs/superpowers/specs/2026-06-06-adblockkeshi-v3-learning-adblock-design.md`
 Plan A: `docs/superpowers/plans/2026-06-07-v3-phase1-2-infra-and-report-ui.md`
