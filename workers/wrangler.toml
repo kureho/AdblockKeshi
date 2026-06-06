@@ -10,7 +10,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "adblockkeshi-reports"
-database_id = "TODO-fill-after-d1-create-via-kureho"
+database_id = "91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4"
 
 # Secrets (wrangler secret put で別途設定、commit 禁止):
 #   HMAC_KEY        — ephemeral token 署名鍵
