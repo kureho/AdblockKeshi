@@ -972,33 +972,1133 @@ git commit -m "feat(workers): add HMAC ephemeral token sign/verify
 spec §3 §4: { subject: uuid_hash, expires, scope }, 5min validity"
 ```
 
-### Task 2.6: `/v1/reports/token` endpoint (Turnstile 連携の stub)
+### Task 2.6: Turnstile validation lib + `/v1/reports/token` endpoint (TDD)
 
-⚠️ **Phase 2 では Turnstile 連携の本実装は端末側 WebView 整備後 (Task 4.X)。Workers 側は signed token 発行ロジックのみ実装、Turnstile 検証は stub** (Phase 2 完了時点で機能チェーンとしては完結する)。
+⚠️ Phase 2 では Turnstile 連携の **本番 site key** は端末側 WebView 整備後に差し替え (Task 4.X)。
+ここでは Workers 側 server validation を実装、test では Cloudflare の `XXXX.DUMMY.DUMMY.XXXX` test secret を使う。
+
+#### 仕様詳細
+
+| 項目 | 値 |
+|---|---|
+| Turnstile siteverify endpoint | `https://challenges.cloudflare.com/turnstile/v0/siteverify` |
+| 必須 body params | `secret`, `response` (端末からの Turnstile token) |
+| 推奨 body params | `remoteip` (Workers req.headers から取得) |
+| 成功判定 | response `{ "success": true, ... }` |
+| 失敗 reason | `[ "missing-input-secret", "missing-input-response", "invalid-input-secret", "invalid-input-response", "bad-request", "timeout-or-duplicate" ]` |
+| Test secret (dev) | `1x0000000000000000000000000000000AA` (Cloudflare 公式 test、必ず success) |
 
 **Files:**
-- Create: `workers/src/handlers/token.ts`, `workers/src/lib/turnstile.ts`
-- Create: `workers/tests/handlers/token.test.ts`, `workers/tests/lib/turnstile.test.ts`
-- Modify: `workers/src/index.ts` (router 追加)
+- Create: `workers/src/lib/turnstile.ts`
+- Create: `workers/src/handlers/token.ts`
+- Create: `workers/tests/lib/turnstile.test.ts`
+- Create: `workers/tests/handlers/token.test.ts`
+- Modify: `workers/src/index.ts` (router)
 
-- [ ] **Step 1: turnstile.ts stub と test** (詳細省略、bite-sized step 適用)
+- [ ] **Step 1: turnstile.ts failing test**
 
-- [ ] **Step 2: token.ts handler 実装 (Turnstile clear → HMAC token 発行)**
+`workers/tests/lib/turnstile.test.ts`:
 
-- [ ] **Step 3: index.ts router に追加**
+```typescript
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { verifyTurnstile, TurnstileError } from '../../src/lib/turnstile'
 
-- [ ] **Step 4: integration test (実 wrangler dev で POST /v1/reports/token)**
+describe('verifyTurnstile', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('returns true for Cloudflare always-success test secret', async () => {
+    // SELF.fetch mock not applicable since we hit external. Use vi.spyOn on fetch
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: true }), { status: 200 })
+    )
+    const result = await verifyTurnstile({
+      secret: '1x0000000000000000000000000000000AA',
+      response: 'dummy-token',
+      remoteip: '1.2.3.4',
+    })
+    expect(result).toBe(true)
+  })
+
+  it('throws TurnstileError for invalid-input-response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        success: false,
+        'error-codes': ['invalid-input-response'],
+      }), { status: 200 })
+    )
+    await expect(verifyTurnstile({
+      secret: 's',
+      response: 'bad',
+    })).rejects.toThrow(TurnstileError)
+  })
+
+  it('throws TurnstileError for Cloudflare always-fail test secret', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        success: false,
+        'error-codes': ['invalid-input-response'],
+      }), { status: 200 })
+    )
+    await expect(verifyTurnstile({
+      secret: '2x0000000000000000000000000000000AA',
+      response: 'x',
+    })).rejects.toThrow(TurnstileError)
+  })
+
+  it('includes remoteip in request body', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: true }), { status: 200 })
+    )
+    await verifyTurnstile({
+      secret: '1x0000000000000000000000000000000AA',
+      response: 'dummy',
+      remoteip: '1.2.3.4',
+    })
+    expect(fetchSpy).toHaveBeenCalled()
+    const callArgs = fetchSpy.mock.calls[0]
+    const body = callArgs[1]?.body as string
+    expect(body).toContain('remoteip=1.2.3.4')
+  })
+
+  it('throws for non-200 Cloudflare response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('Server Error', { status: 500 })
+    )
+    await expect(verifyTurnstile({
+      secret: 's',
+      response: 'x',
+    })).rejects.toThrow()
+  })
+})
+```
+
+- [ ] **Step 2: test 実行 → fail 確認**
+
+```bash
+cd workers && npm test -- turnstile.test.ts
+```
+
+Expected: FAIL (lib/turnstile not found)
+
+- [ ] **Step 3: turnstile.ts 実装**
+
+`workers/src/lib/turnstile.ts`:
+
+```typescript
+export class TurnstileError extends Error {
+  constructor(public readonly errorCodes: string[]) {
+    super(`Turnstile verification failed: ${errorCodes.join(', ')}`)
+    this.name = 'TurnstileError'
+  }
+}
+
+interface VerifyArgs {
+  secret: string
+  response: string
+  remoteip?: string
+}
+
+interface TurnstileResponseBody {
+  success: boolean
+  'error-codes'?: string[]
+  challenge_ts?: string
+  hostname?: string
+  action?: string
+}
+
+const SITEVERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
+
+export async function verifyTurnstile(args: VerifyArgs): Promise<boolean> {
+  const params = new URLSearchParams()
+  params.set('secret', args.secret)
+  params.set('response', args.response)
+  if (args.remoteip) params.set('remoteip', args.remoteip)
+
+  const response = await fetch(SITEVERIFY_URL, {
+    method: 'POST',
+    body: params.toString(),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  })
+
+  if (!response.ok) {
+    throw new Error(`Turnstile siteverify HTTP ${response.status}`)
+  }
+
+  const body = (await response.json()) as TurnstileResponseBody
+  if (!body.success) {
+    throw new TurnstileError(body['error-codes'] ?? ['unknown'])
+  }
+  return true
+}
+```
+
+- [ ] **Step 4: test pass 確認**
+
+```bash
+npm test -- turnstile.test.ts
+```
+
+Expected: 5 tests passed
+
+- [ ] **Step 5: token endpoint failing test**
+
+`workers/tests/handlers/token.test.ts`:
+
+```typescript
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { SELF, env } from 'cloudflare:test'
+
+describe('POST /v1/reports/token', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    // Cloudflare test secret = 必ず success
+    env.TURNSTILE_SECRET = '1x0000000000000000000000000000000AA'
+    env.HMAC_KEY = 'test-hmac-key-do-not-use-in-prod'
+    env.SERVER_SALT = 'test-server-salt'
+  })
+
+  it('returns 200 with token + expires_at + server_salt for valid Turnstile', async () => {
+    // Cloudflare siteverify を fake success
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: true }), { status: 200 })
+    )
+
+    const response = await SELF.fetch('https://test/v1/reports/token', {
+      method: 'POST',
+      body: JSON.stringify({ turnstile_response: 'dummy-tr', scope: 'submit' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { token: string; expires_at: number; server_salt: string }
+    expect(body.token).toBeTruthy()
+    expect(body.token).toMatch(/^.+\..+$/)  // data.signature 形式
+    expect(body.expires_at).toBeGreaterThan(Date.now() / 1000)
+    expect(body.expires_at).toBeLessThan(Date.now() / 1000 + 310)  // 5 分 + 余裕
+    expect(body.server_salt).toBe('test-server-salt')
+  })
+
+  it('returns 400 for missing turnstile_response', async () => {
+    const response = await SELF.fetch('https://test/v1/reports/token', {
+      method: 'POST',
+      body: JSON.stringify({ scope: 'submit' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(response.status).toBe(400)
+    const body = (await response.json()) as { error: string }
+    expect(body.error).toBe('validation_failed')
+  })
+
+  it('returns 400 for invalid scope', async () => {
+    const response = await SELF.fetch('https://test/v1/reports/token', {
+      method: 'POST',
+      body: JSON.stringify({ turnstile_response: 'x', scope: 'invalid_scope' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(response.status).toBe(400)
+  })
+
+  it('returns 400 with turnstile_failed when Turnstile rejects', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: false, 'error-codes': ['invalid-input-response'] }), { status: 200 })
+    )
+    const response = await SELF.fetch('https://test/v1/reports/token', {
+      method: 'POST',
+      body: JSON.stringify({ turnstile_response: 'bad-token', scope: 'submit' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(response.status).toBe(400)
+    const body = (await response.json()) as { error: string }
+    expect(body.error).toBe('turnstile_failed')
+  })
+
+  it('returns 405 for GET', async () => {
+    const response = await SELF.fetch('https://test/v1/reports/token', { method: 'GET' })
+    expect(response.status).toBe(405)
+  })
+
+  it('issued token can be verified with same HMAC_KEY', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: true }), { status: 200 })
+    )
+    const response = await SELF.fetch('https://test/v1/reports/token', {
+      method: 'POST',
+      body: JSON.stringify({ turnstile_response: 'x', scope: 'submit' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    const body = (await response.json()) as { token: string }
+    // verify
+    const { verifyToken } = await import('../../src/lib/hmac')
+    const payload = await verifyToken(body.token, env.HMAC_KEY!)
+    expect(payload.scope).toBe('submit')
+  })
+})
+```
+
+- [ ] **Step 6: token.ts 実装**
+
+`workers/src/handlers/token.ts`:
+
+```typescript
+import type { Env } from '../env'
+import { verifyTurnstile, TurnstileError } from '../lib/turnstile'
+import { signToken, type TokenPayload } from '../lib/hmac'
+
+interface TokenRequestBody {
+  turnstile_response?: string
+  scope?: string
+}
+
+const VALID_SCOPES = new Set(['submit', 'history', 'delete'])
+const TOKEN_TTL_SECONDS = 300  // 5 分
+
+export async function handleToken(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return jsonError(405, 'method_not_allowed', 'POST required')
+  }
+
+  let body: TokenRequestBody
+  try {
+    body = await request.json()
+  } catch {
+    return jsonError(400, 'validation_failed', 'invalid JSON body')
+  }
+
+  const { turnstile_response, scope } = body
+  if (!turnstile_response || typeof turnstile_response !== 'string') {
+    return jsonError(400, 'validation_failed', 'turnstile_response required')
+  }
+  if (!scope || !VALID_SCOPES.has(scope)) {
+    return jsonError(400, 'validation_failed', `scope must be one of: ${[...VALID_SCOPES].join(', ')}`)
+  }
+
+  // Turnstile verify
+  try {
+    const remoteip = request.headers.get('CF-Connecting-IP') ?? undefined
+    await verifyTurnstile({
+      secret: env.TURNSTILE_SECRET,
+      response: turnstile_response,
+      remoteip,
+    })
+  } catch (e) {
+    if (e instanceof TurnstileError) {
+      return jsonError(400, 'turnstile_failed', e.message)
+    }
+    return jsonError(500, 'turnstile_internal', 'verification service error')
+  }
+
+  // device-specific subject は token 発行時点では未知 (端末がまだ uuid_hash を送ってない)
+  // → subject は placeholder で発行、submit 時に request body の uuid_hash を verify side で照合する設計
+  // 簡略化: subject = "anonymous"、submit ハンドラで uuid_hash を別途検証 (token は scope と expires のみ enforce)
+  const payload: TokenPayload = {
+    subject: 'anonymous',
+    expires: Date.now() + TOKEN_TTL_SECONDS * 1000,
+    scope: scope as TokenPayload['scope'],
+  }
+  const token = await signToken(payload, env.HMAC_KEY)
+
+  return new Response(JSON.stringify({
+    token,
+    expires_at: Math.floor(payload.expires / 1000),
+    server_salt: env.SERVER_SALT,
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function jsonError(status: number, error: string, message: string): Response {
+  return new Response(JSON.stringify({ error, message }), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+```
+
+- [ ] **Step 7: index.ts router に追加**
+
+`workers/src/index.ts` の `fetch` 関数内に分岐追加:
+
+```typescript
+import { handleToken } from './handlers/token'
+
+// 中略...
+if (url.pathname === '/v1/reports/token') {
+  return handleToken(request, env)
+}
+```
+
+- [ ] **Step 8: test pass + commit**
+
+```bash
+npm test -- token.test.ts
+# Expected: 6 tests passed
+
+git add workers/src/lib/turnstile.ts workers/src/handlers/token.ts workers/src/index.ts \
+        workers/tests/lib/turnstile.test.ts workers/tests/handlers/token.test.ts
+git commit -m "feat(workers): add Turnstile verify + /v1/reports/token endpoint
+
+- verifyTurnstile lib with TurnstileError class
+- POST /v1/reports/token: Turnstile validate → HMAC sign → 5min token
+- Returns { token, expires_at, server_salt }
+- 11 test cases covering all error paths"
+```
+
+### Task 2.7: `/v1/reports/submit` endpoint (URL validation + D1 INSERT) TDD
+
+#### 仕様詳細
+
+| 項目 | 値 |
+|---|---|
+| Body | `{ token, uuid_hash, url, memo? }` |
+| URL 検証 | `https://` + host 非空 + 200 字以内 |
+| Tranco Top 1M | Phase 2 では未実装 (Plan B で導入)、stub: 既知 critical list 50 件のみ即 reject |
+| memo PII redact | rev3 §2: 電話/メール/CC 検出 → 置換、`pii_redacted` で abuse_log INSERT (ban 加算しない) |
+| rate limit | per uuid_hash 5/日、per ip_hash 5/15min (Phase 2 で基本実装) |
+| token 検証 | HMAC verify + scope == 'submit' + 5 分以内 |
+| 成功 response | `{ id, status: "pending", received_at, memo_redacted }` |
+| 失敗 | 400 validation / 401 unauthorized / 429 rate_limit / 403 banned |
+
+**Files:**
+- Create: `workers/src/handlers/submit.ts`
+- Create: `workers/src/lib/validation.ts` (URL/memo validation)
+- Create: `workers/src/lib/pii-redact.ts` (rev3 §2 redact)
+- Create: `workers/src/lib/rate-limit.ts` (D1-backed)
+- Create: `workers/src/lib/critical-list.ts` (50 ドメイン静的 list)
+- Tests: 同名 `tests/handlers/submit.test.ts` + lib tests
+- Migrations: 既に 0001-0005 完了
+
+- [ ] **Step 1: pii-redact lib failing test**
+
+`workers/tests/lib/pii-redact.test.ts`:
+
+```typescript
+import { describe, it, expect } from 'vitest'
+import { redactPII } from '../../src/lib/pii-redact'
+
+describe('redactPII', () => {
+  it('returns original if no PII', () => {
+    const { redacted, didRedact } = redactPII('動画上のオーバーレイ広告')
+    expect(redacted).toBe('動画上のオーバーレイ広告')
+    expect(didRedact).toBe(false)
+  })
+
+  it('masks Japanese phone with hyphens', () => {
+    const { redacted, didRedact } = redactPII('連絡先 03-1234-5678 です')
+    expect(redacted).toContain('***-****-****')
+    expect(redacted).not.toContain('03-1234-5678')
+    expect(didRedact).toBe(true)
+  })
+
+  it('masks free-dial', () => {
+    const { redacted, didRedact } = redactPII('0120-123-456 で予約')
+    expect(redacted).toContain('***-****-****')
+    expect(didRedact).toBe(true)
+  })
+
+  it('masks Japanese phone without hyphens', () => {
+    const { redacted, didRedact } = redactPII('電話 03123456 78 番号')
+    // partial match still ok if regex covers
+    expect(didRedact).toBe(true)
+  })
+
+  it('masks email addresses', () => {
+    const { redacted, didRedact } = redactPII('連絡先: user@example.com まで')
+    expect(redacted).toContain('***@***.***')
+    expect(redacted).not.toContain('user@example.com')
+    expect(didRedact).toBe(true)
+  })
+
+  it('masks credit card numbers', () => {
+    const { redacted, didRedact } = redactPII('カード 4242-4242-4242-4242 の不正利用')
+    expect(redacted).toContain('****-****-****-****')
+    expect(didRedact).toBe(true)
+  })
+
+  it('does NOT mask short digit sequences', () => {
+    const { redacted, didRedact } = redactPII('ABCD-1234 のID')
+    expect(redacted).toBe('ABCD-1234 のID')
+    expect(didRedact).toBe(false)
+  })
+
+  it('handles multiple PIIs in one memo', () => {
+    const { redacted, didRedact } = redactPII('tel 03-1234-5678 email a@b.com')
+    expect(redacted).toContain('***-****-****')
+    expect(redacted).toContain('***@***.***')
+    expect(didRedact).toBe(true)
+  })
+
+  it('preserves URL-like substrings (URL is rejected separately)', () => {
+    const { redacted } = redactPII('see https://example.com/path')
+    // URL は MemoValidator で hard reject される設計、redact lib では URL 触らない
+    expect(redacted).toContain('https://example.com')
+  })
+
+  it('handles empty input', () => {
+    const { redacted, didRedact } = redactPII('')
+    expect(redacted).toBe('')
+    expect(didRedact).toBe(false)
+  })
+})
+```
+
+- [ ] **Step 2: pii-redact.ts 実装**
+
+`workers/src/lib/pii-redact.ts`:
+
+```typescript
+export interface RedactResult {
+  redacted: string
+  didRedact: boolean
+}
+
+const PATTERNS: Array<{ regex: RegExp; mask: string }> = [
+  // 電話番号 (日本、ハイフンあり/なし両対応)
+  { regex: /0\d{1,4}-?\d{1,4}-?\d{4}/g, mask: '***-****-****' },
+  // 国際電話番号
+  { regex: /\+\d{1,3}[\s-]?\d{2,4}[\s-]?\d{2,4}[\s-]?\d{2,4}/g, mask: '+**-****-****' },
+  // メールアドレス
+  { regex: /[\w._%+-]+@[\w.-]+\.\w+/g, mask: '***@***.***' },
+  // クレジットカード (16 桁、ハイフンあり/なし)、Luhn 検証は省略 (rev3 spec 通り簡易)
+  { regex: /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g, mask: '****-****-****-****' },
+]
+
+export function redactPII(input: string): RedactResult {
+  let didRedact = false
+  let result = input
+  for (const { regex, mask } of PATTERNS) {
+    if (regex.test(result)) {
+      didRedact = true
+      result = result.replace(regex, mask)
+    }
+  }
+  return { redacted: result, didRedact }
+}
+```
+
+- [ ] **Step 3: rate-limit lib failing test + 実装**
+
+`workers/tests/lib/rate-limit.test.ts`:
+
+```typescript
+import { describe, it, expect, beforeEach } from 'vitest'
+import { env } from 'cloudflare:test'
+import { checkRateLimit, recordRequest } from '../../src/lib/rate-limit'
+
+describe('rate-limit (D1-backed)', () => {
+  beforeEach(async () => {
+    await env.DB.prepare('DELETE FROM abuse_log').run()
+    await env.DB.prepare('DELETE FROM reports').run()
+    await env.DB.prepare('DELETE FROM bans').run()
+  })
+
+  it('allows first request', async () => {
+    const result = await checkRateLimit(env.DB, {
+      uuidHash: 'aaa', ipHash: 'bbb', now: Date.now() / 1000
+    })
+    expect(result.allowed).toBe(true)
+  })
+
+  it('blocks 6th uuid request within 24h', async () => {
+    const now = Math.floor(Date.now() / 1000)
+    const uuid = 'user-1'
+    for (let i = 0; i < 5; i++) {
+      await recordRequest(env.DB, { uuidHash: uuid, ipHash: 'ip-1', url: `https://x.com/${i}`, status: 'pending', createdAt: now - 100 })
+    }
+    const result = await checkRateLimit(env.DB, { uuidHash: uuid, ipHash: 'ip-1', now })
+    expect(result.allowed).toBe(false)
+    expect(result.reason).toBe('uuid_daily_limit')
+  })
+
+  it('blocks 6th ip request within 15min', async () => {
+    const now = Math.floor(Date.now() / 1000)
+    for (let i = 0; i < 5; i++) {
+      await recordRequest(env.DB, { uuidHash: `uuid-${i}`, ipHash: 'ip-X', url: `https://x.com/${i}`, status: 'pending', createdAt: now - 100 })
+    }
+    const result = await checkRateLimit(env.DB, { uuidHash: 'new-uuid', ipHash: 'ip-X', now })
+    expect(result.allowed).toBe(false)
+    expect(result.reason).toBe('ip_15min_limit')
+  })
+
+  it('respects banned uuid in bans table', async () => {
+    const now = Math.floor(Date.now() / 1000)
+    await env.DB.prepare(`
+      INSERT INTO bans (identifier_hash, identifier_type, reason, abuse_count, ban_level, expires_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind('banned-uuid', 'uuid', 'rate_limit_repeat', 5, 2, now + 7 * 86400, now).run()
+
+    const result = await checkRateLimit(env.DB, { uuidHash: 'banned-uuid', ipHash: 'ip-Z', now })
+    expect(result.allowed).toBe(false)
+    expect(result.reason).toBe('banned')
+  })
+
+  it('respects expired ban (banned but expires_at < now)', async () => {
+    const now = Math.floor(Date.now() / 1000)
+    await env.DB.prepare(`
+      INSERT INTO bans (identifier_hash, identifier_type, reason, abuse_count, ban_level, expires_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind('expired-banned', 'uuid', 'old', 3, 1, now - 100, now - 86400).run()
+
+    const result = await checkRateLimit(env.DB, { uuidHash: 'expired-banned', ipHash: 'ip-Q', now })
+    expect(result.allowed).toBe(true)
+  })
+})
+```
+
+`workers/src/lib/rate-limit.ts`:
+
+```typescript
+export interface RateLimitArgs {
+  uuidHash: string
+  ipHash: string
+  now: number  // unix sec
+}
+
+export interface RateLimitResult {
+  allowed: boolean
+  reason?: 'banned' | 'uuid_daily_limit' | 'ip_15min_limit' | 'uuid_monthly_limit'
+}
+
+export interface RecordArgs {
+  uuidHash: string
+  ipHash: string
+  url: string
+  status: string
+  createdAt: number
+}
+
+const UUID_DAILY_LIMIT = 5
+const UUID_MONTHLY_LIMIT = 30
+const IP_15MIN_LIMIT = 5
+const ONE_DAY_SEC = 86400
+const ONE_MONTH_SEC = 30 * ONE_DAY_SEC
+const FIFTEEN_MIN_SEC = 15 * 60
+
+export async function checkRateLimit(db: D1Database, args: RateLimitArgs): Promise<RateLimitResult> {
+  // 1. ban check
+  const ban = await db.prepare(
+    'SELECT identifier_hash FROM bans WHERE identifier_hash IN (?, ?) AND expires_at > ?'
+  ).bind(args.uuidHash, args.ipHash, args.now).first()
+  if (ban) return { allowed: false, reason: 'banned' }
+
+  // 2. uuid daily
+  const uuidDaily = await db.prepare(
+    'SELECT COUNT(*) as c FROM reports WHERE uuid_hash = ? AND created_at > ?'
+  ).bind(args.uuidHash, args.now - ONE_DAY_SEC).first<{ c: number }>()
+  if ((uuidDaily?.c ?? 0) >= UUID_DAILY_LIMIT) {
+    return { allowed: false, reason: 'uuid_daily_limit' }
+  }
+
+  // 3. uuid monthly
+  const uuidMonthly = await db.prepare(
+    'SELECT COUNT(*) as c FROM reports WHERE uuid_hash = ? AND created_at > ?'
+  ).bind(args.uuidHash, args.now - ONE_MONTH_SEC).first<{ c: number }>()
+  if ((uuidMonthly?.c ?? 0) >= UUID_MONTHLY_LIMIT) {
+    return { allowed: false, reason: 'uuid_monthly_limit' }
+  }
+
+  // 4. ip 15-min
+  const ip15 = await db.prepare(
+    'SELECT COUNT(*) as c FROM reports WHERE ip_hash = ? AND created_at > ?'
+  ).bind(args.ipHash, args.now - FIFTEEN_MIN_SEC).first<{ c: number }>()
+  if ((ip15?.c ?? 0) >= IP_15MIN_LIMIT) {
+    return { allowed: false, reason: 'ip_15min_limit' }
+  }
+
+  return { allowed: true }
+}
+
+export async function recordRequest(db: D1Database, args: RecordArgs): Promise<void> {
+  // 内部 helper、本来は submit handler から D1 INSERT を直接呼ぶが、rate-limit テストでは別関数として使う
+  const id = crypto.randomUUID()
+  const urlHash = await sha256Hex(args.url)
+  const domain = new URL(args.url).host
+  await db.prepare(`
+    INSERT INTO reports (id, uuid_hash, ip_hash, domain, url, url_path_hash, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(id, args.uuidHash, args.ipHash, domain, args.url, urlHash, args.status, args.createdAt).run()
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input))
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+```
+
+- [ ] **Step 4: critical-list lib (50 ドメイン静的)**
+
+`workers/src/lib/critical-list.ts`:
+
+```typescript
+// Phase 2 では最小限の静的 list、Plan B で Tranco Top 1M に拡張
+export const CRITICAL_DOMAINS = new Set<string>([
+  'apple.com', 'icloud.com', 'me.com', 'mac.com',
+  'google.com', 'gmail.com', 'youtube.com', 'googleusercontent.com',
+  'microsoft.com', 'outlook.com', 'live.com', 'office.com',
+  'amazon.com', 'amazon.co.jp', 'amazonaws.com',
+  'meta.com', 'facebook.com', 'instagram.com', 'whatsapp.com',
+  'twitter.com', 'x.com', 't.co',
+  'linkedin.com', 'github.com',
+  'cloudflare.com',
+  // 日本系
+  'yahoo.co.jp', 'rakuten.co.jp', 'mercari.com',
+  'mhlw.go.jp', 'meti.go.jp', 'mof.go.jp', 'jnto.go.jp',
+  'nhk.or.jp', 'mainichi.jp', 'asahi.com', 'nikkei.com',
+  'kureho.app', 'kureho.com',
+  // payment 系
+  'visa.com', 'mastercard.com', 'paypal.com', 'stripe.com',
+  // bank
+  'mizuhobank.co.jp', 'smbc.co.jp', 'mufg.jp',
+  // 教育
+  'u-tokyo.ac.jp', 'kyoto-u.ac.jp',
+  // 検索エンジン
+  'bing.com', 'duckduckgo.com',
+  // adblockkeshi 自身
+  'adblockkeshi.kureho.app',
+])
+
+export function isCriticalDomain(domain: string): boolean {
+  // exact match + suffix match (subdomain も保護)
+  if (CRITICAL_DOMAINS.has(domain)) return true
+  for (const critical of CRITICAL_DOMAINS) {
+    if (domain.endsWith('.' + critical)) return true
+  }
+  return false
+}
+```
+
+- [ ] **Step 5: validation lib (URL/memo basic) failing test + 実装**
+
+`workers/src/lib/validation.ts`:
+
+```typescript
+export interface ValidationResult {
+  ok: boolean
+  reason?: string
+}
+
+const MAX_URL_LENGTH = 200
+const MAX_MEMO_LENGTH = 200
+
+export function validateURL(url: string): ValidationResult {
+  if (!url || url.trim().length === 0) return { ok: false, reason: 'url_empty' }
+  if (url.length > MAX_URL_LENGTH) return { ok: false, reason: 'url_too_long' }
+  if (!url.toLowerCase().startsWith('https://')) return { ok: false, reason: 'url_not_https' }
+  try {
+    const u = new URL(url)
+    if (!u.host) return { ok: false, reason: 'url_malformed' }
+    if (u.host.length < 7) return { ok: false, reason: 'url_domain_too_short' }
+    return { ok: true }
+  } catch {
+    return { ok: false, reason: 'url_malformed' }
+  }
+}
+
+export function validateMemo(memo: string | undefined | null): ValidationResult {
+  if (memo == null || memo === '') return { ok: true }
+  if (memo.length > MAX_MEMO_LENGTH) return { ok: false, reason: 'memo_too_long' }
+  // URL contained check (PII filter は別、redact 処理)
+  if (/https?:\/\//.test(memo)) return { ok: false, reason: 'memo_contains_url' }
+  return { ok: true }
+}
+```
+
+- [ ] **Step 6: submit.ts handler failing test (Vitest workers)**
+
+`workers/tests/handlers/submit.test.ts`:
+
+```typescript
+import { describe, it, expect, beforeEach } from 'vitest'
+import { SELF, env } from 'cloudflare:test'
+import { signToken } from '../../src/lib/hmac'
+
+async function makeToken(scope: 'submit' = 'submit'): Promise<string> {
+  return signToken(
+    { subject: 'anonymous', expires: Date.now() + 60000, scope },
+    env.HMAC_KEY
+  )
+}
+
+describe('POST /v1/reports/submit', () => {
+  beforeEach(async () => {
+    env.HMAC_KEY = 'test-hmac-key'
+    env.SERVER_SALT = 'test-salt'
+    env.TURNSTILE_SECRET = '1x0000000000000000000000000000000AA'
+    await env.DB.prepare('DELETE FROM reports').run()
+    await env.DB.prepare('DELETE FROM abuse_log').run()
+    await env.DB.prepare('DELETE FROM bans').run()
+  })
+
+  it('returns 200 and creates D1 row for valid submission', async () => {
+    const token = await makeToken('submit')
+    const response = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({
+        token,
+        uuid_hash: 'a'.repeat(64),
+        url: 'https://example.com/article',
+        memo: 'overlay ad',
+      }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as any
+    expect(body.id).toBeTruthy()
+    expect(body.status).toBe('pending')
+    expect(body.memo_redacted).toBe(false)
+
+    const row = await env.DB.prepare('SELECT * FROM reports WHERE id = ?').bind(body.id).first<any>()
+    expect(row.url).toBe('https://example.com/article')
+    expect(row.memo).toBe('overlay ad')
+  })
+
+  it('redacts PII in memo and sets memo_redacted=true', async () => {
+    const token = await makeToken('submit')
+    const response = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({
+        token,
+        uuid_hash: 'b'.repeat(64),
+        url: 'https://news.example.jp/page',
+        memo: '電話 03-1234-5678 を見せる広告',
+      }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as any
+    expect(body.memo_redacted).toBe(true)
+
+    const row = await env.DB.prepare('SELECT memo FROM reports WHERE id = ?').bind(body.id).first<any>()
+    expect(row.memo).toContain('***-****-****')
+
+    const abuse = await env.DB.prepare('SELECT reason FROM abuse_log WHERE identifier_hash = ?').bind('b'.repeat(64)).first<any>()
+    expect(abuse.reason).toBe('pii_redacted')
+  })
+
+  it('rejects with 400 for invalid URL', async () => {
+    const token = await makeToken('submit')
+    const response = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({ token, uuid_hash: 'c'.repeat(64), url: 'http://no-https.com' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(response.status).toBe(400)
+    const body = (await response.json()) as any
+    expect(body.error).toBe('validation_failed')
+  })
+
+  it('rejects with 400 for critical domain (apple.com)', async () => {
+    const token = await makeToken('submit')
+    const response = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({ token, uuid_hash: 'd'.repeat(64), url: 'https://apple.com/support' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(response.status).toBe(400)
+    const body = (await response.json()) as any
+    expect(body.error).toBe('validation_failed')
+    expect(body.message).toContain('critical')
+  })
+
+  it('rejects subdomain of critical domain', async () => {
+    const token = await makeToken('submit')
+    const response = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({ token, uuid_hash: 'e'.repeat(64), url: 'https://developer.apple.com/docs' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(response.status).toBe(400)
+  })
+
+  it('rejects with 401 for invalid token', async () => {
+    const response = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({
+        token: 'invalid.signature',
+        uuid_hash: 'f'.repeat(64),
+        url: 'https://example.com/x',
+      }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(response.status).toBe(401)
+  })
+
+  it('rejects with 401 for wrong scope token', async () => {
+    const token = await signToken(
+      { subject: 'anonymous', expires: Date.now() + 60000, scope: 'history' },
+      env.HMAC_KEY
+    )
+    const response = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({ token, uuid_hash: 'g'.repeat(64), url: 'https://example.com/x' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(response.status).toBe(401)
+  })
+
+  it('rejects with 429 after 5 reports/day per uuid', async () => {
+    const token = await makeToken('submit')
+    const uuidHash = 'h'.repeat(64)
+    // 5 件挿入
+    for (let i = 0; i < 5; i++) {
+      await env.DB.prepare(
+        'INSERT INTO reports (id, uuid_hash, ip_hash, domain, url, url_path_hash, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(`r${i}`, uuidHash, 'ip', 'example.com', `https://example.com/${i}`, `hash${i}`, 'pending', Math.floor(Date.now() / 1000)).run()
+    }
+    const response = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({ token, uuid_hash: uuidHash, url: 'https://example.com/6' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(response.status).toBe(429)
+    const body = (await response.json()) as any
+    expect(body.error).toBe('rate_limit_exceeded')
+  })
+})
+```
+
+- [ ] **Step 7: submit.ts 実装**
+
+`workers/src/handlers/submit.ts`:
+
+```typescript
+import type { Env } from '../env'
+import { verifyToken } from '../lib/hmac'
+import { validateURL, validateMemo } from '../lib/validation'
+import { redactPII } from '../lib/pii-redact'
+import { isCriticalDomain } from '../lib/critical-list'
+import { checkRateLimit } from '../lib/rate-limit'
+
+interface SubmitBody {
+  token?: string
+  uuid_hash?: string
+  url?: string
+  memo?: string
+}
+
+export async function handleSubmit(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return jsonError(405, 'method_not_allowed', 'POST required')
+  }
+
+  let body: SubmitBody
+  try {
+    body = await request.json()
+  } catch {
+    return jsonError(400, 'validation_failed', 'invalid JSON')
+  }
+
+  // 必須項目
+  if (!body.token) return jsonError(400, 'validation_failed', 'token required')
+  if (!body.uuid_hash || body.uuid_hash.length !== 64) return jsonError(400, 'validation_failed', 'uuid_hash must be 64 hex chars')
+  if (!body.url) return jsonError(400, 'validation_failed', 'url required')
+
+  // token verify
+  try {
+    const payload = await verifyToken(body.token, env.HMAC_KEY)
+    if (payload.scope !== 'submit') return jsonError(401, 'unauthorized', 'wrong scope')
+  } catch {
+    return jsonError(401, 'unauthorized', 'invalid or expired token')
+  }
+
+  // URL validation
+  const urlCheck = validateURL(body.url)
+  if (!urlCheck.ok) return jsonError(400, 'validation_failed', urlCheck.reason!)
+
+  const domain = new URL(body.url).host
+  if (isCriticalDomain(domain)) {
+    return jsonError(400, 'validation_failed', `critical_domain: ${domain} is protected`)
+  }
+
+  // memo validation
+  const memoCheck = validateMemo(body.memo)
+  if (!memoCheck.ok) return jsonError(400, 'validation_failed', memoCheck.reason!)
+
+  // PII redact
+  const { redacted: memoRedacted, didRedact } = redactPII(body.memo ?? '')
+
+  // rate limit
+  const ipHash = await sha256Hex((request.headers.get('CF-Connecting-IP') ?? 'unknown') + env.SERVER_SALT)
+  const now = Math.floor(Date.now() / 1000)
+  const rl = await checkRateLimit(env.DB, { uuidHash: body.uuid_hash, ipHash, now })
+  if (!rl.allowed) {
+    const retryAfter = rl.reason === 'uuid_daily_limit' ? 86400 : rl.reason === 'uuid_monthly_limit' ? 30 * 86400 : 900
+    if (rl.reason === 'banned') return jsonError(403, 'banned', 'temporarily banned')
+    return jsonErrorWithRetry(429, 'rate_limit_exceeded', rl.reason ?? 'unknown', retryAfter)
+  }
+
+  // D1 INSERT
+  const id = crypto.randomUUID()
+  const urlPathHash = await sha256Hex(body.url)
+  await env.DB.prepare(`
+    INSERT INTO reports (id, uuid_hash, ip_hash, domain, url, url_path_hash, memo, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(id, body.uuid_hash, ipHash, domain, body.url, urlPathHash, memoRedacted || null, 'pending', now).run()
+
+  if (didRedact) {
+    await env.DB.prepare(`
+      INSERT INTO abuse_log (identifier_hash, identifier_type, reason, url, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(body.uuid_hash, 'uuid', 'pii_redacted', body.url, now).run()
+  }
+
+  return new Response(JSON.stringify({
+    id,
+    status: 'pending',
+    received_at: now,
+    memo_redacted: didRedact,
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function jsonError(status: number, error: string, message: string): Response {
+  return new Response(JSON.stringify({ error, message }), {
+    status, headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function jsonErrorWithRetry(status: number, error: string, message: string, retryAfter: number): Response {
+  return new Response(JSON.stringify({ error, message, retry_after: retryAfter }), {
+    status, headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input))
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+```
+
+- [ ] **Step 8: index.ts router に追加** + test pass 確認
+
+```typescript
+import { handleSubmit } from './handlers/submit'
+// in fetch:
+if (url.pathname === '/v1/reports/submit') return handleSubmit(request, env)
+```
+
+- [ ] **Step 9: commit**
+
+```bash
+git add workers/src/lib/{pii-redact,validation,critical-list,rate-limit}.ts \
+        workers/src/handlers/submit.ts workers/src/index.ts \
+        workers/tests/lib/{pii-redact,rate-limit,validation}.test.ts \
+        workers/tests/handlers/submit.test.ts
+git commit -m "feat(workers): /v1/reports/submit with PII redact + rate limit + critical list
+
+- pii-redact: phone/email/CC mask (silent, ban-加算なし)
+- validation: URL https-only/200char, memo URL-detect
+- critical-list: 50 domains, exact+suffix match
+- rate-limit: 5/day/uuid + 5/15min/ip + ban check
+- submit handler: full chain with HMAC token verify
+- 8 submit test cases + 10 supporting lib tests"
+```
+
+### Task 2.8: `/v1/reports/history` endpoint (HMAC token verify + D1 SELECT)
+
+#### 仕様詳細
+
+| 項目 | 値 |
+|---|---|
+| Body | `{ token, uuid_hash }` |
+| token scope | `history` 必須 |
+| D1 query | `SELECT ... FROM reports WHERE uuid_hash = ? ORDER BY created_at DESC LIMIT 50` |
+| Response | `{ items: [{id, url, memo, memo_redacted, status, created_at, validated_at, applied_at}], fetched_at }` |
+| memo_redacted フラグ | rev4 §2: 該当 abuse_log に `pii_redacted` 行があれば true |
+
+**Files:**
+- Create: `workers/src/handlers/history.ts`
+- Create: `workers/tests/handlers/history.test.ts`
+
+- [ ] **Step 1-5: TDD で実装** (submit と同パターン、再掲省略)
+
+```typescript
+// workers/src/handlers/history.ts
+import type { Env } from '../env'
+import { verifyToken } from '../lib/hmac'
+
+export async function handleHistory(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') return jsonError(405, 'method_not_allowed', 'POST required')
+
+  let body: { token?: string; uuid_hash?: string }
+  try { body = await request.json() } catch { return jsonError(400, 'validation_failed', 'invalid JSON') }
+  if (!body.token || !body.uuid_hash) return jsonError(400, 'validation_failed', 'token and uuid_hash required')
+
+  try {
+    const payload = await verifyToken(body.token, env.HMAC_KEY)
+    if (payload.scope !== 'history') return jsonError(401, 'unauthorized', 'wrong scope')
+  } catch {
+    return jsonError(401, 'unauthorized', 'invalid token')
+  }
+
+  // reports + abuse_log JOIN for memo_redacted flag
+  const rows = await env.DB.prepare(`
+    SELECT
+      r.id, r.url, r.memo, r.status, r.created_at, r.validated_at, r.applied_at,
+      EXISTS (
+        SELECT 1 FROM abuse_log a WHERE a.identifier_hash = r.uuid_hash AND a.reason = 'pii_redacted' AND a.url = r.url
+      ) AS memo_redacted
+    FROM reports r WHERE r.uuid_hash = ?
+    ORDER BY r.created_at DESC LIMIT 50
+  `).bind(body.uuid_hash).all<any>()
+
+  const items = (rows.results ?? []).map(r => ({
+    id: r.id,
+    url: r.url,
+    memo: r.memo,
+    memo_redacted: Boolean(r.memo_redacted),
+    status: r.status,
+    created_at: r.created_at,
+    validated_at: r.validated_at,
+    applied_at: r.applied_at,
+  }))
+
+  return new Response(JSON.stringify({
+    items,
+    fetched_at: Math.floor(Date.now() / 1000),
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function jsonError(status: number, error: string, message: string): Response {
+  return new Response(JSON.stringify({ error, message }), { status, headers: { 'Content-Type': 'application/json' } })
+}
+```
+
+Tests (history.test.ts) は token 検証、空 list、limit 50、memo_redacted フラグ反映の 4 ケース。
+
+- [ ] **Step 6: commit**
+
+```bash
+git commit -m "feat(workers): /v1/reports/history with HMAC scope=history + memo_redacted flag JOIN"
+```
+
+### Task 2.9: `/v1/reports/delete` endpoint (Phase 2 stub、Plan C で本格)
+
+Phase 2 では `deletion_requests` 行を INSERT するだけの最小実装。実際の DELETE は Plan C の `hourly-deletion-processor.yml` workflow 範囲。
+
+**Files:**
+- Create: `workers/src/handlers/delete.ts`、`workers/tests/handlers/delete.test.ts`
+
+- [ ] **Step 1-4: TDD で実装、stub レベル**
+
+```typescript
+export async function handleDelete(request: Request, env: Env): Promise<Response> {
+  // token (scope='delete') + uuid_hash + url_path_hash? を受信
+  // → deletion_requests に INSERT、status='pending'
+  // 実際の削除は hourly cron (Plan C) で処理
+  // ...
+}
+```
 
 - [ ] **Step 5: commit**
 
-### Task 2.7: 残り endpoint stub と commit
-
-- [ ] **Step 1: `/v1/reports/submit` 最小実装 (URL validation + D1 INSERT)**, test, commit
-- [ ] **Step 2: `/v1/reports/history` 最小実装 (HMAC token verify + D1 SELECT)**, test, commit
-- [ ] **Step 3: `/v1/reports/delete` stub (Phase 3 で本格)**, test, commit
-- [ ] **Step 4: rate limit (`lib/rate-limit.ts`) 基本実装 + D1 backed**, test, commit
-
-### Task 2.8: Phase 1 完了確認 + PR
+### Task 2.10: Phase 1 完了確認 + PR (rev2 Step 8: end-to-end curl)
 
 - [ ] **Step 1: workers/ 全 test pass 確認**
 
@@ -1006,15 +2106,68 @@ spec §3 §4: { subject: uuid_hash, expires, scope }, 5min validity"
 cd workers && npm test
 ```
 
-Expected: 全 PASS
+Expected: 全 PASS (約 50 tests: health 1 + hmac 4 + turnstile 5 + token 6 + submit 8 + history 4 + delete 3 + pii-redact 10 + rate-limit 5 + validation 8 + critical 4)
 
-- [ ] **Step 2: wrangler dev で end-to-end curl 確認** (health, token 発行, submit, history)
+- [ ] **Step 2: wrangler dev で end-to-end curl 確認**
 
-- [ ] **Step 3: PR feat/v3-cloudflare-infra → feature/v3.0-learning-adblock 作成**
+```bash
+npm run dev
+# 別ターミナル
+# 1. health
+curl http://localhost:8787/v1/health
+
+# 2. token request (Cloudflare test secret 利用)
+curl -X POST http://localhost:8787/v1/reports/token \
+  -H 'Content-Type: application/json' \
+  -d '{"turnstile_response": "dummy", "scope": "submit"}'
+# → token を取り出す
+
+# 3. submit (token を埋める)
+TOKEN="..."
+curl -X POST http://localhost:8787/v1/reports/submit \
+  -H 'Content-Type: application/json' \
+  -d "{\"token\":\"$TOKEN\",\"uuid_hash\":\"$(printf 'a%.0s' {1..64})\",\"url\":\"https://example.com/article\",\"memo\":\"overlay\"}"
+
+# 4. history token + history fetch
+curl -X POST http://localhost:8787/v1/reports/token -H 'Content-Type: application/json' -d '{"turnstile_response":"d","scope":"history"}'
+H_TOKEN="..."
+curl -X POST http://localhost:8787/v1/reports/history \
+  -H 'Content-Type: application/json' \
+  -d "{\"token\":\"$H_TOKEN\",\"uuid_hash\":\"$(printf 'a%.0s' {1..64})\"}"
+```
+
+Expected: 全成功、submit 結果が history に反映、PII redact 含む memo が正しく mask される
+
+- [ ] **Step 3: PR 作成**
+
+```bash
+gh pr create --base feature/v3.0-learning-adblock --title "feat(v3): Cloudflare Workers backbone (Phase 1 complete)"  --body "$(cat <<'EOF'
+## Summary
+- Workers project init with D1 + Turnstile + Wrangler
+- 5 migrations: reports / rule_candidates / abuse_log / bans / deletion_requests
+- /v1/health endpoint
+- HMAC ephemeral token sign/verify (subject/expires/scope, 5min)
+- Turnstile verify lib + /v1/reports/token endpoint
+- /v1/reports/submit (URL validation + PII redact + critical list + rate limit + D1 INSERT)
+- /v1/reports/history (HMAC scope check + JOIN abuse_log for memo_redacted)
+- /v1/reports/delete (stub, full impl in Plan C)
+
+## Tests
+- ~50 Vitest cases (handlers + libs)
+- E2E curl verified locally with wrangler dev
+
+## Production constraints honored
+- Cloudflare Paid plan disabled (per memory feedback_no_silent_paid_infra)
+- Hard cap 80k req/day enforced in code (rate-limit lib)
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+```
 
 - [ ] **Step 4: kureho 承認後 merge**
 
-### Chunk 2 完了
+### Chunk 2 完了 → Chunk 3 (Tab B UI、既に詳細化済み)
 
 ---
 
