@@ -1273,26 +1273,1377 @@ API 仕様:
 
 ## Chunk 5: Phase 2 - 履歴 UI (Tab B Sub-screen)
 
-**目的: 自分の報告履歴を Tab B から閲覧できる UI、ステータスバッジと PII redact 注記バッジを実装**。
+**目的: 自分の報告履歴を Tab B から閲覧できる UI、ステータスバッジ 5 種と PII redact 注記バッジを実装。空状態 / loading / error / pull-to-refresh / キャッシュ + background fetch を完備**。
 
-### Task 5.1: 子ブランチ `feat/v3-history-ui`
+### Task 5.1: 子ブランチ `feat/v3-history-ui` 切る
 
-### Task 5.2: ReportHistoryView 実装 (TDD)
+**Files:**
+- Modify: 既存 git 状態のみ
 
-- [ ] List view、空状態、loading、error 状態、pull-to-refresh
+- [ ] **Step 1: 親ブランチへ checkout + 最新化**
 
-### Task 5.3: ReportHistoryItemView 実装 (TDD)
+```bash
+cd /Users/oharakureho/claude/AdblockKeshi
+git checkout feature/v3.0-learning-adblock
+git pull origin feature/v3.0-learning-adblock
+git log --oneline -5
+```
 
-- [ ] Status badge 5 色 (pending/validating/approved/rejected_*)
-- [ ] PII redact 注記バッジ (rev4 §2 仕様)
+Expected: Chunk 4 の commit が反映されている (`feat/v3-device-uuid-and-api-client` PR merge 済)
 
-### Task 5.4: ReportHistoryCache (UserDefaults キャッシュ)
+- [ ] **Step 2: 子ブランチ `feat/v3-history-ui` 作成**
 
-- [ ] 起動時 cached を即表示、background で API fetch、新しいデータで上書き
+```bash
+git checkout -b feat/v3-history-ui
+git status
+```
 
-### Task 5.5: Tab B 内部ナビ統合 (Entry → Form → Sent → History 戻り経路)
+Expected: `On branch feat/v3-history-ui`、clean working tree
 
-### Chunk 5 完了 → PR
+### Task 5.2: ReportStatus enum と Codable 型定義 (TDD)
+
+履歴 UI のステータスは spec §2 で定義: `pending` / `validating` / `approved` / `rejected_no_ad_detected` / `rejected_safety_gate`。Workers レスポンスとの JSON 互換が必要。
+
+**Files:**
+- Create: `App/Models/ReportStatus.swift`
+- Create: `App/Models/ReportHistoryItem.swift`
+- Create: `Tests/App/Models/ReportStatusTests.swift`
+- Create: `Tests/App/Models/ReportHistoryItemTests.swift`
+- Create: `Tests/Fixtures/workers_responses/history_with_items.json`
+- Create: `Tests/Fixtures/workers_responses/history_empty.json`
+
+- [ ] **Step 1: Failing test を書く (ReportStatusTests)**
+
+`Tests/App/Models/ReportStatusTests.swift`:
+
+```swift
+import XCTest
+@testable import AdblockKeshi
+
+final class ReportStatusTests: XCTestCase {
+    func testReportStatus_decodesFromPendingString() throws {
+        let json = "\"pending\"".data(using: .utf8)!
+        let status = try JSONDecoder().decode(ReportStatus.self, from: json)
+        XCTAssertEqual(status, .pending)
+    }
+
+    func testReportStatus_decodesAllFiveValues() throws {
+        let values: [(String, ReportStatus)] = [
+            ("\"pending\"", .pending),
+            ("\"validating\"", .validating),
+            ("\"approved\"", .approved),
+            ("\"rejected_no_ad_detected\"", .rejectedNoAdDetected),
+            ("\"rejected_safety_gate\"", .rejectedSafetyGate),
+        ]
+        for (jsonString, expected) in values {
+            let json = jsonString.data(using: .utf8)!
+            let status = try JSONDecoder().decode(ReportStatus.self, from: json)
+            XCTAssertEqual(status, expected, "Failed for \(jsonString)")
+        }
+    }
+
+    func testReportStatus_rejectsUnknownString() {
+        let json = "\"unknown_value\"".data(using: .utf8)!
+        XCTAssertThrowsError(try JSONDecoder().decode(ReportStatus.self, from: json))
+    }
+
+    func testReportStatus_displayLabelMatchesJapanese() {
+        XCTAssertEqual(ReportStatus.pending.displayLabel, "受付済")
+        XCTAssertEqual(ReportStatus.validating.displayLabel, "検証中")
+        XCTAssertEqual(ReportStatus.approved.displayLabel, "反映済")
+        XCTAssertEqual(ReportStatus.rejectedNoAdDetected.displayLabel, "対象外")
+        XCTAssertEqual(ReportStatus.rejectedSafetyGate.displayLabel, "対象外")
+    }
+
+    func testReportStatus_badgeColorMapping() {
+        XCTAssertEqual(ReportStatus.pending.badgeRole, .neutral)
+        XCTAssertEqual(ReportStatus.validating.badgeRole, .info)
+        XCTAssertEqual(ReportStatus.approved.badgeRole, .success)
+        XCTAssertEqual(ReportStatus.rejectedNoAdDetected.badgeRole, .warning)
+        XCTAssertEqual(ReportStatus.rejectedSafetyGate.badgeRole, .warning)
+    }
+}
+```
+
+- [ ] **Step 2: test 実行して fail 確認**
+
+```bash
+xcodebuild test -project AdblockKeshi.xcodeproj -scheme AdblockKeshi \
+  -destination 'platform=iOS Simulator,name=iPhone 15' \
+  -only-testing:AdblockKeshiTests/ReportStatusTests 2>&1 | tail -15
+```
+
+Expected: FAIL (ReportStatus, ReportStatusBadgeRole 未定義)
+
+- [ ] **Step 3: ReportStatus.swift 実装**
+
+`App/Models/ReportStatus.swift`:
+
+```swift
+import SwiftUI
+
+enum ReportStatus: String, Codable, CaseIterable, Equatable {
+    case pending
+    case validating
+    case approved
+    case rejectedNoAdDetected = "rejected_no_ad_detected"
+    case rejectedSafetyGate = "rejected_safety_gate"
+
+    var displayLabel: String {
+        switch self {
+        case .pending: return "受付済"
+        case .validating: return "検証中"
+        case .approved: return "反映済"
+        case .rejectedNoAdDetected, .rejectedSafetyGate: return "対象外"
+        }
+    }
+
+    var badgeRole: BadgeRole {
+        switch self {
+        case .pending: return .neutral
+        case .validating: return .info
+        case .approved: return .success
+        case .rejectedNoAdDetected, .rejectedSafetyGate: return .warning
+        }
+    }
+
+    var detailDescription: String {
+        switch self {
+        case .pending: return "報告を受け付けました。検証開始まで最大 1 時間。"
+        case .validating: return "自動検証中です。最大 7 日間で結果が出ます。"
+        case .approved: return "広告ブロックリストへ反映済みです。"
+        case .rejectedNoAdDetected: return "自動検証で広告を検出できませんでした。"
+        case .rejectedSafetyGate: return "安全装置で除外されました (大手サイト等)。"
+        }
+    }
+}
+
+enum BadgeRole: Equatable {
+    case neutral
+    case info
+    case success
+    case warning
+
+    var color: Color {
+        switch self {
+        case .neutral: return .secondary
+        case .info: return .blue
+        case .success: return .green
+        case .warning: return .orange
+        }
+    }
+}
+```
+
+- [ ] **Step 4: test pass 確認**
+
+```bash
+xcodebuild test -project AdblockKeshi.xcodeproj -scheme AdblockKeshi \
+  -destination 'platform=iOS Simulator,name=iPhone 15' \
+  -only-testing:AdblockKeshiTests/ReportStatusTests 2>&1 | tail -10
+```
+
+Expected: 5 tests passed
+
+- [ ] **Step 5: ReportHistoryItem の Failing test 書く**
+
+`Tests/Fixtures/workers_responses/history_with_items.json` を先に作成:
+
+```json
+{
+  "items": [
+    {
+      "id": "01HYZ1234567890ABCDEFGHIJK",
+      "url": "https://example.com/article/123",
+      "memo": "動画上のオーバーレイ広告",
+      "memo_redacted": false,
+      "status": "approved",
+      "created_at": 1717718400,
+      "validated_at": 1717804800,
+      "applied_at": 1718323200
+    },
+    {
+      "id": "01HYZ9876543210ZYXWVUTSRQP",
+      "url": "https://news.example.jp/page",
+      "memo": "ヘッダー下に***-****-****が含まれていた広告",
+      "memo_redacted": true,
+      "status": "validating",
+      "created_at": 1718064000,
+      "validated_at": null,
+      "applied_at": null
+    },
+    {
+      "id": "01HYZAAAAAAAAAAAAAAAAAAAA",
+      "url": "https://blog.example.org/post/1",
+      "memo": null,
+      "memo_redacted": false,
+      "status": "rejected_no_ad_detected",
+      "created_at": 1717459200,
+      "validated_at": 1717545600,
+      "applied_at": null
+    }
+  ],
+  "fetched_at": 1718668800
+}
+```
+
+`Tests/Fixtures/workers_responses/history_empty.json`:
+
+```json
+{
+  "items": [],
+  "fetched_at": 1718668800
+}
+```
+
+`Tests/App/Models/ReportHistoryItemTests.swift`:
+
+```swift
+import XCTest
+@testable import AdblockKeshi
+
+final class ReportHistoryItemTests: XCTestCase {
+    private func loadFixture(_ name: String) throws -> Data {
+        guard let url = Bundle(for: type(of: self)).url(
+            forResource: name, withExtension: "json", subdirectory: "Fixtures/workers_responses"
+        ) else {
+            throw XCTSkip("Fixture \(name).json not found in test bundle")
+        }
+        return try Data(contentsOf: url)
+    }
+
+    func testReportHistoryResponse_decodesThreeItems() throws {
+        let data = try loadFixture("history_with_items")
+        let response = try JSONDecoder().decode(ReportHistoryResponse.self, from: data)
+        XCTAssertEqual(response.items.count, 3)
+    }
+
+    func testReportHistoryResponse_decodesEmpty() throws {
+        let data = try loadFixture("history_empty")
+        let response = try JSONDecoder().decode(ReportHistoryResponse.self, from: data)
+        XCTAssertEqual(response.items.count, 0)
+    }
+
+    func testReportHistoryItem_redactedFlagPreserved() throws {
+        let data = try loadFixture("history_with_items")
+        let response = try JSONDecoder().decode(ReportHistoryResponse.self, from: data)
+        XCTAssertTrue(response.items[1].memoRedacted)
+        XCTAssertFalse(response.items[0].memoRedacted)
+    }
+
+    func testReportHistoryItem_nullMemoDecodesToNil() throws {
+        let data = try loadFixture("history_with_items")
+        let response = try JSONDecoder().decode(ReportHistoryResponse.self, from: data)
+        XCTAssertNil(response.items[2].memo)
+        XCTAssertNotNil(response.items[0].memo)
+    }
+
+    func testReportHistoryItem_createdAtDecodesAsDate() throws {
+        let data = try loadFixture("history_with_items")
+        let response = try JSONDecoder().decode(ReportHistoryResponse.self, from: data)
+        let expected = Date(timeIntervalSince1970: 1717718400)
+        XCTAssertEqual(response.items[0].createdAt, expected)
+    }
+
+    func testReportHistoryItem_appliedAtNullForNonApproved() throws {
+        let data = try loadFixture("history_with_items")
+        let response = try JSONDecoder().decode(ReportHistoryResponse.self, from: data)
+        XCTAssertNotNil(response.items[0].appliedAt)
+        XCTAssertNil(response.items[1].appliedAt)
+        XCTAssertNil(response.items[2].appliedAt)
+    }
+}
+```
+
+- [ ] **Step 6: test 実行 → fail 確認**
+
+```bash
+xcodebuild test -project AdblockKeshi.xcodeproj -scheme AdblockKeshi \
+  -destination 'platform=iOS Simulator,name=iPhone 15' \
+  -only-testing:AdblockKeshiTests/ReportHistoryItemTests 2>&1 | tail -10
+```
+
+Expected: FAIL (ReportHistoryResponse / ReportHistoryItem 未定義 or Fixtures が test bundle に未登録)
+
+- [ ] **Step 7: ReportHistoryItem.swift 実装**
+
+`App/Models/ReportHistoryItem.swift`:
+
+```swift
+import Foundation
+
+struct ReportHistoryResponse: Codable, Equatable {
+    let items: [ReportHistoryItem]
+    let fetchedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case items
+        case fetchedAt = "fetched_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.items = try container.decode([ReportHistoryItem].self, forKey: .items)
+        let ts = try container.decode(Int64.self, forKey: .fetchedAt)
+        self.fetchedAt = Date(timeIntervalSince1970: TimeInterval(ts))
+    }
+
+    init(items: [ReportHistoryItem], fetchedAt: Date) {
+        self.items = items
+        self.fetchedAt = fetchedAt
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(items, forKey: .items)
+        try container.encode(Int64(fetchedAt.timeIntervalSince1970), forKey: .fetchedAt)
+    }
+}
+
+struct ReportHistoryItem: Codable, Equatable, Identifiable {
+    let id: String                  // ULID from Workers
+    let url: String
+    let memo: String?
+    let memoRedacted: Bool          // rev4 §2: redact 発火フラグ
+    let status: ReportStatus
+    let createdAt: Date
+    let validatedAt: Date?
+    let appliedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id, url, memo, status
+        case memoRedacted = "memo_redacted"
+        case createdAt = "created_at"
+        case validatedAt = "validated_at"
+        case appliedAt = "applied_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.url = try container.decode(String.self, forKey: .url)
+        self.memo = try container.decodeIfPresent(String.self, forKey: .memo)
+        self.memoRedacted = try container.decode(Bool.self, forKey: .memoRedacted)
+        self.status = try container.decode(ReportStatus.self, forKey: .status)
+
+        let createdTs = try container.decode(Int64.self, forKey: .createdAt)
+        self.createdAt = Date(timeIntervalSince1970: TimeInterval(createdTs))
+
+        if let validatedTs = try container.decodeIfPresent(Int64.self, forKey: .validatedAt) {
+            self.validatedAt = Date(timeIntervalSince1970: TimeInterval(validatedTs))
+        } else {
+            self.validatedAt = nil
+        }
+
+        if let appliedTs = try container.decodeIfPresent(Int64.self, forKey: .appliedAt) {
+            self.appliedAt = Date(timeIntervalSince1970: TimeInterval(appliedTs))
+        } else {
+            self.appliedAt = nil
+        }
+    }
+
+    init(id: String, url: String, memo: String?, memoRedacted: Bool, status: ReportStatus,
+         createdAt: Date, validatedAt: Date?, appliedAt: Date?) {
+        self.id = id; self.url = url; self.memo = memo; self.memoRedacted = memoRedacted
+        self.status = status; self.createdAt = createdAt; self.validatedAt = validatedAt; self.appliedAt = appliedAt
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(url, forKey: .url)
+        try container.encodeIfPresent(memo, forKey: .memo)
+        try container.encode(memoRedacted, forKey: .memoRedacted)
+        try container.encode(status, forKey: .status)
+        try container.encode(Int64(createdAt.timeIntervalSince1970), forKey: .createdAt)
+        try container.encodeIfPresent(validatedAt.map { Int64($0.timeIntervalSince1970) }, forKey: .validatedAt)
+        try container.encodeIfPresent(appliedAt.map { Int64($0.timeIntervalSince1970) }, forKey: .appliedAt)
+    }
+}
+```
+
+- [ ] **Step 8: project.yml に Tests/Fixtures を test target resource として登録**
+
+`project.yml` の `AdblockKeshiTests` target の `sources:` または `resources:` を確認・追加:
+
+```yaml
+  AdblockKeshiTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+    resources:
+      - path: Tests/Fixtures
+```
+
+xcodegen 再実行:
+
+```bash
+xcodegen
+```
+
+- [ ] **Step 9: test pass 確認**
+
+```bash
+xcodebuild test -project AdblockKeshi.xcodeproj -scheme AdblockKeshi \
+  -destination 'platform=iOS Simulator,name=iPhone 15' \
+  -only-testing:AdblockKeshiTests/ReportHistoryItemTests 2>&1 | tail -10
+```
+
+Expected: 6 tests passed
+
+- [ ] **Step 10: commit**
+
+```bash
+git add App/Models/ReportStatus.swift App/Models/ReportHistoryItem.swift \
+        Tests/App/Models/ReportStatusTests.swift Tests/App/Models/ReportHistoryItemTests.swift \
+        Tests/Fixtures/workers_responses/history_with_items.json \
+        Tests/Fixtures/workers_responses/history_empty.json \
+        project.yml
+git commit -m "feat(v3): add ReportStatus enum and ReportHistoryItem Codable models
+
+- ReportStatus: 5 cases matching spec §2 (pending/validating/approved/rejected_*)
+- BadgeRole + displayLabel + detailDescription for UI
+- ReportHistoryItem with memo_redacted flag (rev4 §2)
+- Fixtures for workers /v1/reports/history response shape"
+```
+
+### Task 5.3: ReportHistoryCache (UserDefaults キャッシュ) TDD
+
+履歴 UI は「起動時 cached を即表示、background で API fetch、新しいデータで上書き」(spec §2)。
+キャッシュ層を ReportHistoryCache として独立、テスト可能にする。
+
+**Files:**
+- Create: `App/Storage/ReportHistoryCache.swift`
+- Create: `Tests/App/Storage/ReportHistoryCacheTests.swift`
+
+- [ ] **Step 1: Failing test**
+
+`Tests/App/Storage/ReportHistoryCacheTests.swift`:
+
+```swift
+import XCTest
+@testable import AdblockKeshi
+
+final class ReportHistoryCacheTests: XCTestCase {
+    private var suiteName: String!
+    private var defaults: UserDefaults!
+    private var cache: ReportHistoryCache!
+
+    override func setUp() {
+        super.setUp()
+        suiteName = "test.report.history.cache.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)!
+        cache = ReportHistoryCache(defaults: defaults)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suiteName)
+        super.tearDown()
+    }
+
+    func testLoad_returnsNilOnFirstLaunch() {
+        XCTAssertNil(cache.load())
+    }
+
+    func testSave_persistsResponseAcrossInstances() throws {
+        let response = makeFixtureResponse()
+        cache.save(response)
+
+        let cache2 = ReportHistoryCache(defaults: defaults)
+        let loaded = cache2.load()
+
+        XCTAssertEqual(loaded, response)
+    }
+
+    func testClear_removesPersistedData() throws {
+        let response = makeFixtureResponse()
+        cache.save(response)
+        XCTAssertNotNil(cache.load())
+
+        cache.clear()
+        XCTAssertNil(cache.load())
+    }
+
+    func testSave_corruptedDataIsRecoverable() {
+        // 壊れた JSON 書いてしまった場合 load が nil を返し crash しない
+        defaults.set("not-valid-json".data(using: .utf8), forKey: ReportHistoryCache.cacheKey)
+        XCTAssertNil(cache.load())
+    }
+
+    private func makeFixtureResponse() -> ReportHistoryResponse {
+        let item = ReportHistoryItem(
+            id: "01HYZ1234567890ABCDEFGHIJK",
+            url: "https://example.com/x",
+            memo: "test memo",
+            memoRedacted: false,
+            status: .pending,
+            createdAt: Date(timeIntervalSince1970: 1718000000),
+            validatedAt: nil,
+            appliedAt: nil
+        )
+        return ReportHistoryResponse(items: [item], fetchedAt: Date(timeIntervalSince1970: 1718001000))
+    }
+}
+```
+
+- [ ] **Step 2: test 実行 → fail 確認**
+
+```bash
+xcodebuild test ... -only-testing:AdblockKeshiTests/ReportHistoryCacheTests
+```
+
+Expected: FAIL (ReportHistoryCache 未定義)
+
+- [ ] **Step 3: ReportHistoryCache.swift 実装**
+
+`App/Storage/ReportHistoryCache.swift`:
+
+```swift
+import Foundation
+
+final class ReportHistoryCache {
+    static let cacheKey = "v3.report.history.cache.v1"
+
+    private let defaults: UserDefaults
+    private let decoder: JSONDecoder
+    private let encoder: JSONEncoder
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        self.decoder = JSONDecoder()
+        self.encoder = JSONEncoder()
+    }
+
+    func load() -> ReportHistoryResponse? {
+        guard let data = defaults.data(forKey: Self.cacheKey) else { return nil }
+        return try? decoder.decode(ReportHistoryResponse.self, from: data)
+    }
+
+    func save(_ response: ReportHistoryResponse) {
+        guard let data = try? encoder.encode(response) else { return }
+        defaults.set(data, forKey: Self.cacheKey)
+    }
+
+    func clear() {
+        defaults.removeObject(forKey: Self.cacheKey)
+    }
+}
+```
+
+- [ ] **Step 4: test pass 確認**
+
+```bash
+xcodebuild test ... -only-testing:AdblockKeshiTests/ReportHistoryCacheTests 2>&1 | tail -10
+```
+
+Expected: 4 tests passed
+
+- [ ] **Step 5: commit**
+
+```bash
+git add App/Storage/ReportHistoryCache.swift Tests/App/Storage/ReportHistoryCacheTests.swift
+git commit -m "feat(v3): add ReportHistoryCache for instant-load + background-refresh UX"
+```
+
+### Task 5.4: ReportHistoryItemView (1 件分の表示、status badge + redact 注記) TDD
+
+**Files:**
+- Create: `App/ReportTab/ReportHistoryItemView.swift`
+- Create: `Tests/App/ReportTab/ReportHistoryItemViewTests.swift`
+
+- [ ] **Step 1: Failing test (view inspection ベース、最小限の構造確認)**
+
+`Tests/App/ReportTab/ReportHistoryItemViewTests.swift`:
+
+```swift
+import XCTest
+import SwiftUI
+@testable import AdblockKeshi
+
+final class ReportHistoryItemViewTests: XCTestCase {
+    func testItemView_initWithApprovedStatus_setsBadgeRoleSuccess() {
+        let item = makeItem(status: .approved, memoRedacted: false)
+        let view = ReportHistoryItemView(item: item)
+        XCTAssertEqual(view.item.status.badgeRole, .success)
+    }
+
+    func testItemView_redactedItem_setsShowsRedactBadge() {
+        let item = makeItem(status: .pending, memoRedacted: true)
+        let view = ReportHistoryItemView(item: item)
+        XCTAssertTrue(view.shouldShowRedactBadge)
+    }
+
+    func testItemView_nonRedactedItem_hidesRedactBadge() {
+        let item = makeItem(status: .pending, memoRedacted: false)
+        let view = ReportHistoryItemView(item: item)
+        XCTAssertFalse(view.shouldShowRedactBadge)
+    }
+
+    func testItemView_truncatesLongURL() {
+        let longURL = "https://example.com/" + String(repeating: "a", count: 200)
+        let item = makeItem(url: longURL, status: .pending, memoRedacted: false)
+        let view = ReportHistoryItemView(item: item)
+        XCTAssertLessThanOrEqual(view.displayURL.count, 60)
+        XCTAssertTrue(view.displayURL.hasSuffix("..."))
+    }
+
+    func testItemView_relativeDateForRecent() {
+        let recent = Date().addingTimeInterval(-3600)
+        let item = makeItem(createdAt: recent, status: .pending, memoRedacted: false)
+        let view = ReportHistoryItemView(item: item)
+        XCTAssertTrue(view.displayDate.contains("時間") || view.displayDate.contains("分") || view.displayDate.contains("今"))
+    }
+
+    private func makeItem(url: String = "https://example.com/x",
+                          createdAt: Date = Date(),
+                          status: ReportStatus,
+                          memoRedacted: Bool) -> ReportHistoryItem {
+        ReportHistoryItem(
+            id: UUID().uuidString,
+            url: url,
+            memo: memoRedacted ? "***-****-****" : nil,
+            memoRedacted: memoRedacted,
+            status: status,
+            createdAt: createdAt,
+            validatedAt: nil,
+            appliedAt: nil
+        )
+    }
+}
+```
+
+- [ ] **Step 2: test 実行 → fail 確認**
+
+```bash
+xcodebuild test ... -only-testing:AdblockKeshiTests/ReportHistoryItemViewTests
+```
+
+Expected: FAIL (ReportHistoryItemView, shouldShowRedactBadge, displayURL, displayDate 未定義)
+
+- [ ] **Step 3: ReportHistoryItemView.swift 実装**
+
+`App/ReportTab/ReportHistoryItemView.swift`:
+
+```swift
+import SwiftUI
+
+struct ReportHistoryItemView: View {
+    let item: ReportHistoryItem
+
+    private let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        f.locale = Locale(identifier: "ja_JP")
+        return f
+    }()
+
+    var shouldShowRedactBadge: Bool {
+        item.memoRedacted
+    }
+
+    var displayURL: String {
+        let maxLen = 60
+        if item.url.count <= maxLen { return item.url }
+        let prefix = item.url.prefix(maxLen - 3)
+        return prefix + "..."
+    }
+
+    var displayDate: String {
+        relativeFormatter.localizedString(for: item.createdAt, relativeTo: Date())
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Text(displayURL)
+                    .font(.callout)
+                    .lineLimit(2)
+                    .foregroundStyle(.primary)
+                Spacer()
+                statusBadge
+            }
+
+            HStack(spacing: 8) {
+                Text(displayDate)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if shouldShowRedactBadge {
+                    redactBadge
+                }
+            }
+
+            if let memo = item.memo, !memo.isEmpty {
+                Text(memo)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+
+            Text(item.status.detailDescription)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var statusBadge: some View {
+        Text(item.status.displayLabel)
+            .font(.caption.bold())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(item.status.badgeRole.color.opacity(0.15))
+            .foregroundStyle(item.status.badgeRole.color)
+            .clipShape(Capsule())
+    }
+
+    private var redactBadge: some View {
+        HStack(spacing: 2) {
+            Image(systemName: "eye.slash.fill")
+                .font(.caption2)
+            Text("一部伏字")
+                .font(.caption2)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Color.orange.opacity(0.15))
+        .foregroundStyle(Color.orange)
+        .clipShape(Capsule())
+        .accessibilityLabel("個人情報を含む可能性があるため一部を伏せて保存しました")
+    }
+
+    private var accessibilityLabel: String {
+        var parts = [displayURL, item.status.displayLabel, displayDate]
+        if shouldShowRedactBadge {
+            parts.append("一部伏字あり")
+        }
+        return parts.joined(separator: "、")
+    }
+}
+
+#Preview("approved + redacted") {
+    ReportHistoryItemView(item: ReportHistoryItem(
+        id: "01HYZ",
+        url: "https://example.com/very/long/path/that/should/be/truncated/eventually",
+        memo: "下部の***-****-****の付近",
+        memoRedacted: true,
+        status: .approved,
+        createdAt: Date().addingTimeInterval(-86400 * 3),
+        validatedAt: Date().addingTimeInterval(-86400 * 2),
+        appliedAt: Date().addingTimeInterval(-86400 * 1)
+    ))
+    .padding()
+}
+
+#Preview("pending + no memo") {
+    ReportHistoryItemView(item: ReportHistoryItem(
+        id: "01HYZ",
+        url: "https://news.example.jp/article/1",
+        memo: nil,
+        memoRedacted: false,
+        status: .pending,
+        createdAt: Date().addingTimeInterval(-3600),
+        validatedAt: nil,
+        appliedAt: nil
+    ))
+    .padding()
+}
+```
+
+- [ ] **Step 4: test pass 確認**
+
+```bash
+xcodebuild test ... -only-testing:AdblockKeshiTests/ReportHistoryItemViewTests 2>&1 | tail -10
+```
+
+Expected: 5 tests passed
+
+- [ ] **Step 5: シミュレータで preview 確認**
+
+Xcode で `ReportHistoryItemView.swift` を開き、Canvas で 2 つの Preview (approved + redacted、pending + no memo) が表示されることを確認。Capsule の色、redact badge の位置、長 URL truncation が意図通りか目視。
+
+- [ ] **Step 6: commit**
+
+```bash
+git add App/ReportTab/ReportHistoryItemView.swift Tests/App/ReportTab/ReportHistoryItemViewTests.swift
+git commit -m "feat(v3): add ReportHistoryItemView with status badge + redact notice (rev4 §2)
+
+- 5 status badges with role-mapped colors
+- PII redact badge with accessible label (rev4 §2 spec)
+- URL truncation at 60 chars
+- Japanese relative date formatter"
+```
+
+### Task 5.5: ReportHistoryViewModel (cache + API + state machine) TDD
+
+履歴 view の状態は: `loading` (初回 cache なし) / `cached` (cache あり、API fetch 中) / `loaded` (新データ反映) / `empty` / `error`。
+ViewModel として独立、Tests から駆動可能にする。
+
+**Files:**
+- Create: `App/ReportTab/ReportHistoryViewModel.swift`
+- Create: `Tests/App/ReportTab/ReportHistoryViewModelTests.swift`
+
+- [ ] **Step 1: Failing test**
+
+`Tests/App/ReportTab/ReportHistoryViewModelTests.swift`:
+
+```swift
+import XCTest
+@testable import AdblockKeshi
+
+@MainActor
+final class ReportHistoryViewModelTests: XCTestCase {
+    private var apiClient: MockReportAPIClient!
+    private var cache: ReportHistoryCache!
+    private var suiteName: String!
+    private var viewModel: ReportHistoryViewModel!
+
+    override func setUp() async throws {
+        try await super.setUp()
+        apiClient = MockReportAPIClient()
+        suiteName = "test.history.viewmodel.\(UUID().uuidString)"
+        cache = ReportHistoryCache(defaults: UserDefaults(suiteName: suiteName)!)
+        viewModel = ReportHistoryViewModel(apiClient: apiClient, cache: cache)
+    }
+
+    override func tearDown() async throws {
+        UserDefaults(suiteName: suiteName)!.removePersistentDomain(forName: suiteName)
+        try await super.tearDown()
+    }
+
+    func testInitialState_isLoading() {
+        XCTAssertEqual(viewModel.state, .loading)
+    }
+
+    func testRefresh_noCacheNoNetwork_setsErrorState() async {
+        apiClient.stubFetchHistoryResult = .failure(APIError.networkUnavailable)
+        await viewModel.refresh()
+        if case .error(let err) = viewModel.state {
+            XCTAssertTrue(err is APIError)
+        } else {
+            XCTFail("Expected .error state, got \(viewModel.state)")
+        }
+    }
+
+    func testRefresh_noCacheAPISuccess_setsLoadedWithItems() async {
+        let item = makeItem(status: .pending)
+        apiClient.stubFetchHistoryResult = .success(ReportHistoryResponse(items: [item], fetchedAt: Date()))
+        await viewModel.refresh()
+        guard case .loaded(let response) = viewModel.state else {
+            return XCTFail("Expected .loaded, got \(viewModel.state)")
+        }
+        XCTAssertEqual(response.items.count, 1)
+    }
+
+    func testRefresh_noCacheAPIEmpty_setsEmptyState() async {
+        apiClient.stubFetchHistoryResult = .success(ReportHistoryResponse(items: [], fetchedAt: Date()))
+        await viewModel.refresh()
+        XCTAssertEqual(viewModel.state, .empty)
+    }
+
+    func testRefresh_withCacheAndAPISuccess_showsCachedThenLoaded() async {
+        // 既存 cache あり
+        let cachedItem = makeItem(status: .pending)
+        cache.save(ReportHistoryResponse(items: [cachedItem], fetchedAt: Date().addingTimeInterval(-86400)))
+
+        // API が新しいデータ返す
+        let freshItem = makeItem(status: .approved)
+        apiClient.stubFetchHistoryResult = .success(ReportHistoryResponse(items: [cachedItem, freshItem], fetchedAt: Date()))
+
+        // refresh 直後は cache 反映 → API 完了で loaded
+        let viewModelWithCache = ReportHistoryViewModel(apiClient: apiClient, cache: cache)
+        XCTAssertEqual(viewModelWithCache.state, .cached(ReportHistoryResponse(items: [cachedItem], fetchedAt: Date().addingTimeInterval(-86400))))
+
+        await viewModelWithCache.refresh()
+        guard case .loaded(let response) = viewModelWithCache.state else {
+            return XCTFail("Expected .loaded after refresh")
+        }
+        XCTAssertEqual(response.items.count, 2)
+    }
+
+    func testRefresh_withCacheAPIFailure_keepsCachedState() async {
+        let cachedItem = makeItem(status: .pending)
+        let cachedResponse = ReportHistoryResponse(items: [cachedItem], fetchedAt: Date().addingTimeInterval(-86400))
+        cache.save(cachedResponse)
+
+        apiClient.stubFetchHistoryResult = .failure(APIError.networkUnavailable)
+
+        let vm = ReportHistoryViewModel(apiClient: apiClient, cache: cache)
+        await vm.refresh()
+
+        // API 失敗だが cache は維持
+        XCTAssertEqual(vm.state, .cached(cachedResponse))
+    }
+
+    private func makeItem(status: ReportStatus) -> ReportHistoryItem {
+        ReportHistoryItem(
+            id: UUID().uuidString,
+            url: "https://example.com/\(UUID().uuidString.prefix(8))",
+            memo: nil, memoRedacted: false, status: status,
+            createdAt: Date(), validatedAt: nil, appliedAt: nil
+        )
+    }
+}
+
+// MARK: - Mock
+
+final class MockReportAPIClient: ReportAPIClientProtocol {
+    var stubFetchHistoryResult: Result<ReportHistoryResponse, Error> = .success(ReportHistoryResponse(items: [], fetchedAt: Date()))
+
+    func fetchHistory() async throws -> ReportHistoryResponse {
+        switch stubFetchHistoryResult {
+        case .success(let r): return r
+        case .failure(let e): throw e
+        }
+    }
+
+    // Phase 2 で他の method は別途 stub
+    func requestToken(turnstileResponse: String, scope: TokenScope) async throws -> HMACToken {
+        fatalError("not used in HistoryViewModel tests")
+    }
+    func submitReport(url: URL, memo: String?) async throws { fatalError("not used") }
+    func requestDeletion(urlPathHash: String?) async throws { fatalError("not used") }
+}
+```
+
+- [ ] **Step 2: test 実行 → fail 確認**
+
+Expected: FAIL (ReportHistoryViewModel, state, ReportAPIClientProtocol 等未定義)
+
+- [ ] **Step 3: ReportHistoryViewModel.swift 実装**
+
+`App/ReportTab/ReportHistoryViewModel.swift`:
+
+```swift
+import Foundation
+import SwiftUI
+
+enum ReportHistoryState: Equatable {
+    case loading
+    case cached(ReportHistoryResponse)
+    case loaded(ReportHistoryResponse)
+    case empty
+    case error(Error)
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        switch (lhs, rhs) {
+        case (.loading, .loading), (.empty, .empty): return true
+        case let (.cached(a), .cached(b)): return a == b
+        case let (.loaded(a), .loaded(b)): return a == b
+        case (.error, .error): return true
+        default: return false
+        }
+    }
+}
+
+@MainActor
+final class ReportHistoryViewModel: ObservableObject {
+    @Published private(set) var state: ReportHistoryState
+
+    private let apiClient: ReportAPIClientProtocol
+    private let cache: ReportHistoryCache
+
+    init(apiClient: ReportAPIClientProtocol, cache: ReportHistoryCache) {
+        self.apiClient = apiClient
+        self.cache = cache
+
+        // 起動時 cache を即座に評価
+        if let cached = cache.load() {
+            self.state = .cached(cached)
+        } else {
+            self.state = .loading
+        }
+    }
+
+    func refresh() async {
+        do {
+            let response = try await apiClient.fetchHistory()
+            if response.items.isEmpty {
+                state = .empty
+                cache.clear()
+            } else {
+                state = .loaded(response)
+                cache.save(response)
+            }
+        } catch {
+            // cache があれば cached を維持、なければ error
+            if case .cached = state {
+                // 維持: state は既に .cached
+                return
+            } else if let cached = cache.load() {
+                state = .cached(cached)
+            } else {
+                state = .error(error)
+            }
+        }
+    }
+}
+```
+
+- [ ] **Step 4: test pass 確認**
+
+```bash
+xcodebuild test ... -only-testing:AdblockKeshiTests/ReportHistoryViewModelTests 2>&1 | tail -15
+```
+
+Expected: 6 tests passed
+
+- [ ] **Step 5: commit**
+
+```bash
+git add App/ReportTab/ReportHistoryViewModel.swift Tests/App/ReportTab/ReportHistoryViewModelTests.swift
+git commit -m "feat(v3): add ReportHistoryViewModel with cache-first + background-refresh state machine
+
+- 5 states: loading / cached / loaded / empty / error
+- cache-first UX (instant display) + API fetch
+- Graceful degradation: API failure keeps cached state"
+```
+
+### Task 5.6: ReportHistoryView 実装 (ViewModel を表示する View) TDD + manual UI verify
+
+**Files:**
+- Create: `App/ReportTab/ReportHistoryView.swift`
+- Create: `Tests/App/ReportTab/ReportHistoryViewTests.swift`
+
+- [ ] **Step 1: Failing test**
+
+```swift
+import XCTest
+import SwiftUI
+@testable import AdblockKeshi
+
+@MainActor
+final class ReportHistoryViewTests: XCTestCase {
+    func testView_initializesWithViewModel() {
+        let vm = ReportHistoryViewModel(
+            apiClient: MockReportAPIClient(),
+            cache: ReportHistoryCache(defaults: UserDefaults(suiteName: "test")!)
+        )
+        let view = ReportHistoryView(viewModel: vm)
+        XCTAssertNotNil(view.body)
+    }
+}
+```
+
+- [ ] **Step 2: 実装**
+
+`App/ReportTab/ReportHistoryView.swift`:
+
+```swift
+import SwiftUI
+
+struct ReportHistoryView: View {
+    @ObservedObject var viewModel: ReportHistoryViewModel
+
+    var body: some View {
+        Group {
+            switch viewModel.state {
+            case .loading:
+                ProgressView("読み込み中…").progressViewStyle(.circular)
+            case .empty:
+                emptyState
+            case .error(let err):
+                errorState(error: err)
+            case .cached(let response), .loaded(let response):
+                List {
+                    Section {
+                        ForEach(response.items) { item in
+                            ReportHistoryItemView(item: item)
+                        }
+                    } footer: {
+                        Text("最終更新: \(formatFetchedAt(response.fetchedAt))")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .listStyle(.insetGrouped)
+            }
+        }
+        .navigationTitle("報告履歴")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task { await viewModel.refresh() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .accessibilityLabel("再読み込み")
+            }
+        }
+        .refreshable {
+            await viewModel.refresh()
+        }
+        .task {
+            await viewModel.refresh()
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "tray")
+                .font(.system(size: 48))
+                .foregroundStyle(.tertiary)
+            Text("まだ報告がありません")
+                .font(.headline)
+            Text("Tab B トップ画面から、消えない広告を報告してください。")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(40)
+    }
+
+    private func errorState(error: Error) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 48))
+                .foregroundStyle(.orange)
+            Text("読み込めませんでした")
+                .font(.headline)
+            Text(error.localizedDescription)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("再試行") {
+                Task { await viewModel.refresh() }
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(40)
+    }
+
+    private func formatFetchedAt(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy/MM/dd HH:mm"
+        f.locale = Locale(identifier: "ja_JP")
+        return f.string(from: date)
+    }
+}
+```
+
+- [ ] **Step 3: test pass 確認**
+
+```bash
+xcodebuild test ... -only-testing:AdblockKeshiTests/ReportHistoryViewTests
+```
+
+- [ ] **Step 4: シミュレータで 4 状態目視確認**
+
+シミュレータ起動 → Tab B → 履歴ボタンタップ → 以下 4 シナリオを確認:
+
+1. **empty 状態**: 起動直後、報告 0 件 → 「まだ報告がありません」表示
+2. **loaded 状態**: 報告送信後 → リスト表示、最新が上
+3. **cached 状態**: アプリ再起動 (オフライン) → cached items 表示 + 古い fetchedAt
+4. **error 状態**: 初回起動 + オフライン → 「読み込めませんでした」表示 + 再試行ボタン
+
+- [ ] **Step 5: commit**
+
+```bash
+git add App/ReportTab/ReportHistoryView.swift Tests/App/ReportTab/ReportHistoryViewTests.swift
+git commit -m "feat(v3): add ReportHistoryView with 4 states + pull-to-refresh
+
+- empty / loading / loaded / cached / error UI
+- Toolbar refresh button + pull-to-refresh + .task auto-refresh on appear
+- Footer shows last fetchedAt timestamp"
+```
+
+### Task 5.7: Tab B 内部ナビ統合 (Entry → Form → Sent → History 戻り経路)
+
+spec §2 で「Tab B 内 subtab or 履歴ボタンで [履歴を見る]」と書いた。実装: ReportTabView の root を NavigationStack にし、Entry 画面に「履歴を見る」ボタン、History への push 遷移。
+
+**Files:**
+- Modify: `App/ReportTab/ReportTabView.swift`
+- Modify: `App/ReportTab/ReportEntryView.swift` (履歴 button 追加)
+- Create: `Tests/App/ReportTab/ReportTabViewTests.swift` (smoke test)
+
+- [ ] **Step 1: Failing test (navigation smoke)**
+
+```swift
+import XCTest
+import SwiftUI
+@testable import AdblockKeshi
+
+@MainActor
+final class ReportTabViewTests: XCTestCase {
+    func testTabView_initializesWithDependencies() {
+        let view = ReportTabView(
+            apiClient: MockReportAPIClient(),
+            historyCache: ReportHistoryCache(defaults: UserDefaults(suiteName: "test.tabview")!)
+        )
+        XCTAssertNotNil(view.body)
+    }
+}
+```
+
+- [ ] **Step 2: ReportTabView をナビ統合形に書き換え**
+
+`App/ReportTab/ReportTabView.swift`:
+
+```swift
+import SwiftUI
+
+enum ReportTabRoute: Hashable {
+    case form
+    case sent
+    case history
+}
+
+struct ReportTabView: View {
+    let apiClient: ReportAPIClientProtocol
+    let historyCache: ReportHistoryCache
+
+    @State private var path: [ReportTabRoute] = []
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            ReportEntryView(
+                onReportTap: { path.append(.form) },
+                onHistoryTap: { path.append(.history) }
+            )
+            .navigationTitle("報告")
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(for: ReportTabRoute.self) { route in
+                switch route {
+                case .form:
+                    ReportFormView(
+                        apiClient: apiClient,
+                        onSubmitSuccess: {
+                            path.append(.sent)
+                        }
+                    )
+                case .sent:
+                    ReportSentView(
+                        onAgainTap: {
+                            // form だけ pop してエントリに戻る、または form に直接戻る
+                            path.removeAll()
+                            path.append(.form)
+                        },
+                        onCloseTap: {
+                            path.removeAll()
+                        }
+                    )
+                case .history:
+                    ReportHistoryView(viewModel: makeHistoryViewModel())
+                }
+            }
+        }
+    }
+
+    private func makeHistoryViewModel() -> ReportHistoryViewModel {
+        ReportHistoryViewModel(apiClient: apiClient, cache: historyCache)
+    }
+}
+```
+
+- [ ] **Step 3: ReportEntryView に「履歴を見る」ボタン追加**
+
+`App/ReportTab/ReportEntryView.swift` 修正:
+
+```swift
+struct ReportEntryView: View {
+    let onReportTap: () -> Void
+    let onHistoryTap: () -> Void
+
+    var body: some View {
+        VStack(spacing: 24) {
+            // ... (既存の Image + Text + 報告ボタン) ...
+
+            Button(action: onHistoryTap) {
+                Label("これまでの報告履歴", systemImage: "list.bullet.rectangle")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+        }
+        // ...
+    }
+}
+```
+
+(既存 init signature `init(onTap:)` を `init(onReportTap:, onHistoryTap:)` に変えるので、上位の Preview も更新)
+
+- [ ] **Step 4: AdblockKeshiApp.swift の TabView から ReportTabView の init 引数を修正**
+
+```swift
+ReportTabView(
+    apiClient: ReportAPIClient(/* env-configured */),
+    historyCache: ReportHistoryCache()
+)
+.tabItem { ... }
+```
+
+- [ ] **Step 5: シミュレータで全 navigation 動作確認**
+
+シナリオ:
+1. Tab B → エントリ → 報告ボタン → Form → 送信 → Sent → 「またする」→ Form (path リセット後 push)
+2. Tab B → エントリ → 履歴 → History → back → エントリ
+3. Form 入力中に back → エントリに戻る (入力 discard)
+
+- [ ] **Step 6: commit**
+
+```bash
+git add App/ReportTab/ReportTabView.swift App/ReportTab/ReportEntryView.swift App/AdblockKeshiApp.swift \
+        Tests/App/ReportTab/ReportTabViewTests.swift
+git commit -m "feat(v3): integrate Tab B navigation (Entry → Form → Sent / Entry → History)
+
+- NavigationStack with ReportTabRoute enum (form/sent/history)
+- Entry screen gets 'history' button alongside primary report CTA
+- ReportTabView accepts apiClient + historyCache for testability"
+```
+
+### Task 5.8: Chunk 5 完了確認 + PR
+
+- [ ] **Step 1: chunk 全 test pass**
+
+```bash
+xcodebuild test -project AdblockKeshi.xcodeproj -scheme AdblockKeshi \
+  -destination 'platform=iOS Simulator,name=iPhone 15' 2>&1 | tail -20
+```
+
+Expected: 全 PASS。新規追加 test 件数 = 約 23 個 (ReportStatus 5 + ReportHistoryItem 6 + ReportHistoryCache 4 + ReportHistoryItemView 5 + ReportHistoryViewModel 6 + ReportHistoryView 1 + ReportTabView 1 = 28 個程度)
+
+- [ ] **Step 2: E2E シミュレータシナリオ**
+
+1. 報告 0 件 → Tab B 履歴 = empty state
+2. 報告 3 件送信 → Tab B 履歴 = 3 件 loaded、最新が上
+3. アプリ kill → 再起動 → 履歴即表示 (cached)
+4. オフライン化 → 履歴 = cached のまま、refresh で「読み込めませんでした」エラー
+5. 各 status (pending/validating/approved/rejected_*) の badge 色目視確認
+6. memoRedacted = true の item で「一部伏字」バッジ目視確認
+
+- [ ] **Step 3: PR 作成**
+
+```bash
+gh pr create --base feature/v3.0-learning-adblock --title "feat(v3): Tab B history UI with cache + status/redact badges" --body "$(cat <<'EOF'
+## Summary
+- ReportStatus enum (5 cases) + BadgeRole + Codable
+- ReportHistoryItem + ReportHistoryResponse Codable
+- ReportHistoryCache (UserDefaults) for instant-load UX
+- ReportHistoryItemView with status badge + PII redact notice (rev4 §2)
+- ReportHistoryViewModel state machine (loading/cached/loaded/empty/error)
+- ReportHistoryView with empty/error states + pull-to-refresh
+- Tab B internal NavigationStack (Entry → Form → Sent / Entry → History)
+
+## Tests
+- 28 new XCTest cases all passing
+- E2E sim: 6 scenarios verified (empty / loaded / cached / offline error / status badges / redact badge)
+
+## Refs
+- spec §2 (report tab UX)
+- spec rev4 §2 (PII redact notice badge)
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+```
+
+- [ ] **Step 4: kureho 承認後 merge**
+
+### Chunk 5 完了 → 次は Chunk 6 (ContentRuleListState + Phase 1-2 統合)
 
 ---
 
