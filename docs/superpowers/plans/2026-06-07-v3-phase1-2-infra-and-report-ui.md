@@ -5971,19 +5971,469 @@ EOF
 
 ## Chunk 6: Phase 2 完了 + Phase 1-2 統合テスト
 
-### Task 6.1: ContentRuleListState (2 extension 状態検出) 実装
+### Task 6.1: ContentRuleListState (2 extension 状態検出) TDD
+
+spec §4: 2 extension の ON/OFF 状態を検出して 4 パターンの UX に反映。
+- 両方 ON → 通常
+- base のみ ON → 黄バナー (Tab A) + Tab B 報告に警告
+- 学習のみ ON → 赤バナー (Tab A、本体が機能しない)
+- 両方 OFF → onboarding 戻し
 
 **Files:**
 - Create: `App/ContentRuleListState.swift`
+- Create: `App/ContentRuleListStateChecker.swift` (protocol で抽象化、テスト時 mock)
 - Create: `Tests/App/ContentRuleListStateTests.swift`
 
-spec §4 2 extension UX (4 パターン状態検出)。
+#### 仕様詳細
 
-- [ ] **Step 1-N: SFContentBlockerManager.getStateOfContentBlocker(withIdentifier:) を 2 つ並行 fetch、4 パターン enum + Tab A での UI 反映 (黄バナー/赤バナー)**
+| 項目 | 値 |
+|---|---|
+| ベース extension id | `com.kureho.adblockkeshi.blocker` |
+| 学習 extension id | `com.kureho.adblockkeshi.reportedblocker` |
+| 状態取得 API | `SFContentBlockerManager.getStateOfContentBlocker(withIdentifier:)` |
+| 取得失敗 (extension 未認識) | `disabled` 扱い (fail-safe) |
+| 並行 fetch | TaskGroup or async let |
+| 更新タイミング | アプリ起動時、Settings から復帰時 (`scenePhase` 監視) |
 
-### Task 6.2: Tab B での 2 extension 状態連動
+- [ ] **Step 1: ContentRuleListStateChecker protocol と enum 定義**
 
-spec §2 §4 の「学習 OFF 時に報告タブで警告表示」を実装。
+`App/ContentRuleListState.swift`:
+
+```swift
+import Foundation
+import SafariServices
+
+enum ContentRuleListMode: Equatable {
+    case bothEnabled
+    case baseOnly
+    case reportedOnly
+    case bothDisabled
+
+    var isFullyOperational: Bool {
+        self == .bothEnabled
+    }
+
+    var statusLabel: String {
+        switch self {
+        case .bothEnabled: return "広告ブロック中"
+        case .baseOnly: return "広告ブロック中 (学習機能 OFF)"
+        case .reportedOnly: return "⚠️ 本体ブロッカーが OFF です"
+        case .bothDisabled: return "準備未完了"
+        }
+    }
+
+    var bannerType: BannerType? {
+        switch self {
+        case .bothEnabled: return nil
+        case .baseOnly: return .yellow("「広告消し 学習」を ON にすると、報告で広告ブロックが進化します")
+        case .reportedOnly: return .red("「広告消し 本体」を ON にしてください。学習機能だけでは大部分の広告が通り抜けます")
+        case .bothDisabled: return nil  // onboarding 戻し
+        }
+    }
+}
+
+enum BannerType: Equatable {
+    case yellow(String)
+    case red(String)
+}
+
+struct ContentRuleListSnapshot: Equatable {
+    let baseEnabled: Bool
+    let reportedEnabled: Bool
+    let mode: ContentRuleListMode
+
+    static func from(base: Bool, reported: Bool) -> ContentRuleListSnapshot {
+        let mode: ContentRuleListMode
+        switch (base, reported) {
+        case (true, true): mode = .bothEnabled
+        case (true, false): mode = .baseOnly
+        case (false, true): mode = .reportedOnly
+        case (false, false): mode = .bothDisabled
+        }
+        return ContentRuleListSnapshot(baseEnabled: base, reportedEnabled: reported, mode: mode)
+    }
+}
+
+protocol ContentRuleListStateChecker {
+    func check() async -> ContentRuleListSnapshot
+}
+
+struct SFContentBlockerStateChecker: ContentRuleListStateChecker {
+    static let baseID = "com.kureho.adblockkeshi.blocker"
+    static let reportedID = "com.kureho.adblockkeshi.reportedblocker"
+
+    func check() async -> ContentRuleListSnapshot {
+        async let baseState = getEnabled(identifier: Self.baseID)
+        async let reportedState = getEnabled(identifier: Self.reportedID)
+        let (b, r) = await (baseState, reportedState)
+        return ContentRuleListSnapshot.from(base: b, reported: r)
+    }
+
+    private func getEnabled(identifier: String) async -> Bool {
+        await withCheckedContinuation { cont in
+            SFContentBlockerManager.getStateOfContentBlocker(withIdentifier: identifier) { state, _ in
+                cont.resume(returning: state?.isEnabled ?? false)
+            }
+        }
+    }
+}
+```
+
+- [ ] **Step 2: failing test**
+
+`Tests/App/ContentRuleListStateTests.swift`:
+
+```swift
+import XCTest
+@testable import AdblockKeshi
+
+final class ContentRuleListStateTests: XCTestCase {
+    func testSnapshot_bothTrue_isBothEnabled() {
+        let s = ContentRuleListSnapshot.from(base: true, reported: true)
+        XCTAssertEqual(s.mode, .bothEnabled)
+        XCTAssertTrue(s.mode.isFullyOperational)
+    }
+
+    func testSnapshot_baseOnly() {
+        let s = ContentRuleListSnapshot.from(base: true, reported: false)
+        XCTAssertEqual(s.mode, .baseOnly)
+        XCTAssertFalse(s.mode.isFullyOperational)
+        if case .yellow(let msg) = s.mode.bannerType {
+            XCTAssertTrue(msg.contains("学習"))
+        } else { XCTFail("Expected yellow banner") }
+    }
+
+    func testSnapshot_reportedOnly() {
+        let s = ContentRuleListSnapshot.from(base: false, reported: true)
+        XCTAssertEqual(s.mode, .reportedOnly)
+        if case .red(let msg) = s.mode.bannerType {
+            XCTAssertTrue(msg.contains("本体"))
+        } else { XCTFail("Expected red banner") }
+    }
+
+    func testSnapshot_bothDisabled() {
+        let s = ContentRuleListSnapshot.from(base: false, reported: false)
+        XCTAssertEqual(s.mode, .bothDisabled)
+        XCTAssertNil(s.mode.bannerType)  // onboarding 戻し、banner なし
+    }
+
+    func testCheckerProtocol_mockReturnsBoth() async {
+        let mock = MockContentRuleListStateChecker(baseEnabled: true, reportedEnabled: true)
+        let snapshot = await mock.check()
+        XCTAssertEqual(snapshot.mode, .bothEnabled)
+    }
+}
+
+struct MockContentRuleListStateChecker: ContentRuleListStateChecker {
+    let baseEnabled: Bool
+    let reportedEnabled: Bool
+
+    func check() async -> ContentRuleListSnapshot {
+        ContentRuleListSnapshot.from(base: baseEnabled, reported: reportedEnabled)
+    }
+}
+```
+
+- [ ] **Step 3: test pass 確認**
+
+```bash
+xcodebuild test ... -only-testing:AdblockKeshiTests/ContentRuleListStateTests
+```
+
+Expected: 5 tests passed
+
+- [ ] **Step 4: commit**
+
+```bash
+git add App/ContentRuleListState.swift Tests/App/ContentRuleListStateTests.swift
+git commit -m "feat(v3): add ContentRuleListState with 4-pattern UX mode detection
+
+spec §4: 2 extension state detection
+- Snapshot.from(base, reported) → mode
+- BannerType yellow/red per pattern
+- ContentRuleListStateChecker protocol for mock testing
+- SFContentBlockerStateChecker production impl with concurrent fetch
+- 5 unit tests"
+```
+
+### Task 6.2: Tab A での banner 表示 + Tab B 警告連動
+
+spec §4 §2 で「学習 OFF 時に報告タブで警告表示」。Tab A の既存 ContentView を拡張、Tab B の Entry/Form/History でも mode を参照。
+
+**Files:**
+- Modify: `App/ContentView.swift` (banner 表示追加)
+- Modify: `App/ReportTab/ReportTabView.swift` (mode を取得して子 view に渡す)
+- Modify: `App/ReportTab/ReportEntryView.swift` (mode.reportedOnly/bothDisabled で警告)
+- Create: `App/Views/StatusBannerView.swift` (再利用可能 banner)
+- Create: `Tests/App/Views/StatusBannerViewTests.swift`
+- Create: `App/AppStateStore.swift` (ContentRuleListSnapshot を発行する @MainActor ObservableObject)
+- Create: `Tests/App/AppStateStoreTests.swift`
+
+- [ ] **Step 1: StatusBannerView 実装 (TDD)**
+
+`Tests/App/Views/StatusBannerViewTests.swift`:
+
+```swift
+import XCTest
+import SwiftUI
+@testable import AdblockKeshi
+
+@MainActor
+final class StatusBannerViewTests: XCTestCase {
+    func testBanner_yellow_renders() {
+        let view = StatusBannerView(banner: .yellow("test message"), onTap: nil)
+        XCTAssertNotNil(view.body)
+    }
+
+    func testBanner_red_renders() {
+        let view = StatusBannerView(banner: .red("error"), onTap: nil)
+        XCTAssertNotNil(view.body)
+    }
+
+    func testBanner_invokesOnTap() {
+        var tapped = false
+        let view = StatusBannerView(banner: .yellow("test"), onTap: { tapped = true })
+        view.onTap?()
+        XCTAssertTrue(tapped)
+    }
+}
+```
+
+`App/Views/StatusBannerView.swift`:
+
+```swift
+import SwiftUI
+
+struct StatusBannerView: View {
+    let banner: BannerType
+    let onTap: (() -> Void)?
+
+    var body: some View {
+        Button(action: { onTap?() }) {
+            HStack(spacing: 12) {
+                Image(systemName: iconName)
+                    .font(.body.bold())
+                    .foregroundStyle(.white)
+                Text(message)
+                    .font(.callout)
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.leading)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+            .padding(12)
+            .background(backgroundColor)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(message)
+    }
+
+    private var iconName: String {
+        switch banner {
+        case .yellow: return "exclamationmark.triangle.fill"
+        case .red: return "xmark.octagon.fill"
+        }
+    }
+
+    private var message: String {
+        switch banner {
+        case .yellow(let m), .red(let m): return m
+        }
+    }
+
+    private var backgroundColor: Color {
+        switch banner {
+        case .yellow: return Color.orange
+        case .red: return Color.red
+        }
+    }
+}
+
+#Preview {
+    VStack(spacing: 12) {
+        StatusBannerView(banner: .yellow("学習機能を ON にしてください"), onTap: {})
+        StatusBannerView(banner: .red("本体ブロッカーが OFF です"), onTap: {})
+    }
+    .padding()
+}
+```
+
+- [ ] **Step 2: AppStateStore (mode をアプリ全体で共有) TDD**
+
+`Tests/App/AppStateStoreTests.swift`:
+
+```swift
+import XCTest
+@testable import AdblockKeshi
+
+@MainActor
+final class AppStateStoreTests: XCTestCase {
+    func testInitialState_isLoading() {
+        let store = AppStateStore(checker: MockContentRuleListStateChecker(baseEnabled: false, reportedEnabled: false))
+        XCTAssertNil(store.currentSnapshot)
+    }
+
+    func testRefresh_updatesSnapshot() async {
+        let mock = MockContentRuleListStateChecker(baseEnabled: true, reportedEnabled: true)
+        let store = AppStateStore(checker: mock)
+        await store.refresh()
+        XCTAssertEqual(store.currentSnapshot?.mode, .bothEnabled)
+    }
+
+    func testRefresh_baseOnly() async {
+        let mock = MockContentRuleListStateChecker(baseEnabled: true, reportedEnabled: false)
+        let store = AppStateStore(checker: mock)
+        await store.refresh()
+        XCTAssertEqual(store.currentSnapshot?.mode, .baseOnly)
+    }
+
+    func testRefresh_bothDisabled_triggersOnboarding() async {
+        let mock = MockContentRuleListStateChecker(baseEnabled: false, reportedEnabled: false)
+        let store = AppStateStore(checker: mock)
+        await store.refresh()
+        XCTAssertEqual(store.currentSnapshot?.mode, .bothDisabled)
+        XCTAssertTrue(store.shouldShowOnboarding)
+    }
+}
+```
+
+`App/AppStateStore.swift`:
+
+```swift
+import Foundation
+import SwiftUI
+
+@MainActor
+final class AppStateStore: ObservableObject {
+    @Published private(set) var currentSnapshot: ContentRuleListSnapshot?
+
+    private let checker: ContentRuleListStateChecker
+
+    init(checker: ContentRuleListStateChecker = SFContentBlockerStateChecker()) {
+        self.checker = checker
+    }
+
+    func refresh() async {
+        let snapshot = await checker.check()
+        currentSnapshot = snapshot
+    }
+
+    var shouldShowOnboarding: Bool {
+        currentSnapshot?.mode == .bothDisabled
+    }
+}
+```
+
+- [ ] **Step 3: ContentView (Tab A) に banner 統合**
+
+`App/ContentView.swift` を Modify:
+
+```swift
+struct ContentView: View {
+    @EnvironmentObject var appState: AppStateStore
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let snapshot = appState.currentSnapshot, let banner = snapshot.mode.bannerType {
+                StatusBannerView(banner: banner, onTap: {
+                    // Settings へ誘導
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                })
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            }
+            // 既存の Tab A コンテンツ
+            existingTabAContent
+        }
+        .task { await appState.refresh() }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active { Task { await appState.refresh() } }
+        }
+    }
+
+    @Environment(\.scenePhase) var scenePhase
+
+    @ViewBuilder
+    private var existingTabAContent: some View {
+        // 既存 ContentView の中身 (準備する/状態表示/フィルタ最終更新日 等)
+        // ...
+    }
+}
+```
+
+- [ ] **Step 4: ReportTabView/ReportEntryView でも mode 連動**
+
+```swift
+struct ReportTabView: View {
+    let apiClient: ReportAPIClientProtocol
+    let historyCache: ReportHistoryCache
+    @EnvironmentObject var appState: AppStateStore
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            VStack(spacing: 0) {
+                if let snapshot = appState.currentSnapshot {
+                    if snapshot.mode == .reportedOnly {
+                        StatusBannerView(banner: snapshot.mode.bannerType!, onTap: {
+                            // Settings へ
+                        })
+                    } else if snapshot.mode == .baseOnly {
+                        // 報告タブ特有: 学習機能 OFF 時の警告
+                        StatusBannerView(banner: .yellow("『広告消し 学習』が OFF です。今報告しても、ON にしないとブロックされません"), onTap: {})
+                    }
+                }
+                ReportEntryView(onReportTap: { ... }, onHistoryTap: { ... })
+                    .navigationDestination(...)
+            }
+        }
+    }
+}
+```
+
+- [ ] **Step 5: AdblockKeshiApp.swift で AppStateStore を environmentObject 化**
+
+```swift
+@main
+struct AdblockKeshiApp: App {
+    @StateObject private var appState = AppStateStore()
+
+    var body: some Scene {
+        WindowGroup {
+            TabView { ... }
+                .environmentObject(appState)
+        }
+    }
+}
+```
+
+- [ ] **Step 6: test pass + シミュレータで 4 パターン目視確認**
+
+シナリオ:
+1. 両方 ON → banner 表示なし、Tab A 通常、Tab B 通常
+2. base ON 学習 OFF → Tab A 黄バナー、Tab B 黄バナー (報告タブでは異なる文言)
+3. base OFF 学習 ON → Tab A 赤バナー、Tab B 赤バナー
+4. 両方 OFF → 自動 onboarding 表示
+
+- [ ] **Step 7: commit**
+
+```bash
+git add App/Views/StatusBannerView.swift App/AppStateStore.swift App/ContentView.swift \
+        App/ReportTab/ReportTabView.swift App/AdblockKeshiApp.swift \
+        Tests/App/Views/StatusBannerViewTests.swift Tests/App/AppStateStoreTests.swift
+git commit -m "feat(v3): integrate 4-pattern UX with AppStateStore + StatusBannerView
+
+- AppStateStore: shared @EnvironmentObject for snapshot
+- ContentView (Tab A): banner above main content, scenePhase refresh
+- ReportTabView (Tab B): pattern-specific banner (different copy than Tab A)
+- Settings deep-link on banner tap
+- 7 tests"
+```
 
 ### Task 6.3: 全 unit test 実行 + シミュレータ E2E 確認
 
