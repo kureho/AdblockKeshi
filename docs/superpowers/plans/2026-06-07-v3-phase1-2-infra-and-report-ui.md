@@ -1194,39 +1194,882 @@ git add App/ReportTab/ReportEntryView.swift Tests/App/ReportTab/ReportEntryViewT
 git commit -m "feat(v3): add ReportEntryView (CTA screen for Tab B)"
 ```
 
-### Task 3.4: ReportFormView (入力フォーム) 実装 (TDD)
+### Task 3.4: ReportFormViewModel (validation + state) TDD
+
+入力フォームの state と validation を ViewModel として独立、SwiftUI View からテスト可能に切り離す。
+spec §2 入力 validation 仕様: URL は `https://` 必須・200 字以内、memo は 200 字以内・URL 含むと拒否。Turnstile/rate limit はサーバ側で hard enforce、端末側は UX のため UI 抑止のみ。
 
 **Files:**
-- Create: `App/ReportTab/ReportFormView.swift`
-- Create: `Tests/App/ReportTab/ReportFormViewTests.swift`
+- Create: `App/ReportTab/ReportFormViewModel.swift`
+- Create: `App/ReportTab/URLValidator.swift` (テスト可能 pure 関数)
+- Create: `Tests/App/ReportTab/ReportFormViewModelTests.swift`
+- Create: `Tests/App/ReportTab/URLValidatorTests.swift`
 
-- [ ] **Step 1: Failing test (input validation + button enabled state)**
+#### 仕様詳細
+
+| 項目 | ルール |
+|---|---|
+| URL 必須 | `https://` プレフィックス必須 (`http://` 拒否) |
+| URL 長さ | 200 字以内 |
+| URL 構造 | `URLComponents` で parse 可能、`host` 非空 |
+| URL ドメイン | 7+ 文字 (`a.io` のような極短は拒否、誤入力対策) |
+| memo 任意 | 0-200 字 |
+| memo URL 検知 | `https?://...` パターンを含むと拒否 (spam 対策) |
+| memo 改行 | 許可 (5 行まで) |
+| state machine | `.idle` / `.validating` / `.submitting` / `.success` / `.error(APIError)` |
+
+- [ ] **Step 1: URLValidator failing test**
+
+`Tests/App/ReportTab/URLValidatorTests.swift`:
 
 ```swift
 import XCTest
 @testable import AdblockKeshi
 
-final class ReportFormViewTests: XCTestCase {
-    func testForm_disabledWhenURLEmpty() { /* ... */ }
-    func testForm_enabledWhenURLValid() { /* ... */ }
-    func testForm_rejectsInvalidURL() { /* ... */ }
-    func testForm_memoMaxLength200() { /* ... */ }
+final class URLValidatorTests: XCTestCase {
+    func testValidURL_https_passes() {
+        XCTAssertEqual(URLValidator.validate("https://example.com"), .valid(URL(string: "https://example.com")!))
+    }
+
+    func testValidURL_withPathAndQuery_passes() {
+        let result = URLValidator.validate("https://example.com/article/123?q=test")
+        if case .valid(let url) = result {
+            XCTAssertEqual(url.host, "example.com")
+        } else {
+            XCTFail("Expected valid")
+        }
+    }
+
+    func testHTTP_isRejected() {
+        XCTAssertEqual(URLValidator.validate("http://example.com"), .invalid(.httpNotAllowed))
+    }
+
+    func testEmpty_isRejected() {
+        XCTAssertEqual(URLValidator.validate(""), .invalid(.empty))
+    }
+
+    func testWhitespaceOnly_isRejected() {
+        XCTAssertEqual(URLValidator.validate("   "), .invalid(.empty))
+    }
+
+    func testTooLong_isRejected() {
+        let long = "https://example.com/" + String(repeating: "a", count: 200)
+        XCTAssertEqual(URLValidator.validate(long), .invalid(.tooLong))
+    }
+
+    func testNoScheme_isRejected() {
+        XCTAssertEqual(URLValidator.validate("example.com"), .invalid(.malformed))
+    }
+
+    func testEmptyHost_isRejected() {
+        XCTAssertEqual(URLValidator.validate("https://"), .invalid(.malformed))
+    }
+
+    func testShortDomain_isRejected() {
+        XCTAssertEqual(URLValidator.validate("https://a.io"), .invalid(.suspiciouslyShort))
+    }
+
+    func testIPAddress_passesIfValid() {
+        if case .valid = URLValidator.validate("https://192.168.1.1/page") {
+            // expected
+        } else {
+            XCTFail("IP host should pass")
+        }
+    }
+
+    func testTrailingSpace_trimmedAndAccepted() {
+        if case .valid(let url) = URLValidator.validate(" https://example.com  ") {
+            XCTAssertEqual(url.absoluteString, "https://example.com")
+        } else {
+            XCTFail("Trimmed should pass")
+        }
+    }
+
+    func testJapaneseDomain_isAccepted() {
+        if case .valid = URLValidator.validate("https://日本語.example.jp/path") {
+            // Punycode 経由でも OK
+        } else {
+            XCTFail("Japanese domain should pass")
+        }
+    }
 }
 ```
 
-- [ ] **Step 2-4: 実装 → test pass → commit**
+- [ ] **Step 2: test 実行 → fail 確認**
 
-(bite-sized step は省略表記、実装時に詳細化)
+Expected: FAIL (URLValidator 未定義)
 
-### Task 3.5: ReportSentView (送信完了画面) 実装
+- [ ] **Step 3: URLValidator.swift 実装**
 
-(同様の TDD パターン、省略表記)
+`App/ReportTab/URLValidator.swift`:
 
-### Task 3.6: Tab B 内部ナビゲーション (Entry → Form → Sent → 戻る)
+```swift
+import Foundation
 
-(Coordinator pattern or @State 管理、TDD)
+enum URLValidator {
+    enum Result: Equatable {
+        case valid(URL)
+        case invalid(Reason)
+    }
 
-### Chunk 3 完了 → PR
+    enum Reason: Equatable {
+        case empty
+        case httpNotAllowed
+        case tooLong
+        case malformed
+        case suspiciouslyShort
+
+        var userMessage: String {
+            switch self {
+            case .empty: return "URL を入力してください"
+            case .httpNotAllowed: return "https:// で始まる URL を入力してください"
+            case .tooLong: return "URL が長すぎます (200 文字以内)"
+            case .malformed: return "URL の形式が正しくありません"
+            case .suspiciouslyShort: return "ドメインが短すぎる可能性があります"
+            }
+        }
+    }
+
+    static let maxLength = 200
+    static let minDomainLength = 7  // "a.b.com" 最小
+
+    static func validate(_ raw: String) -> Result {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .invalid(.empty) }
+        guard trimmed.count <= maxLength else { return .invalid(.tooLong) }
+        guard trimmed.lowercased().hasPrefix("https://") else {
+            if trimmed.lowercased().hasPrefix("http://") {
+                return .invalid(.httpNotAllowed)
+            }
+            return .invalid(.malformed)
+        }
+        guard let components = URLComponents(string: trimmed),
+              let host = components.host,
+              !host.isEmpty else {
+            return .invalid(.malformed)
+        }
+        // Punycode 後の長さで判定
+        let asciiHost = host.idnaEncoded ?? host
+        guard asciiHost.count >= minDomainLength else {
+            return .invalid(.suspiciouslyShort)
+        }
+        guard let url = components.url else {
+            return .invalid(.malformed)
+        }
+        return .valid(url)
+    }
+}
+
+// Note: Punycode 変換は iOS では URL が IDN を透過的に扱うので簡易実装
+private extension String {
+    var idnaEncoded: String? {
+        return self  // iOS では URL が透過扱い、host.count で日本語ドメインは長く判定される
+    }
+}
+```
+
+- [ ] **Step 4: test pass 確認**
+
+```bash
+xcodebuild test ... -only-testing:AdblockKeshiTests/URLValidatorTests
+```
+
+Expected: 12 tests passed
+
+- [ ] **Step 5: MemoValidator (URL 検知 + 長さ) failing test**
+
+`Tests/App/ReportTab/MemoValidatorTests.swift`:
+
+```swift
+import XCTest
+@testable import AdblockKeshi
+
+final class MemoValidatorTests: XCTestCase {
+    func testEmpty_isValid() {
+        XCTAssertEqual(MemoValidator.validate(""), .valid)
+    }
+
+    func testTypicalMemo_isValid() {
+        XCTAssertEqual(MemoValidator.validate("動画上のオーバーレイ広告"), .valid)
+    }
+
+    func testTooLong_isRejected() {
+        let long = String(repeating: "a", count: 201)
+        XCTAssertEqual(MemoValidator.validate(long), .invalid(.tooLong))
+    }
+
+    func testContainsHTTPSURL_isRejected() {
+        XCTAssertEqual(
+            MemoValidator.validate("これ https://example.com で表示されてる"),
+            .invalid(.containsURL)
+        )
+    }
+
+    func testContainsHTTPURL_isRejected() {
+        XCTAssertEqual(
+            MemoValidator.validate("http://spam.com を見ろ"),
+            .invalid(.containsURL)
+        )
+    }
+
+    func testMultiline_5LinesOk() {
+        let memo = "1\n2\n3\n4\n5"
+        XCTAssertEqual(MemoValidator.validate(memo), .valid)
+    }
+
+    func testMultiline_6LinesRejected() {
+        let memo = "1\n2\n3\n4\n5\n6"
+        XCTAssertEqual(MemoValidator.validate(memo), .invalid(.tooManyLines))
+    }
+}
+```
+
+- [ ] **Step 6: MemoValidator.swift 実装**
+
+`App/ReportTab/URLValidator.swift` に追加 (or 別ファイル):
+
+```swift
+enum MemoValidator {
+    enum Result: Equatable {
+        case valid
+        case invalid(Reason)
+    }
+
+    enum Reason: Equatable {
+        case tooLong
+        case containsURL
+        case tooManyLines
+
+        var userMessage: String {
+            switch self {
+            case .tooLong: return "メモは 200 文字以内で入力してください"
+            case .containsURL: return "メモに URL を入れないでください。URL は上の欄に入力してください"
+            case .tooManyLines: return "メモは 5 行以内で入力してください"
+            }
+        }
+    }
+
+    static let maxLength = 200
+    static let maxLines = 5
+
+    private static let urlPattern: NSRegularExpression = {
+        try! NSRegularExpression(pattern: #"https?://[^\s]+"#, options: [.caseInsensitive])
+    }()
+
+    static func validate(_ raw: String) -> Result {
+        guard raw.count <= maxLength else { return .invalid(.tooLong) }
+        let lineCount = raw.components(separatedBy: .newlines).count
+        guard lineCount <= maxLines else { return .invalid(.tooManyLines) }
+        let range = NSRange(raw.startIndex..., in: raw)
+        if urlPattern.firstMatch(in: raw, options: [], range: range) != nil {
+            return .invalid(.containsURL)
+        }
+        return .valid
+    }
+}
+```
+
+- [ ] **Step 7: test pass 確認** + commit MemoValidator + URLValidator together
+
+```bash
+git add App/ReportTab/URLValidator.swift \
+        Tests/App/ReportTab/URLValidatorTests.swift Tests/App/ReportTab/MemoValidatorTests.swift
+git commit -m "feat(v3): add URLValidator + MemoValidator pure functions
+
+- URL: https-only, 200 char max, parse validity, min domain length
+- Memo: 200 char max, 5 lines max, no embedded URLs (spam guard)
+- 19 tests across both"
+```
+
+- [ ] **Step 8: ReportFormViewModel failing test**
+
+`Tests/App/ReportTab/ReportFormViewModelTests.swift`:
+
+```swift
+import XCTest
+@testable import AdblockKeshi
+
+@MainActor
+final class ReportFormViewModelTests: XCTestCase {
+    private var api: MockReportAPIClient!
+    private var vm: ReportFormViewModel!
+    private var successCallCount = 0
+
+    override func setUp() async throws {
+        try await super.setUp()
+        api = MockReportAPIClient()
+        successCallCount = 0
+        vm = ReportFormViewModel(
+            apiClient: api,
+            onSuccess: { [weak self] in self?.successCallCount += 1 }
+        )
+    }
+
+    func testInitialState_isIdleAndCannotSubmit() {
+        XCTAssertEqual(vm.state, .idle)
+        XCTAssertFalse(vm.canSubmit)
+    }
+
+    func testValidURL_emptyMemo_canSubmit() {
+        vm.urlInput = "https://example.com/x"
+        vm.memoInput = ""
+        XCTAssertTrue(vm.canSubmit)
+        XCTAssertNil(vm.urlError)
+        XCTAssertNil(vm.memoError)
+    }
+
+    func testInvalidURL_cannotSubmit_andShowsError() {
+        vm.urlInput = "http://example.com"
+        XCTAssertFalse(vm.canSubmit)
+        XCTAssertEqual(vm.urlError, URLValidator.Reason.httpNotAllowed.userMessage)
+    }
+
+    func testValidMemo_passes() {
+        vm.urlInput = "https://example.com/x"
+        vm.memoInput = "動画オーバーレイ"
+        XCTAssertTrue(vm.canSubmit)
+    }
+
+    func testMemoWithEmbeddedURL_rejected() {
+        vm.urlInput = "https://example.com/x"
+        vm.memoInput = "spam https://bad.com"
+        XCTAssertFalse(vm.canSubmit)
+        XCTAssertEqual(vm.memoError, MemoValidator.Reason.containsURL.userMessage)
+    }
+
+    func testSubmit_validInput_callsAPIAndOnSuccess() async {
+        api.stubSubmitResult = .success(SubmitResponseDTO(
+            id: "01HYZ", status: "pending",
+            receivedAt: Date(), memoRedacted: false
+        ))
+        vm.urlInput = "https://example.com/x"
+        vm.memoInput = "test"
+
+        await vm.submit()
+
+        XCTAssertEqual(successCallCount, 1)
+        XCTAssertEqual(vm.state, .idle)
+        XCTAssertEqual(api.submitCallCount, 1)
+        XCTAssertEqual(api.lastSubmitURL?.absoluteString, "https://example.com/x")
+        XCTAssertEqual(api.lastSubmitMemo, "test")
+    }
+
+    func testSubmit_apiRateLimitError_setsErrorState() async {
+        api.stubSubmitResult = .failure(APIError.rateLimitExceeded(retryAfter: 86400))
+        vm.urlInput = "https://example.com/x"
+
+        await vm.submit()
+
+        XCTAssertEqual(successCallCount, 0)
+        if case .error(let err) = vm.state {
+            if case .rateLimitExceeded = err {
+                // ok
+            } else { XCTFail("Wrong error: \(err)") }
+        } else {
+            XCTFail("Expected error state, got \(vm.state)")
+        }
+    }
+
+    func testSubmit_whileSubmitting_blockedByState() async {
+        api.stubSubmitResult = .success(SubmitResponseDTO(id: "x", status: "pending", receivedAt: Date(), memoRedacted: false))
+        api.submitDelay = 0.1
+        vm.urlInput = "https://example.com/x"
+
+        async let first: Void = vm.submit()
+        async let second: Void = vm.submit()
+        _ = await [first, second]
+
+        XCTAssertEqual(api.submitCallCount, 1, "Second submit should be blocked while first is in flight")
+    }
+
+    func testCancelError_returnsToIdle() async {
+        api.stubSubmitResult = .failure(APIError.networkUnavailable)
+        vm.urlInput = "https://example.com/x"
+        await vm.submit()
+        if case .error = vm.state {
+            vm.dismissError()
+            XCTAssertEqual(vm.state, .idle)
+        }
+    }
+}
+
+// MockReportAPIClient 拡張 (Chunk 5 で submitDelay 等を追加)
+extension MockReportAPIClient {
+    // 既存 fetchHistory stub に加え、submit stub を追加
+    var submitCallCount: Int { _submitCallCount }
+    var lastSubmitURL: URL? { _lastSubmitURL }
+    var lastSubmitMemo: String? { _lastSubmitMemo }
+    var stubSubmitResult: Result<SubmitResponseDTO, Error>?
+    var submitDelay: TimeInterval?
+}
+// 詳細は MockReportAPIClient のリファクタで再構成 (Chunk 5 で先に拡張、Chunk 3 では呼び出し側)
+```
+
+- [ ] **Step 9: ReportFormViewModel.swift 実装**
+
+`App/ReportTab/ReportFormViewModel.swift`:
+
+```swift
+import Foundation
+import SwiftUI
+
+enum ReportFormState: Equatable {
+    case idle
+    case submitting
+    case error(APIError)
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        switch (lhs, rhs) {
+        case (.idle, .idle), (.submitting, .submitting): return true
+        case (.error, .error): return true
+        default: return false
+        }
+    }
+}
+
+@MainActor
+final class ReportFormViewModel: ObservableObject {
+    @Published var urlInput: String = ""
+    @Published var memoInput: String = ""
+    @Published private(set) var state: ReportFormState = .idle
+
+    private let apiClient: ReportAPIClientProtocol
+    private let onSuccess: () -> Void
+
+    init(apiClient: ReportAPIClientProtocol, onSuccess: @escaping () -> Void) {
+        self.apiClient = apiClient
+        self.onSuccess = onSuccess
+    }
+
+    var validatedURL: URL? {
+        if case .valid(let url) = URLValidator.validate(urlInput) { return url }
+        return nil
+    }
+
+    var urlError: String? {
+        // 入力中は空 OK で error 出さない、空でなく invalid のときだけ表示
+        guard !urlInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        if case .invalid(let reason) = URLValidator.validate(urlInput) {
+            return reason.userMessage
+        }
+        return nil
+    }
+
+    var memoError: String? {
+        guard !memoInput.isEmpty else { return nil }
+        if case .invalid(let reason) = MemoValidator.validate(memoInput) {
+            return reason.userMessage
+        }
+        return nil
+    }
+
+    var canSubmit: Bool {
+        guard validatedURL != nil else { return false }
+        if !memoInput.isEmpty, case .invalid = MemoValidator.validate(memoInput) { return false }
+        if case .submitting = state { return false }
+        return true
+    }
+
+    var memoCharCount: Int { memoInput.count }
+    var memoCharRemaining: Int { MemoValidator.maxLength - memoInput.count }
+
+    func submit() async {
+        guard canSubmit, let url = validatedURL else { return }
+        state = .submitting
+        do {
+            let memo = memoInput.isEmpty ? nil : memoInput
+            _ = try await apiClient.submitReport(url: url, memo: memo)
+            state = .idle
+            urlInput = ""
+            memoInput = ""
+            onSuccess()
+        } catch let err as APIError {
+            state = .error(err)
+        } catch {
+            state = .error(APIError.decodingFailed(underlying: error))
+        }
+    }
+
+    func dismissError() {
+        if case .error = state { state = .idle }
+    }
+}
+```
+
+- [ ] **Step 10: test pass + commit**
+
+```bash
+xcodebuild test ... -only-testing:AdblockKeshiTests/ReportFormViewModelTests
+# Expected: 9 tests passed
+
+git add App/ReportTab/ReportFormViewModel.swift Tests/App/ReportTab/ReportFormViewModelTests.swift
+git commit -m "feat(v3): add ReportFormViewModel with state machine + validation surfaces
+
+- @Published urlInput / memoInput
+- canSubmit / urlError / memoError computed
+- submit() async with state .submitting → .idle (success) or .error
+- Concurrent submit blocked by state
+- 9 test cases"
+```
+
+### Task 3.5: ReportFormView (UI) 実装
+
+ViewModel が完成したので、UI 側はその値を表示するだけ。
+
+**Files:**
+- Create: `App/ReportTab/ReportFormView.swift`
+- Create: `Tests/App/ReportTab/ReportFormViewTests.swift` (snapshot/init test のみ)
+
+- [ ] **Step 1: ReportFormView.swift 実装**
+
+`App/ReportTab/ReportFormView.swift`:
+
+```swift
+import SwiftUI
+
+struct ReportFormView: View {
+    @StateObject private var viewModel: ReportFormViewModel
+    @FocusState private var focusedField: Field?
+
+    init(apiClient: ReportAPIClientProtocol, onSubmitSuccess: @escaping () -> Void) {
+        _viewModel = StateObject(wrappedValue: ReportFormViewModel(apiClient: apiClient, onSuccess: onSubmitSuccess))
+    }
+
+    enum Field { case url, memo }
+
+    var body: some View {
+        Form {
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        TextField("https://example.com/...", text: $viewModel.urlInput)
+                            .keyboardType(.URL)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .url)
+                        Button("貼り付け") {
+                            if let s = UIPasteboard.general.string {
+                                viewModel.urlInput = s
+                            }
+                        }
+                        .font(.caption)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    if let err = viewModel.urlError {
+                        Text(err)
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                    }
+                }
+            } header: {
+                Text("広告があった URL")
+            } footer: {
+                Text("Safari のアドレスバーからコピーして貼り付けてください")
+                    .font(.caption2)
+            }
+
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    TextField("例: 動画上のオーバーレイ", text: $viewModel.memoInput, axis: .vertical)
+                        .lineLimit(5, reservesSpace: true)
+                        .focused($focusedField, equals: .memo)
+                    HStack {
+                        if let err = viewModel.memoError {
+                            Text(err).font(.caption2).foregroundStyle(.red)
+                        }
+                        Spacer()
+                        Text("\(viewModel.memoCharCount) / \(MemoValidator.maxLength)")
+                            .font(.caption2)
+                            .foregroundStyle(viewModel.memoCharRemaining < 20 ? .orange : .secondary)
+                    }
+                }
+            } header: {
+                Text("メモ (任意)")
+            } footer: {
+                Text("URL は記述しないでください (上の欄に入れてください)")
+                    .font(.caption2)
+            }
+
+            Section {
+                Button {
+                    focusedField = nil
+                    Task { await viewModel.submit() }
+                } label: {
+                    HStack {
+                        if case .submitting = viewModel.state {
+                            ProgressView().controlSize(.small)
+                            Text("送信中…").padding(.leading, 6)
+                        } else {
+                            Image(systemName: "paperplane.fill")
+                            Text("送信").padding(.leading, 6)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(!viewModel.canSubmit)
+            }
+        }
+        .navigationTitle("報告")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert(isPresented: errorBinding) {
+            Alert(
+                title: Text("送信に失敗しました"),
+                message: Text(errorMessage),
+                dismissButton: .default(Text("OK")) { viewModel.dismissError() }
+            )
+        }
+    }
+
+    private var errorBinding: Binding<Bool> {
+        Binding(
+            get: { if case .error = viewModel.state { return true }; return false },
+            set: { if !$0 { viewModel.dismissError() } }
+        )
+    }
+
+    private var errorMessage: String {
+        if case .error(let err) = viewModel.state {
+            return err.localizedDescription
+        }
+        return ""
+    }
+}
+```
+
+- [ ] **Step 2: ReportFormViewTests (smoke)**
+
+```swift
+@MainActor
+final class ReportFormViewTests: XCTestCase {
+    func testFormView_initializesWithAPIClient() {
+        let api = MockReportAPIClient()
+        let view = ReportFormView(apiClient: api, onSubmitSuccess: {})
+        XCTAssertNotNil(view.body)
+    }
+}
+```
+
+- [ ] **Step 3: シミュレータで動作確認**
+
+シナリオ:
+1. URL 欄空 → 送信ボタン disabled
+2. `http://example.com` 入力 → 赤エラー「https:// で始まる URL を…」、送信 disabled
+3. `https://example.com` 入力 → エラー消える、送信 enabled
+4. 「貼り付け」ボタンタップ → クリップボードから自動入力
+5. メモ 200 文字超 → カウンタがオレンジ + エラー表示
+6. メモに URL 含む → エラー
+7. 送信ボタン → ProgressView 表示 → (API mock 成功) → Sent 画面へ遷移
+8. API rate limit エラー → Alert 表示、OK → idle 復帰
+
+- [ ] **Step 4: commit**
+
+```bash
+git add App/ReportTab/ReportFormView.swift Tests/App/ReportTab/ReportFormViewTests.swift
+git commit -m "feat(v3): add ReportFormView with paste-from-clipboard, inline errors, char count
+
+- URL field with paste button, https-only validation hint
+- Memo TextField with line limit (5), char counter (orange warn < 20)
+- Submit button with submitting state
+- APIError → Alert with dismissError"
+```
+
+### Task 3.6: ReportSentView (送信完了画面) 実装
+
+**Files:**
+- Create: `App/ReportTab/ReportSentView.swift`
+- Create: `Tests/App/ReportTab/ReportSentViewTests.swift`
+
+- [ ] **Step 1: Failing test**
+
+`Tests/App/ReportTab/ReportSentViewTests.swift`:
+
+```swift
+import XCTest
+import SwiftUI
+@testable import AdblockKeshi
+
+@MainActor
+final class ReportSentViewTests: XCTestCase {
+    func testSentView_buildsWithCallbacks() {
+        let view = ReportSentView(onAgainTap: {}, onCloseTap: {})
+        XCTAssertNotNil(view.body)
+    }
+
+    func testSentView_invokesAgainCallback() {
+        var againCalled = false
+        let view = ReportSentView(onAgainTap: { againCalled = true }, onCloseTap: {})
+        view.onAgainTap()
+        XCTAssertTrue(againCalled)
+    }
+
+    func testSentView_invokesCloseCallback() {
+        var closeCalled = false
+        let view = ReportSentView(onAgainTap: {}, onCloseTap: { closeCalled = true })
+        view.onCloseTap()
+        XCTAssertTrue(closeCalled)
+    }
+}
+```
+
+- [ ] **Step 2: 実装**
+
+`App/ReportTab/ReportSentView.swift`:
+
+```swift
+import SwiftUI
+
+struct ReportSentView: View {
+    let onAgainTap: () -> Void
+    let onCloseTap: () -> Void
+
+    var body: some View {
+        VStack(spacing: 28) {
+            Spacer()
+
+            Image(systemName: "checkmark.circle.fill")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 80, height: 80)
+                .foregroundStyle(.green)
+
+            VStack(spacing: 12) {
+                Text("送信しました")
+                    .font(.title2.bold())
+
+                Text("通常 7-14 日以内、最悪 30 日以内に\n広告ブロックリストへ反映を検討します。\n結果はアプリ内通知でお知らせします。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            Spacer()
+
+            VStack(spacing: 12) {
+                Button(action: onAgainTap) {
+                    Label("もう一度報告する", systemImage: "plus.circle.fill")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+
+                Button(action: onCloseTap) {
+                    Text("ブロッカー タブに戻る")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 40)
+        }
+        .navigationBarBackButtonHidden(true)  // 送信完了後の back ナビ抑止
+    }
+}
+
+#Preview {
+    NavigationStack {
+        ReportSentView(onAgainTap: {}, onCloseTap: {})
+    }
+}
+```
+
+- [ ] **Step 3: test pass 確認**
+
+```bash
+xcodebuild test ... -only-testing:AdblockKeshiTests/ReportSentViewTests
+```
+
+Expected: 3 tests passed
+
+- [ ] **Step 4: シミュレータで preview 確認 + commit**
+
+```bash
+git add App/ReportTab/ReportSentView.swift Tests/App/ReportTab/ReportSentViewTests.swift
+git commit -m "feat(v3): add ReportSentView with 'again' and 'close' CTAs (back nav disabled)"
+```
+
+### Task 3.7: Navigation pattern decision の commit (Coordinator vs @State, reviewer #1 指摘)
+
+reviewer #1 で「Coordinator pattern or @State 管理」の選択を spec で決めるべきと指摘あり。
+**確定**: `@State path: [ReportTabRoute]` enum-driven NavigationStack を採用。理由:
+
+| 評価軸 | @State NavigationStack (採用) | Coordinator pattern |
+|---|---|---|
+| iOS 17+ native | ✅ NavigationStack 標準 | △ UIKit 由来、SwiftUI 適合性低 |
+| 状態管理の単純さ | ✅ ルート enum + path array で完結 | △ Coordinator class + Subject 必要 |
+| テスト | ✅ ReportTabView の path array を直接検証 | △ Coordinator mock 必要 |
+| Tab 切り替え時の保持 | ✅ NavigationStack の path は自動保持 | △ Coordinator の lifecycle 管理必要 |
+| 巨大化リスク | ◯ Route enum が増えても 1 ファイル | ✗ Coordinator 肥大化しやすい |
+
+Chunk 5 Task 5.7 で実装した形 (NavigationStack + path: [ReportTabRoute]) をそのまま採用、本 Task 3.7 では Decision Log 記録のみ:
+
+- [ ] **Step 1: `docs/superpowers/decisions/2026-06-07-tab-b-navigation.md` 作成**
+
+```markdown
+# Decision: Tab B 内部ナビゲーションパターン
+
+**日付**: 2026-06-07
+**決定**: `@State path: [ReportTabRoute]` を使った NavigationStack 形式を採用
+**理由**: 上記表参照 (SwiftUI native, テスト容易, lifecycle 自動)
+
+## 影響範囲
+- `App/ReportTab/ReportTabView.swift` (Chunk 5 Task 5.7 で実装)
+- 子 View (ReportEntryView, ReportFormView, ReportSentView, ReportHistoryView) は path に対する依存ゼロ、callback ベースで分離
+
+## 不採用
+- Coordinator pattern: UIKit-era の慣習、SwiftUI 自然ではない
+- Sheet ベース: Tab B 内部は push が UX 的に自然 (sheet は別 context modal 用)
+```
+
+- [ ] **Step 2: commit**
+
+```bash
+mkdir -p docs/superpowers/decisions
+git add docs/superpowers/decisions/2026-06-07-tab-b-navigation.md
+git commit -m "docs(v3): record Tab B navigation pattern decision (@State NavigationStack)"
+```
+
+### Task 3.8: Chunk 3 完了確認 + PR
+
+- [ ] **Step 1: 全 test pass** (URLValidator 12 + MemoValidator 7 + ReportFormViewModel 9 + ReportFormView 1 + ReportSentView 3 = 32 tests)
+
+- [ ] **Step 2: シミュレータ E2E**:
+1. Tab B → 報告ボタン → Form 画面表示
+2. URL 不正入力 → 赤エラー + 送信 disabled
+3. URL 正入力 + memo 入力 → 送信 enabled
+4. 送信 → API mock 成功 → Sent 画面遷移
+5. Sent → 「もう一度報告する」→ Form 画面 (入力 clear 確認)
+6. Sent → 「ブロッカータブに戻る」→ Tab A 表示
+
+- [ ] **Step 3: PR 作成**
+
+```bash
+gh pr create --base feature/v3.0-learning-adblock --title "feat(v3): Tab B form + validation + sent screens" --body "$(cat <<'EOF'
+## Summary
+- URLValidator: https-only, 200 char max, parse validity
+- MemoValidator: 200 char max, 5 lines, no embedded URLs
+- ReportFormViewModel: state machine (idle/submitting/error) with canSubmit
+- ReportFormView: paste button, inline errors, char counter, alert on error
+- ReportSentView: success illustration + again/close CTAs
+- Decision log: @State NavigationStack chosen for Tab B nav
+
+## Tests
+- 32 new XCTest cases all passing
+- E2E sim verified
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+```
+
+- [ ] **Step 4: kureho 承認後 merge**
+
+### Chunk 3 完了 → 次は Chunk 6 (ContentRuleListState + Phase 1-2 統合)
 
 ---
 
