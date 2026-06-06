@@ -1,0 +1,27 @@
+name: weekly-stable-promotion
+on:
+  schedule:
+    - cron: '0 4 * * 1'  # weekly Monday 04:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: d1-write
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: workers/package-lock.json
+      - run: cd workers && npm ci
+      - name: Promote β tier → stable (L7, +7 days no complaints)
+        run: cd workers && npx wrangler d1 execute adblockkeshi-reports --remote --command "SELECT 'TODO: beta-to-stable script' AS placeholder"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
