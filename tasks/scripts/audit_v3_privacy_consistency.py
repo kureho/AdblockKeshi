@@ -36,19 +36,26 @@ REQUIRED_CLAIMS = [
         "key": "collection_items",
         "label": "収集項目 (URL/メモ/UUID hash/IP hash)",
         "patterns_a": [r"報告対象 URL", r"メモ", r"UUID", r"IP"],
-        "patterns_b": [r"報告 URL/メモ", r"UUID hash", r"IP hash"],
+        # B (checklist md) では「報告タブから送られた URL / 自由記述メモ」
+        # と書かれているので「URL」「メモ」を個別に。
+        "patterns_b": [r"URL", r"メモ", r"UUID hash", r"IP hash"],
     },
     {
         "key": "retention_14d",
         "label": "保持期間 14 日",
         "patterns_a": [r"14\s*日"],
-        "patterns_b": [r"14\s*日"],
+        # B (Nutrition Label checklist) には保持期間フィールドが無いため
+        # 必須 pattern なし (audit doc Matrix で N/A と明記済)。
+        "patterns_b": [],
     },
     {
         "key": "deletion_sla",
         "label": "削除依頼 24h SLA / 実態 1h",
         "patterns_a": [r"24\s*時間", r"1\s*時間"],
-        "patterns_b": [r"24\s*時間", r"1\s*時間"],
+        # B には削除依頼の数値フィールドが無いため、「v2.x → v3.0 切り替え
+        # 時の操作タイミング」等での言及 (タイミング or 24 時間 キーワード)
+        # があれば十分。
+        "patterns_b": [r"タイミング|24\s*時間"],
     },
     {
         "key": "no_third_party",
