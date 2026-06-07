@@ -1,3 +1,4 @@
+# Plan B Task 3.5: L7 weekly β→stable promotion.
 name: weekly-stable-promotion
 on:
   schedule:
@@ -20,8 +21,9 @@ jobs:
           cache: 'npm'
           cache-dependency-path: workers/package-lock.json
       - run: cd workers && npm ci
-      - name: Promote β tier → stable (L7, +7 days no complaints)
-        run: cd workers && npx wrangler d1 execute adblockkeshi-reports --remote --command "SELECT 'TODO: beta-to-stable script' AS placeholder"
+      - name: Promote β tier → stable (≥7 days, zero complaints)
+        run: cd workers && npx tsx ../scripts/promotion/run-beta-to-stable.ts
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: 91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4

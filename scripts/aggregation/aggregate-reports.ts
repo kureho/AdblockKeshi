@@ -66,14 +66,15 @@ export async function runAggregation(
       env,
       deps.fetch,
       `INSERT INTO rule_candidates (
-         id, domain, selector, rule_text,
+         id, domain, url, selector, rule_text,
          unique_uuid_count, unique_ip_count,
          first_reported_at, last_reported_at,
          status, complaint_count
-       ) VALUES (?, ?, NULL, '', ?, ?, ?, ?, 'aggregating', 0)`,
+       ) VALUES (?, ?, ?, NULL, '', ?, ?, ?, ?, 'aggregating', 0)`,
       [
         id,
         a.domain,
+        a.url,
         a.unique_uuid_count,
         a.unique_ip_count,
         a.first_reported_at,

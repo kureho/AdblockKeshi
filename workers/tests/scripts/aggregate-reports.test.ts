@@ -82,6 +82,9 @@ describe('runAggregation', () => {
     expect(calls[1].body.sql).toMatch(/INSERT INTO rule_candidates/i)
     expect(calls[1].body.params).toContain('rc-1')
     expect(calls[1].body.params).toContain('ex.com')
+    // L6 (playwright-validate) navigates rule_candidates.url, so the URL must
+    // round-trip into the INSERT — regressions break the whole L6 path silently.
+    expect(calls[1].body.params).toContain('https://ex.com/a')
     expect(calls[2].body.sql).toMatch(/UPDATE reports/i)
     expect(calls[2].body.sql).toMatch(/aggregated/)
     expect(calls[2].body.params.sort()).toEqual(['r1', 'r2', 'r3'])

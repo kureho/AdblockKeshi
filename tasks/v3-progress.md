@@ -1,34 +1,86 @@
 <!-- [paid-approved-by-kureho] documentation only, no ASC API calls -->
-# v3.0「学習する広告消し」進捗 (2026-06-07 セッション最終状態)
+# v3.0「学習する広告消し」進捗 (2026-06-08 セッション)
 
-## 📌 Plan A 完了、Plan B partial、Plan C/D doc のみ
+## 📌 Plan A 完了、Plan B 完了 (実 script + workflow 連携)、Plan C/D doc のみ
 
 | Plan | Phase | 状態 | PR |
 |---|---|---|---|
 | **A** Phase 1-2 (Infra + 報告 UI) | ✅ 全 6 Chunks 完了 | #11 + #12 + #13 |
-| **B** Phase 3-4 (Safety gate + Actions) | 🟡 libs L4/L5/L8 + 7 workflow scaffold | #14 docs + #15 部分実装 |
+| **B** Phase 3-4 (Safety gate + Actions) | ✅ L1-L8 全 script + workflow 連携完了 | #14 docs + #15 部分 + **本 PR** |
 | **C** Phase 5 (abuse + UI + Privacy) | 📋 doc のみ | #14 |
 | **D** Phase 6-7 (検証 + ASC 提出) | 📋 doc のみ | #14 |
 
-## 🔥 翌朝 kureho にお願い
+## ✅ 2026-06-08 セッション完了内容 (Plan B 完了)
 
-### 1. 5 PRs を順番に review + merge
-- **#11** Chunk 1: 2 extension PoC + display name
-- **#12** Chunk 2: Cloudflare backbone + IDOR HIGH security fix
-- **#13** Chunks 3-6: iOS Tab B UI 一式 (シミュレータ動作確認可能)
-- **#14** Plan B/C/D docs
-- **#15** Plan B partial 実装
+L2-L8 + deletion processor + CDN sync の **実 script 全 11 本** と 7 workflow の placeholder 置換を完了。157 tests pass。
 
-### 2. GitHub repo Secrets 設定
+### scripts/ 一覧
+| Path | 役割 |
+|---|---|
+| `scripts/lib/d1-rest.ts` | 共通 D1 REST API client (Bearer auth, error mapping) |
+| `scripts/aggregation/aggregate-reports.ts` + `run.ts` | L2 threshold 集計 |
+| `scripts/validation/tranco-check.ts` + `run-tranco-check.ts` | L3 Tranco + critical-list 判定 |
+| `scripts/validation/cdn-check.ts` + `run-cdn-check.ts` | L5 共通 CDN 保護 |
+| `scripts/validation/playwright-validate.ts` + `playwright-runner.ts` + `run-playwright-validate.ts` | L6 Playwright スコアリング + L4 selector-scope |
+| `scripts/promotion/beta-to-stable.ts` + `run-beta-to-stable.ts` | L7 β→stable 昇格 |
+| `scripts/rollback/complaint-rollback.ts` + `run-complaint-rollback.ts` | L8 苦情 rollback (β≥2 / stable≥3) |
+| `scripts/deletion/deletion-processor.ts` + `run-deletion-processor.ts` | 削除依頼 1h SLA processor |
+| `scripts/sync/tranco-sync.ts` + `run-tranco-sync.ts` | weekly Tranco Top 1M sync |
+| `scripts/sync/reported-rules-build.ts` + `run-reported-rules-build.ts` | weekly CDN sync (rules-reported.json 生成) |
+
+### workers/src/lib/ 追加
+| File | 役割 |
+|---|---|
+| `aggregation-threshold.ts` | L2 純粋関数 (uuid≥3, ip≥2, 14d sliding window) |
+| `l3-decision.ts` | L3 純粋関数 (suffix-aware Tranco/critical-list lookup) |
+| `l5-decision.ts` | L5 純粋関数 (isProtectedCDN 委譲) |
+| `l6-decision.ts` | L6 純粋関数 (scoring + L4 selector-scope ゲート + Content Blocker JSON 構築) |
+
+### workers/src/handlers/ 追加
+| File | 役割 |
+|---|---|
+| `complaint.ts` | `POST /v1/reports/complaint` (HMAC scope='complaint', uuid_hash × rule_candidate_id dedupe) |
+
+### migrations 追加
+- `0006_init_tranco_top_1m.sql` — Tranco Top 1M 格納
+- `0007_rule_candidates_url.sql` — Playwright navigate 用 url 列
+- `0008_abuse_log_target_id.sql` — broken_site dedupe 用 target_id
+
+### workflow 置換完了 (7本、全て Linux runner + timeout-minutes 設定)
+| Workflow | 起動 | 呼び出し script |
+|---|---|---|
+| `hourly-aggregation.yml` | `:00 hourly` | `scripts/aggregation/run.ts` |
+| `complaint-monitor.yml` | `:15 hourly` | `scripts/rollback/run-complaint-rollback.ts` |
+| `hourly-deletion-processor.yml` | `:30 hourly` | `scripts/deletion/run-deletion-processor.ts` |
+| `daily-validation.yml` | daily 03:00 UTC | tranco-check → cdn-check → playwright-validate |
+| `weekly-stable-promotion.yml` | weekly Mon 04:00 UTC | `scripts/promotion/run-beta-to-stable.ts` |
+| `weekly-cdn-sync.yml` | weekly Tue 05:00 UTC | reported-rules-build + git commit |
+| `weekly-tranco-sync.yml` | weekly Sun 02:00 UTC | DL+unzip + `scripts/sync/run-tranco-sync.ts` |
+
+### 副次的に修正した事故
+- `workers/src/lib/ban-engine.ts`: SELECT alias `c` vs interface field `count` のミスマッチで `result.banned` / `result.upgraded` が常に 0 だった (2 tests 落ちていた)。`COUNT(*) as count` に修正し ban-engine 全 10 tests pass。
+
+## 🔥 次セッション kureho にお願い
+
+### 1. GitHub repo Secrets 設定 (Plan B workflow 起動の前提)
 Settings → Secrets and variables → Actions:
-- `CF_API_TOKEN` (Cloudflare API, D1:write scope)
-- `CF_ACCOUNT_ID`
-- `GH_DISPATCH_TOKEN` (weekly-cdn-sync が docs/cdn/ を auto-commit するため)
+- `CF_API_TOKEN` — Cloudflare API token、D1:write scope
+- `CF_ACCOUNT_ID` — Cloudflare account ID
+- `GH_DISPATCH_TOKEN` — weekly-cdn-sync が docs/cdn/ を auto-commit するための GitHub PAT
 
-未設定だと Plan B workflows は schedule 起動しても D1 access に失敗。
+**未設定だと Plan B の 7 workflow は schedule 起動しても D1 アクセスで全 401**。手動 workflow_dispatch でも同じ。secrets 投入後に各 workflow を 1 回ずつ workflow_dispatch で smoke test 推奨。
 
-### 3. 次セッション着手項目 (kureho 判断)
-- Plan B 続き (aggregate-reports.ts 等の実 script 実装)
+### 2. PR review + merge
+- **#11–#15** (前セッションの Plan A + Plan B partial)
+- **本 PR** (Plan B 完了: L2-L8 scripts + workflow 連携 + ban-engine 修正)
+
+### 3. 本番 D1 にも migration 0006/0007/0008 を適用
+```bash
+cd workers
+npx wrangler d1 migrations apply adblockkeshi-reports --remote
+```
+
+### 4. 次セッション着手項目 (kureho 判断)
 - Plan C 着手 (abuse 自動化 + 実 ReportAPIClient + Privacy Policy)
 - Plan D 着手 (E2E + 提出)
 
