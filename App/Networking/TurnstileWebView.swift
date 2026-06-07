@@ -93,11 +93,13 @@ struct TurnstileChallengeView: UIViewRepresentable {
 }
 
 /// Modal sheet that hosts the Turnstile widget and resolves to a token or an
-/// error. The host view shows a spinner while the widget initializes.
+/// error. Auto-fails after 30 seconds if the WKWebView hangs (network drop,
+/// JS execution stalls) so the host view never spins forever.
 struct TurnstileChallengeSheet: View {
     @Environment(\.dismiss) private var dismiss
     let onResult: (Result<String, Error>) -> Void
 
+    @State private var resolved = false
     @State private var failed = false
 
     var body: some View {
@@ -110,10 +112,14 @@ struct TurnstileChallengeSheet: View {
                 siteKey: AppConfig.turnstileSiteKey,
                 baseURL: URL(string: "https://\(AppConfig.turnstileHostname)")!,
                 onToken: { token in
+                    guard !resolved else { return }
+                    resolved = true
                     onResult(.success(token))
                     dismiss()
                 },
-                onError: { reason in
+                onError: { _ in
+                    guard !resolved else { return }
+                    resolved = true
                     failed = true
                     onResult(.failure(APIError.turnstileVerificationFailed))
                     dismiss()
@@ -128,5 +134,12 @@ struct TurnstileChallengeSheet: View {
         .padding(24)
         .presentationDetents([.height(180)])
         .presentationDragIndicator(.visible)
+        .task {
+            try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+            guard !resolved else { return }
+            resolved = true
+            onResult(.failure(APIError.turnstileVerificationFailed))
+            dismiss()
+        }
     }
 }

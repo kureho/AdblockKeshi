@@ -1,4 +1,58 @@
 import SwiftUI
+import UIKit
+
+/// SwiftUI TextField applies iOS's URL data-detector heuristics to the
+/// placeholder when keyboardType(.URL) is set, which renders the prompt
+/// "https://example.com/..." in accent blue and ignores foregroundStyle()
+/// hints. This wrapper drops down to UITextField so we can control the
+/// placeholder color explicitly via attributedPlaceholder.
+private struct URLTextField: UIViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+    let onCommit: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> UITextField {
+        let tf = UITextField()
+        tf.delegate = context.coordinator
+        tf.keyboardType = .URL
+        tf.autocapitalizationType = .none
+        tf.autocorrectionType = .no
+        tf.spellCheckingType = .no
+        tf.smartDashesType = .no
+        tf.smartQuotesType = .no
+        tf.smartInsertDeleteType = .no
+        tf.returnKeyType = .done
+        tf.clearButtonMode = .whileEditing
+        tf.font = UIFont.preferredFont(forTextStyle: .body)
+        tf.adjustsFontForContentSizeCategory = true
+        tf.textColor = UIColor.label
+        tf.attributedPlaceholder = NSAttributedString(
+            string: placeholder,
+            attributes: [.foregroundColor: UIColor.secondaryLabel]
+        )
+        tf.addTarget(context.coordinator, action: #selector(Coordinator.editingChanged(_:)), for: .editingChanged)
+        return tf
+    }
+
+    func updateUIView(_ uiView: UITextField, context: Context) {
+        if uiView.text != text { uiView.text = text }
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: URLTextField
+        init(_ parent: URLTextField) { self.parent = parent }
+        @objc func editingChanged(_ sender: UITextField) {
+            parent.text = sender.text ?? ""
+        }
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            textField.resignFirstResponder()
+            parent.onCommit()
+            return true
+        }
+    }
+}
 
 struct ReportFormView: View {
     @StateObject private var viewModel: ReportFormViewModel
@@ -15,10 +69,11 @@ struct ReportFormView: View {
             Section {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        TextField("https://example.com/...", text: $viewModel.urlInput)
-                            .keyboardType(.URL)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
+                        URLTextField(
+                            text: $viewModel.urlInput,
+                            placeholder: "https://example.com/...",
+                            onCommit: { focusedField = nil }
+                        )
                             .focused($focusedField, equals: .url)
                         Button("貼り付け") {
                             if let s = UIPasteboard.general.string {
