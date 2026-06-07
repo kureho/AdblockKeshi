@@ -1,10 +1,10 @@
-# Plan B Task 3.2: hourly aggregation (L2 threshold集計 + ban level up)
+# Plan B Task 3.2: hourly aggregation (L2 threshold集計).
 # Memory workflow-timeout-guard hook 遵守: timeout-minutes 必須、Linux runner only.
 
 name: hourly-aggregation
 on:
   schedule:
-    - cron: '0 * * * *'  # :00 hourly (workflow群のトリガ時刻分散、spec rev4 §5)
+    - cron: '0 * * * *'  # :00 hourly
   workflow_dispatch:
 
 concurrency:
@@ -24,8 +24,8 @@ jobs:
           cache-dependency-path: workers/package-lock.json
       - run: cd workers && npm ci
       - name: Aggregate reports (L2 threshold)
-        run: cd workers && npx wrangler d1 execute adblockkeshi-reports --remote --command "SELECT 'TODO: aggregate-reports script' AS placeholder"
+        run: cd workers && npx tsx ../scripts/aggregation/run.ts
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-      # TODO Plan B Task 1.2: scripts/aggregation/aggregate-reports.ts 実装後にここを置換
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: 91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4

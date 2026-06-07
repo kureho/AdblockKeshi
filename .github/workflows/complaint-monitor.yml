@@ -1,3 +1,4 @@
+# Plan B Task 3.3: hourly complaint rollback monitor (L8).
 name: complaint-monitor
 on:
   schedule:
@@ -20,8 +21,9 @@ jobs:
           cache: 'npm'
           cache-dependency-path: workers/package-lock.json
       - run: cd workers && npm ci
-      - name: Monitor complaints + rollback
-        run: cd workers && npx wrangler d1 execute adblockkeshi-reports --remote --command "SELECT 'TODO: complaint-rollback script' AS placeholder"
+      - name: Monitor complaints + rollback (L8)
+        run: cd workers && npx tsx ../scripts/rollback/run-complaint-rollback.ts
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: 91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4

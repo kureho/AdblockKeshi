@@ -8,7 +8,7 @@ interface TokenRequestBody {
   uuid_hash?: string  // ★ rev2 security fix: bind token to device hash to prevent IDOR
 }
 
-const VALID_SCOPES = new Set<TokenPayload['scope']>(['submit', 'history', 'delete'])
+const VALID_SCOPES = new Set<TokenPayload['scope']>(['submit', 'history', 'delete', 'complaint'])
 const TOKEN_TTL_SECONDS = 300
 
 /**

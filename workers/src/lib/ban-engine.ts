@@ -56,7 +56,7 @@ export async function runBanEngine(db: D1Database, now: number): Promise<{ banne
   // Group abuse_log by identifier; filter to ban-eligible reasons.
   const reasonList = [...BAN_ELIGIBLE_REASONS].map(r => `'${r}'`).join(',')
   const rows = await db.prepare(`
-    SELECT identifier_hash, identifier_type, COUNT(*) as c
+    SELECT identifier_hash, identifier_type, COUNT(*) as count
     FROM abuse_log
     WHERE created_at >= ?
       AND reason IN (${reasonList})

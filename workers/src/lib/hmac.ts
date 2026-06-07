@@ -5,7 +5,7 @@
  *
  * spec rev4 §3 §4:
  * - 5-minute TTL (enforced via payload.expires)
- * - 3 scopes: submit / history / delete
+ * - 4 scopes: submit / history / delete / complaint
  * - subject is uuid_hash placeholder; submit handler additionally checks
  *   request-body uuid_hash for IDOR防止
  */
@@ -13,7 +13,7 @@
 export interface TokenPayload {
   subject: string                       // uuid_hash placeholder (or "anonymous" pre-submit)
   expires: number                       // Unix ms
-  scope: 'submit' | 'history' | 'delete'
+  scope: 'submit' | 'history' | 'delete' | 'complaint'
 }
 
 export async function signToken(payload: TokenPayload, key: string): Promise<string> {
