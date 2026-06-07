@@ -54,7 +54,7 @@ export async function runBanEngine(
     const chunk = abuseRows.slice(i, i + MAX_IN_CLAUSE_SIZE)
     const placeholders = chunk.map(() => '?').join(',')
     const result = await db.prepare(
-      `SELECT identifier_hash, ban_level, abuse_count FROM bans
+      `SELECT identifier_hash, ban_level, abuse_count, expires_at FROM bans
          WHERE identifier_hash IN (${placeholders})`
     ).bind(...chunk.map((r) => r.identifier_hash)).all<ExistingBanRow>()
     if (result.results) existing.push(...result.results)
