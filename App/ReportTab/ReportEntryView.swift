@@ -28,7 +28,7 @@ struct ReportEntryView: View {
                 .scaledToFit()
                 .frame(width: 56, height: 56)
                 .foregroundStyle(Color.accentColor)
-                .padding(.top, 24)
+                .padding(.top, 8)
             Text("他のブロッカーで\n消えない広告を見つけた？")
                 .font(.title2.bold())
                 .multilineTextAlignment(.center)
