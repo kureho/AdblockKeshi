@@ -67,16 +67,16 @@ struct ReportEntryView: View {
         Button(action: onHistoryTap) {
             HStack(spacing: 8) {
                 Image(systemName: "list.bullet.rectangle")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 18, weight: .semibold))
                 Text("これまでの報告履歴")
-                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    .font(.system(.title3, design: .rounded, weight: .bold))
             }
             .foregroundStyle(Color.accentColor)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
+            .padding(.vertical, 18)
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                    .fill(Color(uiColor: .systemGray5))
             )
         }
         .padding(.horizontal, 20)
