@@ -40,7 +40,9 @@ export interface TrancoSyncResult {
   rows_inserted: number
 }
 
-const DEFAULT_BATCH = 1000
+// D1 (SQLite) limits bound parameters to 999 per statement. Each row binds 3
+// (domain, rank, synced_at), so the safe max batch is 333. Keep some headroom.
+const DEFAULT_BATCH = 300
 
 export async function runTrancoSync(
   env: D1Env,
