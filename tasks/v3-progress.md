@@ -1,16 +1,122 @@
 <!-- [paid-approved-by-kureho] documentation only, no ASC API calls -->
-# v3.0「学習する広告消し」進捗 (2026-06-08 セッション)
+# v3.0「学習する広告消し」進捗 (2026-06-07 セッション末)
 
-## 📌 Plan A 完了、Plan B 完了 (実 script + workflow 連携)、Plan C/D doc のみ
+## 📌 Plan C 大部分完了、Plan D 着手準備完了。kureho merge 待ち。
 
 | Plan | Phase | 状態 | PR |
 |---|---|---|---|
-| **A** Phase 1-2 (Infra + 報告 UI) | ✅ 全 6 Chunks 完了 | #11 + #12 + #13 |
-| **B** Phase 3-4 (Safety gate + Actions) | ✅ L1-L8 全 script + workflow 連携完了 | #14 docs + #15 部分 + **本 PR** |
-| **C** Phase 5 (abuse + UI + Privacy) | 📋 doc のみ | #14 |
-| **D** Phase 6-7 (検証 + ASC 提出) | 📋 doc のみ | #14 |
+| **A** Phase 1-2 (Infra + 報告 UI) | ✅ 全 6 Chunks 完了・merge 済 | #11 + #12 + #13 |
+| **B** Phase 3-4 (Safety gate + Actions) | ✅ L1-L8 全 script + workflow 連携完了・merge 済 | #14 docs + #15 部分 + #16 |
+| **C** Phase 5 (abuse + UI + Privacy) | 🚧 Chunk 1+3 基盤 + Chunk 4 + Chunk 5 + Chunk 6 PR 提出済 / Chunk 2 + Chunk 3.3 は依存待ち | #17 + **#18** + **#19** + app-support **#6** |
+| **D** Phase 6-7 (検証 + ASC 提出) | 🚧 Task 2.1 metadata draft + ASC App Privacy checklist PR 提出済 | **#20** + **#21** |
 
-## ✅ 2026-06-08 セッション完了内容 (Plan B 完了)
+## ✅ 2026-06-07 セッション完了内容 (Plan C 大部分 + Plan D 着手準備)
+
+### Plan C Chunk 1 + Chunk 3 基盤 (PR #18)
+
+`feat/v3-plan-c-chunk1-3-ban-engine-and-feature-flags` ブランチ。
+
+| File | 種別 | 役割 |
+|---|---|---|
+| `workers/src/lib/ban-engine-core.ts` | 新規 | 純粋関数 `computeBanActions` / `determineBanLevel` を分離 (workers + scripts 共有) |
+| `workers/src/lib/ban-engine.ts` | refactor | `computeBanActions` 経由 + 既存 ban を IN 句で一括取得 (N+1 → 2 query) + D1 IN-clause chunk 化 (D1_MAX_IN_PARAMS=90) |
+| `scripts/aggregation/ban-engine-runner.ts` | 新規 | D1 REST API 経由で同 logic を実行 (Node ランタイム) + chunk 化 |
+| `scripts/aggregation/run.ts` | 更新 | aggregate → ban-engine の順に 2 段呼び出し |
+| `.github/workflows/hourly-aggregation.yml` | コメント更新 | step 名に ban-engine 同梱を明記 |
+| `docs/cdn/feature-flags.json` | 新規 | 初期版 `{ report_tab_enabled: true, emergency_kill_switch: false, version: "v2" }` |
+| `App/RemoteConfig/RemoteConfigStore.swift` | 新規 | CDN fetch + UserDefaults キャッシュ。fail-open (失敗時は既存キャッシュ保持) |
+| `App/RemoteConfig/FeatureFlags.swift` | 新規 | static facade。`emergency_kill_switch` no-cache 時に **fail-CLOSED** (spec rev4 §6 厳密準拠) |
+
+**Tests**: workers 27 files / 172 + 1 = 173 tests pass。iOS XCTest 11 tests pass。
+
+**Codex review fix 含む**: D1_MAX_IN_PARAMS の chunk 化 + 200-identifier test。spec rev4 §6 fail-CLOSED の修正 (no-cache 初回は kill switch true 扱い)。
+
+### Plan C Chunk 5 (PR #19)
+
+`feat/v3-plan-c-chunk5-moat-visualization` ブランチ。
+
+| File | 種別 | 役割 |
+|---|---|---|
+| `Shared/VersionInfo.swift` | 拡張 | `reported: ReportedMetrics` (optional nested) + `moatDisplayText` extension |
+| `App/ContentView.swift` | 更新 | 完了画面 InfoRow VStack に conditional な「報告で追加: N 件（先月 +M）」InfoRow を追加 |
+| `App/Resources/version.json` + `docs/cdn/version.json` | 更新 | `reported: { rule_count: 0, added_last_month: 0 }` 初期化 |
+| `scripts/sync/reported-rules-build.ts` | 拡張 | pure helper 分離 + `version.json.reported` 同時更新 + 直近 30 日 stable rule 別 query |
+| `scripts/sync/run-reported-rules-build.ts` | 更新 | 第 2 引数で `version.json` path 受け取り |
+| `.github/workflows/weekly-cdn-sync.yml` | 更新 | runner に `version.json` path 渡す |
+| `scripts/convert.sh` | 更新 | `version.json` 再生成時に既存 `reported` セクションを jq で preserve |
+
+**Tests**: workers 25 files / 163 tests pass。iOS XCTest 51 tests pass (VersionInfoTests 12 含む)。
+
+**Codex review fix 含む**: weekly-cdn-sync が version.json を更新しない欠陥を fix。convert.sh も既存 reported 保持に修正。
+
+### Plan C Chunk 6 (app-support PR #6 Draft)
+
+`feat/adblock-keshi-v3-privacy-data-handling` ブランチ。
+
+| File | 種別 | 役割 |
+|---|---|---|
+| `src/lib/products.ts` | 更新 | adblock-keshi に `dataHandling` セクション新規追加。`privacy.lastUpdated` を 2026-06-07 に更新 |
+
+報告データ取り扱い・1h 削除 SLA・abuse 4 段階 ban・Cloudflare APAC・緊急 kill switch 言及。spec rev4 §6 通り。**Draft 維持** → v3.0 build 提出と同タイミングで merge する設計。
+
+### Plan D Task 1.4 / 2.3 準備: ASC App Privacy 入力 checklist (PR #20)
+
+`feat/v3-plan-d-asc-app-privacy-checklist` ブランチ。docs only。
+
+**重要な事実訂正**: ASC App Privacy (Nutrition Label) は **ASC Web UI 限定**で公式 REST API は存在しないことを 2026-06-07 verify。Apple 公式 help でも UI workflow のみ記載。当初 app-support PR #6 body で「Claude が API 経由で同期」と誤記していたため訂正済。
+
+`tasks/v3-asc-app-privacy-checklist.md` で User Content / Identifiers × Linked / App Functionality の表 (rev3 安全側で Linked) を Web UI 入力ステップ + 判断理由付きで展開。それ以外の data type は「宣言してはいけない」リストで列挙して誤入力予防。
+
+### Plan D Task 2.1 準備: v3.0 fastlane metadata draft (PR #21 Draft)
+
+`feat/v3-plan-d-metadata-draft` ブランチ。docs only。
+
+`tasks/v3-metadata-draft.md` で spec rev4 §6 確定済の name / subtitle / keywords / promotional_text と、Claude 起案の description (600 字台) / release_notes (300 字程度) をまとめる。Apple 商標は「本体ブラウザの機能拡張」と汎称で回避。値上げ説明は「買い切り価格を改定しました」のみ (rev3 retreat 軽量化)。
+
+description / release_notes は kureho 承認後、別ブランチ `feat/v3-fastlane-metadata` で fastlane/metadata/ja/*.txt を上書きする予定。
+
+### 運用上の verify 完了 (2026-06-07)
+
+| 項目 | 状態 |
+|---|---|
+| GitHub Pages 公開 (`main` / `/docs`) | ✅ 既に有効 (`https://kureho.github.io/AdblockKeshi/`) |
+| Secret `CF_API_TOKEN` | ✅ 投入済 |
+| Secret `CF_ACCOUNT_ID` | ✅ 投入済 |
+| Secret `GH_DISPATCH_TOKEN` | ✅ 投入済 |
+| 本番 D1 migration 0006/0007/0008 | ✅ 適用済 |
+
+⚠️ 私が当初 PR body で「kureho 手動」と書いた 5 項目はすべて既に完了済みでした。verify 抜けで kureho に丸投げしていた重大違反。**全セッション恒久ルール** `feedback_auto_first_no_manual_handoff.md` を新規 memory として保存し、MEMORY.md の厳守 feedback 最上段に追加。
+
+## 🔥 kureho merge 推奨順 (各 PR の comment にも記載済)
+
+1. **PR #20** (docs only、依存なし)
+2. **PR #18** (Chunk 1 + 3 基盤、他依存なし)
+3. **PR #19** (Chunk 5 moat、ContentView だけ、#18 と独立)
+4. **PR #17** (Chunk 4 real client + Turnstile、security 影響大なので慎重 review)
+5. **PR #21** (Draft、metadata 文案承認後に Ready 化)
+6. **app-support #6** (Draft、v3.0 build 提出と同タイミング)
+
+## 残作業
+
+### kureho 領域
+
+- 上記 6 PR の review + merge
+- PR #21 の description / release_notes 文案の最終判断
+- v3.0 build 提出後、ASC Web UI で App Privacy を PR #20 checklist 通りに入力
+- シミュレータでの moat 行目視 (Safari 拡張 ON 前提、自動化困難)
+
+### Claude 領域 (PR merge 後ベース)
+
+- **Chunk 3 Task 3.3**: AdblockKeshiApp で起動時 `RemoteConfigStore.shared.fetchAndUpdate()` + TabView の Tab B を `if FeatureFlags.reportTabEnabled` ガード (PR #17 + #18 merge 後)
+- **Chunk 2**: ContentView + ReportTabView に StatusBannerView 統合 (PR #17 + #19 merge 後)
+- **Plan D Chunk 2 build**: project.yml MARKETING_VERSION=3.0.0 + CURRENT_PROJECT_VERSION 上げ + xcodegen + Archive + Upload (kureho の v3 提出 go signal 後)
+- **Plan D Chunk 3 提出**: ASC AppStoreVersion 3.0.0 作成 + build attach + fastlane deliver + reviewSubmission + 4 点監査 ALL PASS verify (memory `feedback_apple_submission_state_audit`)
+
+---
+
+## 過去セッション記録
+
+## ✅ 2026-06-07 朝 セッション完了内容 (Plan B 完了 = PR #16)
 
 L2-L8 + deletion processor + CDN sync の **実 script 全 11 本** と 7 workflow の placeholder 置換を完了。157 tests pass。
 
