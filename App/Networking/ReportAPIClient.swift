@@ -36,12 +36,26 @@ final class ReportAPIClient: ReportAPIClientProtocol {
         let _: SubmitResponseDTO = try await send(request)
     }
 
+    func requestToken(turnstileResponse: String, scope: TokenScope) async throws {
+        let uuidHash = try uuidStore.getUUIDHash()
+        let endpoint = baseURL.appendingPathComponent("/v1/reports/token")
+        var request = makeBaseRequest(url: endpoint)
+        let body = TokenRequestDTO(
+            turnstileResponse: turnstileResponse,
+            scope: scope.rawValue,
+            uuidHash: uuidHash
+        )
+        request.httpBody = try encoder.encode(body)
+        let dto: TokenResponseDTO = try await send(request)
+        let token = HMACToken(value: dto.token, scope: scope, expiresAt: dto.expiresAt)
+        await tokenStore.set(token)
+    }
+
     // MARK: - private
 
     private func acquireToken(scope: TokenScope) async throws -> HMACToken {
         if let cached = await tokenStore.get(scope: scope) { return cached }
-        // Phase 2 では Turnstile WebView 未統合のため、新規 token 取得には
-        // requestToken を別途呼ぶ必要がある。Phase 5 で onboarding に統合。
+        // No cached token. Caller must `requestToken(turnstileResponse:)` first.
         throw APIError.unauthorized
     }
 

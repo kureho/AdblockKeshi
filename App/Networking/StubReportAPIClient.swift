@@ -7,4 +7,9 @@ final class StubReportAPIClient: ReportAPIClientProtocol {
         try await Task.sleep(nanoseconds: 600_000_000)
         // 成功扱い。Chunk 4 で Workers /v1/reports/submit を呼ぶ実装に置き換え。
     }
+
+    func requestToken(turnstileResponse: String, scope: TokenScope) async throws {
+        try await Task.sleep(nanoseconds: 100_000_000)
+        // no-op stub
+    }
 }
