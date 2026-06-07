@@ -42,8 +42,19 @@ final class FeatureFlagsTests: XCTestCase {
         )
     }
 
-    func test_reportTabEnabled_defaultsToTrueWhenNoCache() {
-        XCTAssertTrue(FeatureFlags.reportTabEnabled(store: emptyStore()))
+    // Spec rev4 §6 evaluation order: `emergency_kill_switch` is fail-CLOSED on
+    // the first network failure, so a no-cache cold start must hide Tab B
+    // until the CDN confirms `false`.
+    func test_reportTabEnabled_isFalseWhenNoCache_failClosed() {
+        XCTAssertFalse(FeatureFlags.reportTabEnabled(store: emptyStore()))
+    }
+
+    func test_reportTabEnabled_isTrueAfterCDNConfirmsKillSwitchFalse() {
+        let store = storeSeeded(with: [
+            "report_tab_enabled": true,
+            "emergency_kill_switch": false,
+        ])
+        XCTAssertTrue(FeatureFlags.reportTabEnabled(store: store))
     }
 
     func test_reportTabEnabled_isFalseWhenKillSwitchOn_evenIfReportTabFlagOn() {
@@ -62,16 +73,8 @@ final class FeatureFlagsTests: XCTestCase {
         XCTAssertFalse(FeatureFlags.reportTabEnabled(store: store))
     }
 
-    func test_reportTabEnabled_isTrueWhenReportTabFlagOn_andKillSwitchOff() {
-        let store = storeSeeded(with: [
-            "report_tab_enabled": true,
-            "emergency_kill_switch": false,
-        ])
-        XCTAssertTrue(FeatureFlags.reportTabEnabled(store: store))
-    }
-
-    func test_emergencyKillSwitchEnabled_defaultsToFalseWhenNoCache() {
-        XCTAssertFalse(FeatureFlags.emergencyKillSwitchEnabled(store: emptyStore()))
+    func test_emergencyKillSwitchEnabled_defaultsToTrueWhenNoCache_failClosed() {
+        XCTAssertTrue(FeatureFlags.emergencyKillSwitchEnabled(store: emptyStore()))
     }
 
     func test_emergencyKillSwitchEnabled_reflectsCachedFlag() {
