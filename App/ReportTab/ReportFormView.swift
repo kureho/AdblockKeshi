@@ -67,12 +67,15 @@ struct ReportFormView: View {
             Section {
                 Button {
                     focusedField = nil
-                    Task { await viewModel.submit() }
+                    viewModel.beginSubmit()
                 } label: {
                     HStack {
                         if case .submitting = viewModel.state {
                             ProgressView().controlSize(.small)
                             Text("送信中…").padding(.leading, 6)
+                        } else if case .awaitingTurnstile = viewModel.state {
+                            ProgressView().controlSize(.small)
+                            Text("確認中…").padding(.leading, 6)
                         } else {
                             Image(systemName: "paperplane.fill")
                             Text("送信").padding(.leading, 6)
@@ -87,6 +90,16 @@ struct ReportFormView: View {
         }
         .navigationTitle("報告")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: turnstileBinding) {
+            TurnstileChallengeSheet { result in
+                switch result {
+                case .success(let token):
+                    Task { await viewModel.completeSubmit(turnstileResponse: token) }
+                case .failure:
+                    viewModel.cancelTurnstile()
+                }
+            }
+        }
         .alert(isPresented: errorBinding) {
             Alert(
                 title: Text("送信に失敗しました"),
@@ -94,6 +107,13 @@ struct ReportFormView: View {
                 dismissButton: .default(Text("OK")) { viewModel.dismissError() }
             )
         }
+    }
+
+    private var turnstileBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.showsTurnstileSheet },
+            set: { if !$0 { viewModel.cancelTurnstile() } }
+        )
     }
 
     private var errorBinding: Binding<Bool> {

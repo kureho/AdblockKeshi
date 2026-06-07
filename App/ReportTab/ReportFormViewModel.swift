@@ -3,6 +3,7 @@ import SwiftUI
 
 enum ReportFormState: Equatable {
     case idle
+    case awaitingTurnstile
     case submitting
     case error(APIError)
 }
@@ -46,16 +47,37 @@ final class ReportFormViewModel: ObservableObject {
         guard validatedURL != nil else { return false }
         if !memoInput.isEmpty, case .invalid = MemoValidator.validate(memoInput) { return false }
         if case .submitting = state { return false }
+        if case .awaitingTurnstile = state { return false }
         return true
+    }
+
+    var showsTurnstileSheet: Bool {
+        if case .awaitingTurnstile = state { return true }
+        return false
     }
 
     var memoCharCount: Int { memoInput.count }
     var memoCharRemaining: Int { MemoValidator.maxLength - memoInput.count }
 
-    func submit() async {
-        guard canSubmit, let url = validatedURL else { return }
+    /// User tapped 送信. We don't hit the API yet — we need a fresh Turnstile
+    /// token first. The view binds `showsTurnstileSheet` to drive presentation.
+    func beginSubmit() {
+        guard canSubmit, validatedURL != nil else { return }
+        state = .awaitingTurnstile
+    }
+
+    /// Cancelled out of the Turnstile sheet without completing.
+    func cancelTurnstile() {
+        if case .awaitingTurnstile = state { state = .idle }
+    }
+
+    /// Turnstile widget produced a response token. Exchange it for an HMAC
+    /// token, then send the report.
+    func completeSubmit(turnstileResponse: String) async {
+        guard let url = validatedURL else { state = .idle; return }
         state = .submitting
         do {
+            try await apiClient.requestToken(turnstileResponse: turnstileResponse, scope: .submit)
             let memo = memoInput.isEmpty ? nil : memoInput
             try await apiClient.submitReport(url: url, memo: memo)
             state = .idle

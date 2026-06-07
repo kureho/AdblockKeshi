@@ -39,6 +39,10 @@ targets:
         BGTaskSchedulerPermittedIdentifiers:
           - com.kureho.adblockkeshi.filter-refresh
         ITSAppUsesNonExemptEncryption: false
+        # Per-install salt for uuid_hash. The salt only needs to be consistent
+        # per device — it's not a server-shared secret. Workers stores
+        # `uuid_hash` as an opaque string and never reverses it.
+        DEV_SERVER_SALT: adblockkeshi-v3-prod-salt-2026-06
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kureho.adblockkeshi
