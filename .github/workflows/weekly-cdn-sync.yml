@@ -1,6 +1,8 @@
 # Plan B Task 4.2: weekly CDN sync. Pulls stable rule_candidates from D1,
 # writes docs/cdn/rules-reported.json, commits the change so GitHub Pages
 # serves it.
+# Plan C Chunk 5: also patches docs/cdn/version.json's `reported` section so
+# the iOS app's moat row reflects cumulative + last-30-day metrics.
 
 name: weekly-cdn-sync
 on:
@@ -28,8 +30,8 @@ jobs:
           cache: 'npm'
           cache-dependency-path: workers/package-lock.json
       - run: cd workers && npm ci
-      - name: Build rules-reported.json from stable rule_candidates
-        run: cd workers && npx tsx ../scripts/sync/run-reported-rules-build.ts ../docs/cdn/rules-reported.json
+      - name: Build rules-reported.json + patch version.json reported metrics
+        run: cd workers && npx tsx ../scripts/sync/run-reported-rules-build.ts ../docs/cdn/rules-reported.json ../docs/cdn/version.json
         env:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
@@ -43,5 +45,5 @@ jobs:
             exit 0
           fi
           git add docs/cdn/
-          git commit -m "chore(v3): weekly CDN sync (rules-reported.json from stable rule_candidates)"
+          git commit -m "chore(v3): weekly CDN sync (rules-reported.json + version.json reported metrics)"
           git push
