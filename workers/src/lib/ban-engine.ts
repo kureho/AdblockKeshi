@@ -23,6 +23,11 @@ const BAN_ELIGIBLE_REASONS = [
   'rate_limit', 'spam_memo', 'invalid_url', 'critical_domain',
 ] as const
 
+// D1 (SQLite) caps bound parameters per statement. Keep this in sync with
+// `D1_MAX_IN_PARAMS` in scripts/lib/d1-rest.ts — both runtimes hit the same
+// limit when issuing IN-clause lookups.
+const MAX_IN_CLAUSE_SIZE = 90
+
 /**
  * Aggregate abuse_log by identifier, look up existing bans, and upsert.
  */
@@ -44,12 +49,16 @@ export async function runBanEngine(
   const abuseRows: AbuseAggregate[] = aggregated.results ?? []
   if (abuseRows.length === 0) return { banned: 0, upgraded: 0 }
 
-  const placeholders = abuseRows.map(() => '?').join(',')
-  const existingResult = await db.prepare(
-    `SELECT identifier_hash, ban_level, abuse_count FROM bans
-       WHERE identifier_hash IN (${placeholders})`
-  ).bind(...abuseRows.map((r) => r.identifier_hash)).all<ExistingBanRow>()
-  const existing: ExistingBanRow[] = existingResult.results ?? []
+  const existing: ExistingBanRow[] = []
+  for (let i = 0; i < abuseRows.length; i += MAX_IN_CLAUSE_SIZE) {
+    const chunk = abuseRows.slice(i, i + MAX_IN_CLAUSE_SIZE)
+    const placeholders = chunk.map(() => '?').join(',')
+    const result = await db.prepare(
+      `SELECT identifier_hash, ban_level, abuse_count FROM bans
+         WHERE identifier_hash IN (${placeholders})`
+    ).bind(...chunk.map((r) => r.identifier_hash)).all<ExistingBanRow>()
+    if (result.results) existing.push(...result.results)
+  }
 
   const actions = computeBanActions(abuseRows, existing, now)
 

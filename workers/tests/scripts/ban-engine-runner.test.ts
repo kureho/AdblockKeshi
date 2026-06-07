@@ -151,4 +151,41 @@ describe('runBanEngineViaRest', () => {
       runBanEngineViaRest(ENV, { fetch, now: () => NOW })
     ).rejects.toThrow(/db unavailable/)
   })
+
+  test('chunks existing-ban lookup to stay under D1_MAX_IN_PARAMS', async () => {
+    // 200 identifiers, all below L1 threshold → no writes after lookup.
+    // D1_MAX_IN_PARAMS = 90, so we expect ceil(200/90) = 3 SELECT statements.
+    const abuse = Array.from({ length: 200 }, (_, i) => ({
+      identifier_hash: HEX64(String.fromCharCode(33 + (i % 80))).slice(0, 64),
+      identifier_type: 'uuid' as const,
+      count: 1, // below threshold so no INSERT/UPDATE
+    }))
+    // Make each hash unique by prefixing the index.
+    abuse.forEach((row, i) => {
+      row.identifier_hash =
+        i.toString(16).padStart(8, '0') + row.identifier_hash.slice(8)
+    })
+    const responses = [
+      { rows: abuse },
+      { rows: [] }, // chunk 1 existing
+      { rows: [] }, // chunk 2 existing
+      { rows: [] }, // chunk 3 existing
+    ]
+    const { fetch, calls } = makeFetchMock(responses)
+    const result = await runBanEngineViaRest(ENV, { fetch, now: () => NOW })
+    expect(result).toEqual({ banned: 0, upgraded: 0 })
+    // 1 abuse SELECT + 3 existing SELECTs = 4 calls
+    expect(calls).toHaveLength(4)
+    // each chunk's IN clause must not exceed D1_MAX_IN_PARAMS placeholders
+    for (let i = 1; i <= 3; i++) {
+      const placeholderCount = (calls[i].body.sql.match(/\?/g) ?? []).length
+      expect(placeholderCount).toBeLessThanOrEqual(90)
+    }
+    // sum of chunk params must equal the abuse cardinality
+    const totalParams =
+      calls[1].body.params.length +
+      calls[2].body.params.length +
+      calls[3].body.params.length
+    expect(totalParams).toBe(200)
+  })
 })

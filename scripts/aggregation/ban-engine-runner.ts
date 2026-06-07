@@ -9,7 +9,7 @@ import {
   type AbuseAggregate,
   type ExistingBanRow,
 } from '../../workers/src/lib/ban-engine-core'
-import { d1Query, type D1Env } from '../lib/d1-rest'
+import { d1Query, D1_MAX_IN_PARAMS, type D1Env } from '../lib/d1-rest'
 
 export type BanEngineEnv = D1Env
 
@@ -54,20 +54,28 @@ export async function runBanEngineViaRest(
 
   if (abuseRows.length === 0) return { banned: 0, upgraded: 0 }
 
-  const placeholders = abuseRows.map(() => '?').join(',')
-  const existingRowsRaw = await d1Query(
-    env,
-    deps.fetch,
-    `SELECT identifier_hash, ban_level, abuse_count
-       FROM bans
-      WHERE identifier_hash IN (${placeholders})`,
-    abuseRows.map((r) => r.identifier_hash)
-  )
-  const existing: ExistingBanRow[] = existingRowsRaw.map((r) => ({
-    identifier_hash: r.identifier_hash,
-    ban_level: r.ban_level,
-    abuse_count: r.abuse_count,
-  }))
+  // Chunk the IN-clause so the bound-parameter count stays under D1's limit
+  // (see scripts/lib/d1-rest.ts:D1_MAX_IN_PARAMS).
+  const existing: ExistingBanRow[] = []
+  for (let i = 0; i < abuseRows.length; i += D1_MAX_IN_PARAMS) {
+    const chunk = abuseRows.slice(i, i + D1_MAX_IN_PARAMS)
+    const placeholders = chunk.map(() => '?').join(',')
+    const rowsRaw = await d1Query(
+      env,
+      deps.fetch,
+      `SELECT identifier_hash, ban_level, abuse_count
+         FROM bans
+        WHERE identifier_hash IN (${placeholders})`,
+      chunk.map((r) => r.identifier_hash)
+    )
+    for (const r of rowsRaw) {
+      existing.push({
+        identifier_hash: r.identifier_hash,
+        ban_level: r.ban_level,
+        abuse_count: r.abuse_count,
+      })
+    }
+  }
 
   const actions = computeBanActions(abuseRows, existing, now)
 
