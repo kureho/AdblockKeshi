@@ -1,4 +1,6 @@
 # Plan B Task 3.2: hourly aggregation (L2 threshold集計).
+# Plan C Chunk 1 Task 1.2: 4-tier auto-ban escalation (spec rev4 §4) を同じ
+# step 内で aggregate → ban-engine の順に実行。
 # Memory workflow-timeout-guard hook 遵守: timeout-minutes 必須、Linux runner only.
 
 name: hourly-aggregation
