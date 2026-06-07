@@ -1,7 +1,7 @@
 // Plan B Task 2.1 (L5 CDN protection): filters candidates with status='validating'.
 // Runs from daily-validation.yml between tranco-check and playwright-validate.
 
-import { d1Query, type D1Env } from '../lib/d1-rest'
+import { chunked, d1Query, D1_MAX_IN_PARAMS, type D1Env } from '../lib/d1-rest'
 import { decideL5 } from '../../workers/src/lib/l5-decision'
 
 export interface CdnCheckDeps {
@@ -42,13 +42,15 @@ export async function runCdnCheck(
     if (group.length === 0) continue
     const ids = group.map((d) => d.id)
     const l5 = group[0].l5_check
-    const placeholders = ids.map(() => '?').join(',')
-    await d1Query(
-      env,
-      deps.fetch,
-      `UPDATE rule_candidates SET status = ?, l5_check = ? WHERE id IN (${placeholders})`,
-      [status, l5, ...ids]
-    )
+    await chunked(ids, D1_MAX_IN_PARAMS, async (chunk) => {
+      const placeholders = chunk.map(() => '?').join(',')
+      await d1Query(
+        env,
+        deps.fetch,
+        `UPDATE rule_candidates SET status = ?, l5_check = ? WHERE id IN (${placeholders})`,
+        [status, l5, ...chunk]
+      )
+    })
   }
 
   return {

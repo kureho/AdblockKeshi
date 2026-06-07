@@ -1,7 +1,7 @@
 // Plan B Task 2.3 (L7 β→stable): weekly cron. Promotes beta candidates that
 // have been live for ≥ 7 days with zero complaints to status='stable'.
 
-import { d1Query, type D1Env } from '../lib/d1-rest'
+import { chunked, d1Query, D1_MAX_IN_PARAMS, type D1Env } from '../lib/d1-rest'
 
 export interface BetaPromotionDeps {
   fetch: typeof globalThis.fetch
@@ -38,14 +38,16 @@ export async function runBetaPromotion(
   }
 
   const ids = rows.map((r) => r.id)
-  const placeholders = ids.map(() => '?').join(',')
-  await d1Query(
-    env,
-    deps.fetch,
-    `UPDATE rule_candidates
-        SET status = 'stable', stable_started_at = ?
-      WHERE id IN (${placeholders})`,
-    [now, ...ids]
-  )
+  await chunked(ids, D1_MAX_IN_PARAMS, async (chunk) => {
+    const placeholders = chunk.map(() => '?').join(',')
+    await d1Query(
+      env,
+      deps.fetch,
+      `UPDATE rule_candidates
+          SET status = 'stable', stable_started_at = ?
+        WHERE id IN (${placeholders})`,
+      [now, ...chunk]
+    )
+  })
   return { promoted: ids.length }
 }

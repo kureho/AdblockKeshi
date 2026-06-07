@@ -34,22 +34,29 @@ export interface TrancoSyncDeps {
   /** Loader resolves to raw CSV text (post-unzip). */
   loadCsv: () => Promise<string>
   batchSize?: number
+  /** Cap rows imported (Tranco gives 1M, top 100k is plenty for L3). */
+  maxRows?: number
 }
 
 export interface TrancoSyncResult {
   rows_inserted: number
 }
 
-// D1 (SQLite) limits bound parameters to 999 per statement. Each row binds 3
-// (domain, rank, synced_at), so the safe max batch is 333. Keep some headroom.
-const DEFAULT_BATCH = 300
+// D1 caps bound parameters at 100 per query. Each row binds 3 params
+// (domain, rank, synced_at), so the safe max batch is 33. Use 30 for headroom.
+const DEFAULT_BATCH = 30
+// L3 only needs to know if a domain is a "big site". Top 100k of Tranco covers
+// every site with meaningful daily traffic.
+const DEFAULT_MAX_ROWS = 100_000
 
 export async function runTrancoSync(
   env: D1Env,
   deps: TrancoSyncDeps
 ): Promise<TrancoSyncResult> {
   const csv = await deps.loadCsv()
-  const rows = parseTrancoCsv(csv)
+  const parsed = parseTrancoCsv(csv)
+  const maxRows = deps.maxRows ?? DEFAULT_MAX_ROWS
+  const rows = parsed.length > maxRows ? parsed.slice(0, maxRows) : parsed
 
   await d1Query(env, deps.fetch, `DELETE FROM tranco_top_1m`)
 

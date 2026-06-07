@@ -54,3 +54,19 @@ export function envFromProcess(): D1Env {
     CF_DATABASE_ID: requireEnv('CF_DATABASE_ID'),
   }
 }
+
+/**
+ * D1 (SQLite) caps bound parameters at 999 per statement. Use this to chunk
+ * an `IN (?, ?, ...)`-style write so it never trips SQLITE_ERROR at runtime.
+ */
+export const D1_MAX_IN_PARAMS = 90
+
+export async function chunked<T>(
+  items: T[],
+  size: number,
+  fn: (chunk: T[]) => Promise<unknown>
+): Promise<void> {
+  for (let i = 0; i < items.length; i += size) {
+    await fn(items.slice(i, i + size))
+  }
+}

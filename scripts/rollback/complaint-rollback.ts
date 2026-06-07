@@ -2,7 +2,7 @@
 // Rolls back rules with too many unique complaints (β: ≥2, stable: ≥3) and
 // puts the candidate in 30-day cooldown so it can't be re-aggregated.
 
-import { d1Query, type D1Env } from '../lib/d1-rest'
+import { chunked, d1Query, D1_MAX_IN_PARAMS, type D1Env } from '../lib/d1-rest'
 
 const COOLDOWN_SECONDS = 30 * 86_400
 
@@ -33,14 +33,16 @@ export async function runComplaintRollback(
   const now = deps.now()
   const cooldownUntil = now + COOLDOWN_SECONDS
   const ids = rows.map((r) => r.id)
-  const placeholders = ids.map(() => '?').join(',')
-  await d1Query(
-    env,
-    deps.fetch,
-    `UPDATE rule_candidates
-        SET status = 'rejected_rollback', cooldown_until = ?
-      WHERE id IN (${placeholders})`,
-    [cooldownUntil, ...ids]
-  )
+  await chunked(ids, D1_MAX_IN_PARAMS, async (chunk) => {
+    const placeholders = chunk.map(() => '?').join(',')
+    await d1Query(
+      env,
+      deps.fetch,
+      `UPDATE rule_candidates
+          SET status = 'rejected_rollback', cooldown_until = ?
+        WHERE id IN (${placeholders})`,
+      [cooldownUntil, ...chunk]
+    )
+  })
   return { rolled_back: ids.length }
 }

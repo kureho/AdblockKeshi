@@ -11,7 +11,7 @@ import {
   computeAggregations,
   type PendingReport,
 } from '../../workers/src/lib/aggregation-threshold'
-import { d1Query, type D1Env } from '../lib/d1-rest'
+import { chunked, d1Query, D1_MAX_IN_PARAMS, type D1Env } from '../lib/d1-rest'
 
 export type AggregationEnv = D1Env
 
@@ -84,15 +84,15 @@ export async function runAggregation(
     consumedIds.push(...a.report_ids)
   }
 
-  if (consumedIds.length > 0) {
-    const placeholders = consumedIds.map(() => '?').join(',')
+  await chunked(consumedIds, D1_MAX_IN_PARAMS, async (chunk) => {
+    const placeholders = chunk.map(() => '?').join(',')
     await d1Query(
       env,
       deps.fetch,
       `UPDATE reports SET status = 'aggregated' WHERE id IN (${placeholders})`,
-      consumedIds
+      chunk
     )
-  }
+  })
 
   return {
     candidates_created: aggregations.length,
