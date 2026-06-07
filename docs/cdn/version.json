@@ -20,5 +20,9 @@
       "name": "adguard-japanese",
       "license": "GPL-3.0"
     }
-  ]
+  ],
+  "reported": {
+    "rule_count": 0,
+    "added_last_month": 0
+  }
 }

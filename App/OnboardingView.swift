@@ -3,6 +3,8 @@ import SwiftUI
 struct OnboardingView: View {
     let onReady: () -> Void
 
+    @State private var showFilterInfo = false
+
     var body: some View {
         ScrollView {
             VStack(spacing: 28) {
@@ -40,10 +42,61 @@ struct OnboardingView: View {
                         title: "Safari → 機能拡張",
                         detail: "設定の中で順番に開きます"
                     )
-                    StepRow(
-                        number: 3,
-                        title: "「広告消し」を ON",
-                        detail: "スイッチを1回だけONにします"
+
+                    // Step 3: タイトル + 2 フィルタ inline 列挙 + リンク
+                    HStack(alignment: .top, spacing: 14) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.accentColor.opacity(0.12))
+                                .frame(width: 36, height: 36)
+                            Text("3")
+                                .font(.system(.callout, design: .rounded, weight: .bold))
+                                .foregroundColor(.accentColor)
+                        }
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("2 つのフィルタを両方 ON")
+                                .font(.system(.callout, weight: .semibold))
+
+                            // 2 フィルタ inline 列挙 (アイコン + 名前)
+                            VStack(alignment: .leading, spacing: 6) {
+                                FilterInlineRow(iconName: "shield.fill", name: "標準フィルタ")
+                                FilterInlineRow(iconName: "sparkles", name: "自己学習フィルタ")
+                            }
+
+                            // グレー補足文
+                            Text("両方 ON で広告ブロックが完全に有効になります")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.top, 2)
+
+                            // リンク
+                            Button {
+                                showFilterInfo = true
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "info.circle.fill")
+                                        .font(.caption)
+                                    Text("フィルタの種類について")
+                                        .font(.caption.weight(.semibold))
+                                }
+                                .foregroundStyle(Color.accentColor)
+                                .padding(.vertical, 4)
+                                .padding(.horizontal, 8)
+                                .background(
+                                    Capsule().fill(Color.accentColor.opacity(0.10))
+                                )
+                            }
+                            .padding(.top, 2)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color(UIColor.secondarySystemBackground))
                     )
                 }
                 .padding(.horizontal, 20)
@@ -90,6 +143,10 @@ struct OnboardingView: View {
             }
             .frame(maxWidth: .infinity)
         }
+        .sheet(isPresented: $showFilterInfo) {
+            FilterInfoSheet()
+                .presentationDetents([.medium])
+        }
         .background(
             LinearGradient(
                 colors: [
@@ -99,6 +156,103 @@ struct OnboardingView: View {
                 startPoint: .top, endPoint: .bottom
             )
             .ignoresSafeArea()
+        )
+    }
+}
+
+// MARK: - Step 3 内の 2 フィルタ inline 行
+
+struct FilterInlineRow: View {
+    let iconName: String
+    let name: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.12))
+                    .frame(width: 24, height: 24)
+                Image(systemName: iconName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
+            Text(name)
+                .font(.caption)
+                .foregroundStyle(.primary)
+        }
+    }
+}
+
+// MARK: - 詳細 Sheet
+
+struct FilterInfoSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    FilterDescriptionCard(
+                        iconName: "shield.fill",
+                        title: "標準フィルタ",
+                        detail: "15 万件の広告・詐欺サイトを基本ブロック。EasyList・AdGuard 等の公式リストを採用。"
+                    )
+
+                    FilterDescriptionCard(
+                        iconName: "sparkles",
+                        title: "自己学習フィルタ",
+                        detail: "他のブロッカーで消えない広告を、ユーザーからの報告で自動で取り込んで進化していきます。"
+                    )
+
+                    Text("両方を ON にすると、基本ブロック + 進化するフィルタで、より強力に広告を消せます。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
+                }
+                .padding(20)
+            }
+            .navigationTitle("2 つのフィルタについて")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("閉じる") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+struct FilterDescriptionCard: View {
+    let iconName: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.accentColor.opacity(0.12))
+                    .frame(width: 40, height: 40)
+                Image(systemName: iconName)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(.callout, weight: .semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color(UIColor.secondarySystemBackground))
         )
     }
 }

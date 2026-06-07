@@ -90,13 +90,22 @@ for i in "${!NAMES[@]}"; do
     '. + [{name: $name, license: $license}]' <<< "$FILTERS_JSON")
 done
 
+# Plan C Chunk 5: weekly-cdn-sync.yml が書き込んだ既存 reported セクション
+# (= moat 行用の rule_count / added_last_month) を preserve する。
+EXISTING_REPORTED="null"
+if [ -f "$CDN_DIR/version.json" ]; then
+  EXISTING_REPORTED=$(jq -c '.reported // null' "$CDN_DIR/version.json")
+fi
+
 jq -n \
   --arg generated_at "$GENERATED_AT" \
   --argjson rule_count "$RULE_COUNT" \
   --argjson size_bytes "$JSON_BYTES" \
   --arg sha256 "$SHA256" \
   --argjson filters "$FILTERS_JSON" \
-  '{generated_at: $generated_at, rule_count: $rule_count, size_bytes: $size_bytes, blocker_list_sha256: $sha256, filters: $filters}' \
+  --argjson reported "$EXISTING_REPORTED" \
+  '{generated_at: $generated_at, rule_count: $rule_count, size_bytes: $size_bytes, blocker_list_sha256: $sha256, filters: $filters}
+   + (if $reported != null then {reported: $reported} else {} end)' \
   > "$CDN_DIR/version.json"
 
 # bundle 同梱: CDN DL 失敗時の初回起動でも「最終更新日」を表示できるよう App/Resources に同期

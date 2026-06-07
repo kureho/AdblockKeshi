@@ -1,0 +1,49 @@
+# Plan B Task 3.4: L3 + L5 + L6 pipeline (Tranco → CDN protect → Playwright).
+# Runs once a day; aggregate-reports has had time to seed status='aggregating'
+# candidates by the time this fires.
+
+name: daily-validation
+on:
+  schedule:
+    - cron: '0 3 * * *'  # daily 03:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: d1-read-heavy
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: workers/package-lock.json
+      - run: cd workers && npm ci
+      - name: Install Playwright (chromium) for L6
+        run: |
+          cd workers
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+      - name: L3 Tranco + critical-list check
+        run: cd workers && npx tsx ../scripts/validation/run-tranco-check.ts
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: 91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4
+      - name: L5 CDN-protection check
+        run: cd workers && npx tsx ../scripts/validation/run-cdn-check.ts
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: 91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4
+      - name: L6 Playwright validation (score + selector-scope)
+        run: cd workers && npx tsx ../scripts/validation/run-playwright-validate.ts
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: 91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4

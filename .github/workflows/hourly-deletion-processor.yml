@@ -1,0 +1,29 @@
+# Plan B Task 4.1: hourly deletion processor (1h SLA).
+name: hourly-deletion-processor
+on:
+  schedule:
+    - cron: '30 * * * *'  # :30 hourly
+  workflow_dispatch:
+
+concurrency:
+  group: d1-write
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: workers/package-lock.json
+      - run: cd workers && npm ci
+      - name: Process deletion requests
+        run: cd workers && npx tsx ../scripts/deletion/run-deletion-processor.ts
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: 91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4

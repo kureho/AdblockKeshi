@@ -1,0 +1,29 @@
+# Plan B Task 3.5: L7 weekly β→stable promotion.
+name: weekly-stable-promotion
+on:
+  schedule:
+    - cron: '0 4 * * 1'  # weekly Monday 04:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: d1-write
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: workers/package-lock.json
+      - run: cd workers && npm ci
+      - name: Promote β tier → stable (≥7 days, zero complaints)
+        run: cd workers && npx tsx ../scripts/promotion/run-beta-to-stable.ts
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: 91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4

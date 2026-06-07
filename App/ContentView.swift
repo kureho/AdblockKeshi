@@ -161,6 +161,13 @@ struct CompletedView: View {
                         iconColor: .accentColor,
                         text: filterUpdateText
                     )
+                    if let moatText = versionInfo?.moatDisplayText {
+                        InfoRow(
+                            icon: "person.2.fill",
+                            iconColor: .blue,
+                            text: moatText
+                        )
+                    }
                     InfoRow(
                         icon: "moon.zzz.fill",
                         iconColor: .purple,

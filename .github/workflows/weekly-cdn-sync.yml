@@ -1,0 +1,49 @@
+# Plan B Task 4.2: weekly CDN sync. Pulls stable rule_candidates from D1,
+# writes docs/cdn/rules-reported.json, commits the change so GitHub Pages
+# serves it.
+# Plan C Chunk 5: also patches docs/cdn/version.json's `reported` section so
+# the iOS app's moat row reflects cumulative + last-30-day metrics.
+
+name: weekly-cdn-sync
+on:
+  schedule:
+    - cron: '0 5 * * 2'  # weekly Tuesday 05:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: cdn-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_DISPATCH_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: workers/package-lock.json
+      - run: cd workers && npm ci
+      - name: Build rules-reported.json + patch version.json reported metrics
+        run: cd workers && npx tsx ../scripts/sync/run-reported-rules-build.ts ../docs/cdn/rules-reported.json ../docs/cdn/version.json
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: 91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4
+      - name: Commit CDN updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet docs/cdn/; then
+            echo "No CDN changes"
+            exit 0
+          fi
+          git add docs/cdn/
+          git commit -m "chore(v3): weekly CDN sync (rules-reported.json + version.json reported metrics)"
+          git push
