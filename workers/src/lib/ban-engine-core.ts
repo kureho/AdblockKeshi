@@ -47,6 +47,12 @@ export interface ExistingBanRow {
   identifier_hash: string
   ban_level: number
   abuse_count: number
+  /**
+   * Unix seconds. If supplied and `<= now`, the ban is expired and may be
+   * re-issued at the same level. Legacy callers may omit this; in that case
+   * same-level reissue is skipped (= original behaviour).
+   */
+  expires_at?: number
 }
 
 export type BanAction =
@@ -65,7 +71,7 @@ export type BanAction =
       abuse_count: number
       ban_level: 1 | 2 | 3 | 4
       expires_at: number
-      reason: 'auto_escalation'
+      reason: 'auto_escalation' | 'auto_reissue'
     }
 
 /**
@@ -107,6 +113,23 @@ export function computeBanActions(
         ban_level: level.level,
         expires_at,
         reason: 'auto_escalation',
+      })
+    } else if (
+      level.level === existing.ban_level &&
+      existing.expires_at !== undefined &&
+      existing.expires_at <= now
+    ) {
+      // Same-level ban already expired — reissue so rate limit holds again.
+      // Rate limiting reads `expires_at > now`, so an expired row leaves the
+      // identifier unbanned until they jump up to the next level, which is
+      // not the intended behaviour.
+      actions.push({
+        kind: 'upgrade',
+        identifier_hash: row.identifier_hash,
+        abuse_count: row.count,
+        ban_level: level.level,
+        expires_at,
+        reason: 'auto_reissue',
       })
     }
   }

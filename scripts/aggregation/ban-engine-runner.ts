@@ -63,7 +63,7 @@ export async function runBanEngineViaRest(
     const rowsRaw = await d1Query(
       env,
       deps.fetch,
-      `SELECT identifier_hash, ban_level, abuse_count
+      `SELECT identifier_hash, ban_level, abuse_count, expires_at
          FROM bans
         WHERE identifier_hash IN (${placeholders})`,
       chunk.map((r) => r.identifier_hash)
@@ -73,6 +73,7 @@ export async function runBanEngineViaRest(
         identifier_hash: r.identifier_hash,
         ban_level: r.ban_level,
         abuse_count: r.abuse_count,
+        expires_at: r.expires_at,
       })
     }
   }

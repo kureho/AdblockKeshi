@@ -95,6 +95,34 @@ describe('computeBanActions', () => {
     expect(computeBanActions(rows, existing, NOW)).toEqual([])
   })
 
+  it('reissues an expired same-level ban with kind=upgrade reason=auto_reissue', () => {
+    const rows: AbuseAggregate[] = [
+      { identifier_hash: ID_A, identifier_type: 'uuid', count: 3 },
+    ]
+    const existing: ExistingBanRow[] = [
+      { identifier_hash: ID_A, ban_level: 1, abuse_count: 3, expires_at: NOW - 100 },
+    ]
+    const actions = computeBanActions(rows, existing, NOW)
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      kind: 'upgrade',
+      identifier_hash: ID_A,
+      ban_level: 1,
+      reason: 'auto_reissue',
+      expires_at: NOW + 24 * 3600,
+    })
+  })
+
+  it('does not reissue a same-level ban that is still active', () => {
+    const rows: AbuseAggregate[] = [
+      { identifier_hash: ID_A, identifier_type: 'uuid', count: 3 },
+    ]
+    const existing: ExistingBanRow[] = [
+      { identifier_hash: ID_A, ban_level: 1, abuse_count: 3, expires_at: NOW + 3600 },
+    ]
+    expect(computeBanActions(rows, existing, NOW)).toEqual([])
+  })
+
   it('handles multiple identifiers independently in one pass', () => {
     const rows: AbuseAggregate[] = [
       { identifier_hash: ID_A, identifier_type: 'uuid', count: 5 },

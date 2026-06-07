@@ -62,8 +62,11 @@ def extract_code_block(draft: str, heading_re: str) -> str | None:
             in_section = True
             continue
         if in_section:
-            # 次の ## section に到達したら終了
-            if line.startswith("## ") and captured:
+            # 次の ## section に到達したら、code block を見つけたかどうかに
+            # かかわらず終了する。draft が壊れていて該当 section に code block
+            # が無い場合、次 section の code block を吸い込んで他 field を
+            # 上書きする事故を防ぐ。
+            if line.startswith("## "):
                 break
             if line.strip().startswith("```"):
                 if in_code:
@@ -72,8 +75,8 @@ def extract_code_block(draft: str, heading_re: str) -> str | None:
                 continue
             if in_code:
                 captured.append(line)
-    if captured:
-        return "\n".join(captured).rstrip() + "\n"
+    # code block が閉じずに draft が終わった場合は None を返す (= 抽出失敗)。
+    # captured を返さないのは、未完了な code block を fastlane に書き込まないため。
     return None
 
 
