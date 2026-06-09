@@ -41,3 +41,9 @@ scripts/converter-build/
 scripts/__pycache__/
 scripts/tests/__pycache__/
 scripts/.pytest_cache/
+
+# 大型動画 (Git LFS 未使用、ローカル保管のみ)
+docs/screenshots/**/*.mov
+
+# Node (root 直下に accidentally できたとき用)
+node_modules/
