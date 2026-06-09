@@ -5,12 +5,14 @@ import { redactPII } from '../lib/pii-redact'
 import { isCriticalDomain } from '../lib/critical-list'
 import { checkRateLimit } from '../lib/rate-limit'
 import { sha256Hex } from '../lib/hash'
+import { isAdType, type AdType } from '../lib/ad-type'
 
 interface SubmitBody {
   token?: string
   uuid_hash?: string
   url?: string
   memo?: string
+  ad_type?: string
 }
 
 /**
@@ -19,13 +21,15 @@ interface SubmitBody {
  * Chain (spec rev4):
  *   1. body shape
  *   2. HMAC token verify (scope=submit)
- *   3. URL validate (https-only, length, host)
- *   4. critical domain reject
- *   5. memo validate (length, no embedded URL)
- *   6. PII redact (silent, ban-加算なし)
- *   7. rate limit (uuid daily/monthly, ip 15min, banned)
+ *   3. URL validate (https-only, length, host) — invalid_url abuse_log
+ *   4. critical domain reject — critical_domain abuse_log
+ *   5. memo validate (length, no embedded URL) — spam_memo abuse_log
+ *   6. PII redact (silent, ban-加算なし) — pii_redacted abuse_log only if redacted
+ *   7. rate limit (uuid daily/monthly, ip 15min, banned) — rate_limit abuse_log
  *   8. D1 INSERT
- *   9. abuse_log INSERT if redacted (informational only)
+ *
+ * Each ban-eligible reason (rate_limit/spam_memo/invalid_url/critical_domain)
+ * is logged so ban-engine can aggregate them into 4-tier auto-bans.
  */
 export async function handleSubmit(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
@@ -43,6 +47,17 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
   if (!body.uuid_hash || body.uuid_hash.length !== 64) return jsonError(400, 'validation_failed', 'uuid_hash must be 64 hex chars')
   if (!body.url) return jsonError(400, 'validation_failed', 'url required')
 
+  // ad_type は v3.0 build 15 以降のクライアントから送られる任意フィールド。
+  // 旧クライアント (build 14 以前) は ad_type を送らないので NULL を許容。
+  // 送ってきた場合は AD_TYPES 列に存在する値であることを厳格に検証。
+  let adType: AdType | null = null
+  if (body.ad_type !== undefined && body.ad_type !== null && body.ad_type !== '') {
+    if (!isAdType(body.ad_type)) {
+      return jsonError(400, 'validation_failed', `ad_type must be one of the documented values`)
+    }
+    adType = body.ad_type
+  }
+
   try {
     const payload = await verifyToken(body.token, env.HMAC_KEY)
     if (payload.scope !== 'submit') return jsonError(401, 'unauthorized', 'wrong scope')
@@ -52,26 +67,46 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
     return jsonError(401, 'unauthorized', 'invalid or expired token')
   }
 
+  const now = Math.floor(Date.now() / 1000)
+  const uuidHash = body.uuid_hash
+
   const urlCheck = validateURL(body.url)
-  if (!urlCheck.ok) return jsonError(400, 'validation_failed', urlCheck.reason!)
+  if (!urlCheck.ok) {
+    await insertAbuseLog(env.DB, uuidHash, 'uuid', 'invalid_url', body.url, now)
+    return jsonError(400, 'validation_failed', urlCheck.reason!)
+  }
 
   const parsedURL = new URL(body.url)
   const domain = parsedURL.host
   if (isCriticalDomain(domain)) {
+    await insertAbuseLog(env.DB, uuidHash, 'uuid', 'critical_domain', body.url, now)
     return jsonError(400, 'validation_failed', `critical_domain: ${domain} is protected`)
   }
 
   const memoCheck = validateMemo(body.memo)
-  if (!memoCheck.ok) return jsonError(400, 'validation_failed', memoCheck.reason!)
+  if (!memoCheck.ok) {
+    await insertAbuseLog(env.DB, uuidHash, 'uuid', 'spam_memo', body.url, now)
+    return jsonError(400, 'validation_failed', memoCheck.reason!)
+  }
 
   const { redacted: redactedMemo, didRedact } = redactPII(body.memo ?? '')
 
   const ipPlain = request.headers.get('CF-Connecting-IP') ?? 'unknown'
   const ipHash = await sha256Hex(ipPlain + ':' + env.SERVER_SALT)
-  const now = Math.floor(Date.now() / 1000)
 
-  const rl = await checkRateLimit(env.DB, { uuidHash: body.uuid_hash, ipHash, now })
+  const rl = await checkRateLimit(env.DB, { uuidHash, ipHash, now })
   if (!rl.allowed) {
+    // rate_limit reason は ban-engine が集計する対象。identifier_type は
+    // ip_15min_limit のみ 'ip'、それ以外は 'uuid'。
+    const isIpScope = rl.reason === 'ip_15min_limit'
+    await insertAbuseLog(
+      env.DB,
+      isIpScope ? ipHash : uuidHash,
+      isIpScope ? 'ip' : 'uuid',
+      'rate_limit',
+      body.url,
+      now,
+    )
     if (rl.reason === 'banned') return jsonError(403, 'banned', 'temporarily banned')
     const retryAfter =
       rl.reason === 'uuid_daily_limit' ? 86400 :
@@ -83,18 +118,15 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
   const urlPathHash = await sha256Hex(body.url)
 
   await env.DB.prepare(`
-    INSERT INTO reports (id, uuid_hash, ip_hash, domain, url, url_path_hash, memo, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO reports (id, uuid_hash, ip_hash, domain, url, url_path_hash, memo, ad_type, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
-    id, body.uuid_hash, ipHash, domain, body.url, urlPathHash,
-    redactedMemo === '' ? null : redactedMemo, 'pending', now
+    id, uuidHash, ipHash, domain, body.url, urlPathHash,
+    redactedMemo === '' ? null : redactedMemo, adType, 'pending', now
   ).run()
 
   if (didRedact) {
-    await env.DB.prepare(`
-      INSERT INTO abuse_log (identifier_hash, identifier_type, reason, url, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).bind(body.uuid_hash, 'uuid', 'pii_redacted', body.url, now).run()
+    await insertAbuseLog(env.DB, uuidHash, 'uuid', 'pii_redacted', body.url, now)
   }
 
   return new Response(JSON.stringify({
@@ -106,6 +138,20 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   })
+}
+
+async function insertAbuseLog(
+  db: D1Database,
+  identifierHash: string,
+  identifierType: 'uuid' | 'ip',
+  reason: 'rate_limit' | 'spam_memo' | 'invalid_url' | 'critical_domain' | 'pii_redacted',
+  url: string | null,
+  now: number,
+): Promise<void> {
+  await db.prepare(`
+    INSERT INTO abuse_log (identifier_hash, identifier_type, reason, url, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(identifierHash, identifierType, reason, url, now).run()
 }
 
 function jsonError(status: number, error: string, message: string): Response {

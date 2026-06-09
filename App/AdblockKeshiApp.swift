@@ -4,16 +4,11 @@ import SwiftUI
 struct AdblockKeshiApp: App {
     @State private var selectedTab: AppTab = .blocker
     @StateObject private var appState = AppStateStore()
-    // Production submit / token: real Workers endpoint.
-    private let realClient = ReportAPIClient(
+    @StateObject private var historyStore = LocalReportHistoryStore()
+    private let apiClient: ReportAPIClientProtocol = ReportAPIClient(
         baseURL: AppConfig.workersBaseURL,
         uuidStore: DeviceUUIDStore(serverSalt: DeviceUUIDStore.loadServerSaltFromBundle())
     )
-    // History view is still served by the stub until the real /v1/reports/history
-    // wiring lands (Plan C Chunk 4 Task 4.4).
-    private let stubClient = StubReportAPIClient()
-    private var apiClient: ReportAPIClientProtocol { realClient }
-    private var historyFetcher: ReportHistoryFetcher { stubClient }
 
     init() {
         BackgroundTaskManager.register()
@@ -31,7 +26,7 @@ struct AdblockKeshiApp: App {
 
                 ReportTabView(
                     apiClient: apiClient,
-                    historyFetcher: historyFetcher,
+                    historyStore: historyStore,
                     onTabReturn: { selectedTab = .blocker }
                 )
                 .tabItem {

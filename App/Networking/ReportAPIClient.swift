@@ -26,12 +26,18 @@ final class ReportAPIClient: ReportAPIClientProtocol {
         self.decoder = JSONDecoder()
     }
 
-    func submitReport(url: URL, memo: String?) async throws {
+    func submitReport(url: URL, memo: String?, adType: AdType?) async throws {
         let token = try await acquireToken(scope: .submit)
         let uuidHash = try uuidStore.getUUIDHash()
         let endpoint = baseURL.appendingPathComponent("/v1/reports/submit")
         var request = makeBaseRequest(url: endpoint)
-        let body = SubmitRequestDTO(token: token.value, uuidHash: uuidHash, url: url.absoluteString, memo: memo)
+        let body = SubmitRequestDTO(
+            token: token.value,
+            uuidHash: uuidHash,
+            url: url.absoluteString,
+            memo: memo,
+            adType: adType?.rawValue
+        )
         request.httpBody = try encoder.encode(body)
         let _: SubmitResponseDTO = try await send(request)
     }

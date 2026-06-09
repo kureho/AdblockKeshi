@@ -60,8 +60,14 @@ struct ReportFormView: View {
 
     enum Field { case url, memo }
 
-    init(apiClient: ReportAPIClientProtocol, onSubmitSuccess: @escaping () -> Void) {
-        _viewModel = StateObject(wrappedValue: ReportFormViewModel(apiClient: apiClient, onSuccess: onSubmitSuccess))
+    init(apiClient: ReportAPIClientProtocol,
+         historyStore: LocalReportHistoryStore,
+         onSubmitSuccess: @escaping () -> Void) {
+        _viewModel = StateObject(wrappedValue: ReportFormViewModel(
+            apiClient: apiClient,
+            historyStore: historyStore,
+            onSuccess: onSubmitSuccess
+        ))
     }
 
     var body: some View {
@@ -94,6 +100,26 @@ struct ReportFormView: View {
                 Text("広告があった URL")
             } footer: {
                 Text("Safari のアドレスバーからコピーして貼り付けてください")
+                    .font(.caption2)
+            }
+
+            Section {
+                NavigationLink {
+                    AdTypePickerList(selection: $viewModel.selectedAdType)
+                } label: {
+                    HStack {
+                        Text("広告のタイプ")
+                        Spacer()
+                        Text(viewModel.selectedAdType?.label ?? "選択してください")
+                            .foregroundStyle(viewModel.selectedAdType == nil ? .secondary : .primary)
+                            .multilineTextAlignment(.trailing)
+                            .lineLimit(2)
+                    }
+                }
+            } header: {
+                Text("広告のタイプ")
+            } footer: {
+                Text("該当するパターンを 1 つ選んでください。当てはまるものが無ければ「その他」を選び、メモ欄に状況を記入してください。")
                     .font(.caption2)
             }
 
@@ -183,5 +209,60 @@ struct ReportFormView: View {
             return err.localizedDescription
         }
         return ""
+    }
+}
+
+/// `ReportFormView` から push される広告タイプ選択リスト。
+/// 各行は「アイコン + 見出し + 補足」の 2 行構成で、視覚的なヒントと
+/// 具体例を同時に表示する。
+private struct AdTypePickerList: View {
+    @Binding var selection: AdType?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(AdType.allCases) { type in
+                    Button {
+                        selection = type
+                        dismiss()
+                    } label: {
+                        HStack(alignment: .top, spacing: 14) {
+                            Image(systemName: type.iconSystemName)
+                                .font(.system(size: 22))
+                                .foregroundStyle(.tint)
+                                .frame(width: 28, alignment: .center)
+                                .padding(.top, 2)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(type.title)
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                Text(type.detail)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 8)
+                            if selection == type {
+                                Image(systemName: "checkmark")
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(.tint)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            } footer: {
+                Text("該当するパターンを 1 つ選んでください。当てはまるものが無ければ「その他」を選び、メモ欄に状況を記入してください。")
+                    .font(.footnote)
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("広告のタイプを選ぶ")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

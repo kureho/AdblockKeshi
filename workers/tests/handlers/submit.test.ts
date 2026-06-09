@@ -160,4 +160,134 @@ describe('POST /v1/reports/submit', () => {
     })
     expect(response.status).toBe(403)
   })
+
+  // 🆕 ban-eligible reason を abuse_log に書く verify (ban-engine の前提)
+  async function abuseRow(uuid: string) {
+    return await env.DB
+      .prepare(`SELECT identifier_type, reason FROM abuse_log WHERE identifier_hash = ? ORDER BY id DESC LIMIT 1`)
+      .bind(uuid)
+      .first<{ identifier_type: string; reason: string }>()
+  }
+
+  it('logs invalid_url to abuse_log when URL validation fails', async () => {
+    const uuid = HEX64('j')
+    const token = await makeToken(uuid, 'submit')
+    const res = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({ token, uuid_hash: uuid, url: 'http://example.com/insecure' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(res.status).toBe(400)
+    const row = await abuseRow(uuid)
+    expect(row?.reason).toBe('invalid_url')
+    expect(row?.identifier_type).toBe('uuid')
+  })
+
+  it('logs critical_domain to abuse_log when reporting a protected host', async () => {
+    const uuid = HEX64('k')
+    const token = await makeToken(uuid, 'submit')
+    const res = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://apple.com/' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(res.status).toBe(400)
+    const row = await abuseRow(uuid)
+    expect(row?.reason).toBe('critical_domain')
+    expect(row?.identifier_type).toBe('uuid')
+  })
+
+  it('logs spam_memo to abuse_log when memo validation fails', async () => {
+    const uuid = HEX64('l')
+    const token = await makeToken(uuid, 'submit')
+    // memo に URL を埋め込むと validateMemo 失格
+    const res = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({
+        token,
+        uuid_hash: uuid,
+        url: 'https://example.com/article',
+        memo: 'see also https://spam.example.com/ad',
+      }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(res.status).toBe(400)
+    const row = await abuseRow(uuid)
+    expect(row?.reason).toBe('spam_memo')
+    expect(row?.identifier_type).toBe('uuid')
+  })
+
+  // 🆕 v3.0 build 15: ad_type 受け入れ
+  async function reportAdType(uuid: string) {
+    return await env.DB
+      .prepare(`SELECT ad_type FROM reports WHERE uuid_hash = ? ORDER BY created_at DESC LIMIT 1`)
+      .bind(uuid)
+      .first<{ ad_type: string | null }>()
+  }
+
+  it('persists ad_type when client sends a valid value', async () => {
+    const uuid = HEX64('n')
+    const token = await makeToken(uuid, 'submit')
+    const res = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({
+        token, uuid_hash: uuid,
+        url: 'https://example.com/article',
+        memo: 'overlay ad',
+        ad_type: 'interstitial',
+      }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(res.status).toBe(200)
+    const row = await reportAdType(uuid)
+    expect(row?.ad_type).toBe('interstitial')
+  })
+
+  it('stores ad_type as null when client omits it (legacy build 14 compatibility)', async () => {
+    const uuid = HEX64('o')
+    const token = await makeToken(uuid, 'submit')
+    const res = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://example.com/legacy' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(res.status).toBe(200)
+    const row = await reportAdType(uuid)
+    expect(row?.ad_type).toBeNull()
+  })
+
+  it('rejects with 400 when ad_type is not in the documented set', async () => {
+    const uuid = HEX64('p')
+    const token = await makeToken(uuid, 'submit')
+    const res = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({
+        token, uuid_hash: uuid,
+        url: 'https://example.com/x',
+        ad_type: 'something-unexpected',
+      }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('logs rate_limit (uuid) to abuse_log when daily quota is hit', async () => {
+    const uuid = HEX64('m')
+    const token = await makeToken(uuid, 'submit')
+    const now = Math.floor(Date.now() / 1000)
+    for (let i = 0; i < 5; i++) {
+      await env.DB.prepare(
+        'INSERT INTO reports (id, uuid_hash, ip_hash, domain, url, url_path_hash, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(`rlm${i}`, uuid, 'ip', 'example.com', `https://example.com/m${i}`, `mhash${i}`, 'pending', now).run()
+    }
+    const res = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://example.com/m6' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(res.status).toBe(429)
+    const row = await abuseRow(uuid)
+    expect(row?.reason).toBe('rate_limit')
+    expect(row?.identifier_type).toBe('uuid')
+  })
 })

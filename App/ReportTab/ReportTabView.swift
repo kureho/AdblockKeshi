@@ -8,11 +8,10 @@ enum ReportTabRoute: Hashable {
 
 struct ReportTabView: View {
     let apiClient: ReportAPIClientProtocol
-    let historyFetcher: ReportHistoryFetcher
+    @ObservedObject var historyStore: LocalReportHistoryStore
     let onTabReturn: () -> Void
 
     @State private var path: [ReportTabRoute] = []
-    @State private var historyCache = ReportHistoryCache()
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -27,6 +26,7 @@ struct ReportTabView: View {
                 case .form:
                     ReportFormView(
                         apiClient: apiClient,
+                        historyStore: historyStore,
                         onSubmitSuccess: {
                             path.append(.sent)
                         }
@@ -43,12 +43,7 @@ struct ReportTabView: View {
                         }
                     )
                 case .history:
-                    ReportHistoryView(
-                        viewModel: ReportHistoryViewModel(
-                            apiClient: historyFetcher,
-                            cache: historyCache
-                        )
-                    )
+                    ReportHistoryView(store: historyStore)
                 }
             }
         }

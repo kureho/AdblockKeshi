@@ -118,7 +118,7 @@ struct ReportEntryView: View {
         HStack(spacing: 6) {
             Image(systemName: "lock.shield.fill")
                 .foregroundStyle(.secondary)
-            Text("報告は完全匿名 · URL のみ送信")
+            Text("報告は完全匿名")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

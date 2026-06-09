@@ -12,13 +12,19 @@ enum ReportFormState: Equatable {
 final class ReportFormViewModel: ObservableObject {
     @Published var urlInput: String = ""
     @Published var memoInput: String = ""
+    /// ユーザーが選択した広告タイプ。nil = 未選択 (送信不可)。
+    @Published var selectedAdType: AdType?
     @Published private(set) var state: ReportFormState = .idle
 
     private let apiClient: ReportAPIClientProtocol
+    private let historyStore: LocalReportHistoryStore?
     private let onSuccess: () -> Void
 
-    init(apiClient: ReportAPIClientProtocol, onSuccess: @escaping () -> Void) {
+    init(apiClient: ReportAPIClientProtocol,
+         historyStore: LocalReportHistoryStore? = nil,
+         onSuccess: @escaping () -> Void) {
         self.apiClient = apiClient
+        self.historyStore = historyStore
         self.onSuccess = onSuccess
     }
 
@@ -45,6 +51,7 @@ final class ReportFormViewModel: ObservableObject {
 
     var canSubmit: Bool {
         guard validatedURL != nil else { return false }
+        guard selectedAdType != nil else { return false }
         if !memoInput.isEmpty, case .invalid = MemoValidator.validate(memoInput) { return false }
         if case .submitting = state { return false }
         if case .awaitingTurnstile = state { return false }
@@ -79,10 +86,12 @@ final class ReportFormViewModel: ObservableObject {
         do {
             try await apiClient.requestToken(turnstileResponse: turnstileResponse, scope: .submit)
             let memo = memoInput.isEmpty ? nil : memoInput
-            try await apiClient.submitReport(url: url, memo: memo)
+            try await apiClient.submitReport(url: url, memo: memo, adType: selectedAdType)
+            historyStore?.append(url: url, memo: memo)
             state = .idle
             urlInput = ""
             memoInput = ""
+            selectedAdType = nil
             onSuccess()
         } catch let err as APIError {
             state = .error(err)

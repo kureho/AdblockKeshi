@@ -19,11 +19,13 @@ struct SubmitRequestDTO: Encodable {
     let uuidHash: String
     let url: String
     let memo: String?
+    let adType: String?
 
     enum CodingKeys: String, CodingKey {
         case token
         case uuidHash = "uuid_hash"
         case url, memo
+        case adType = "ad_type"
     }
 }
 

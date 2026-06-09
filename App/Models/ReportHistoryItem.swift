@@ -1,33 +1,5 @@
 import Foundation
 
-struct ReportHistoryResponse: Codable, Equatable {
-    let items: [ReportHistoryItem]
-    let fetchedAt: Date
-
-    enum CodingKeys: String, CodingKey {
-        case items
-        case fetchedAt = "fetched_at"
-    }
-
-    init(items: [ReportHistoryItem], fetchedAt: Date) {
-        self.items = items
-        self.fetchedAt = fetchedAt
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.items = try c.decode([ReportHistoryItem].self, forKey: .items)
-        let ts = try c.decode(Int64.self, forKey: .fetchedAt)
-        self.fetchedAt = Date(timeIntervalSince1970: TimeInterval(ts))
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(items, forKey: .items)
-        try c.encode(Int64(fetchedAt.timeIntervalSince1970), forKey: .fetchedAt)
-    }
-}
-
 struct ReportHistoryItem: Codable, Equatable, Identifiable {
     let id: String
     let url: String
