@@ -36,3 +36,21 @@ Content Blocker / ブラウザ補助系アプリ全般。「Safari を開く」C
 
 ### 適用範囲
 本番ルールセット / マスターデータを CDN 配信する全アプリ。「鮮度を見せたい時は CDN 側の生成時刻」「初回 UX を壊さないために bundle 同梱の組合せ」がパターン。
+
+---
+
+## 2026-06-11 報告フォーム: UIViewRepresentable の UITextField は横方向優先度を下げないと行を突き破る
+
+### 事象（ユーザー報告 2 件）
+1. 長い URL を入力すると入力欄がカードからはみ出し、「貼り付け」ボタンが画面外に押し出される
+2. メモ欄（複数行 TextField）のキーボードを閉じる手段が無く、送信ボタンが押せない
+
+### 根本原因
+1. UIViewRepresentable で包んだ UITextField は intrinsicContentSize の幅がテキスト長に比例して伸びる。SwiftUI はそれを尊重するので、HStack/Form の行幅を突き破る。`setContentHuggingPriority(.defaultLow, for: .horizontal)` + `setContentCompressionResistancePriority(.defaultLow, for: .horizontal)` が必須
+2. `TextField(axis: .vertical)` は Return キーが改行になるため、キーボードツールバーの「完了」ボタン（`ToolbarItemGroup(placement: .keyboard)`）+ `.scrollDismissesKeyboard(.interactively)` を付けないとキーボードを閉じられない
+
+### 検証方法
+XCUITest ターゲット `AdblockKeshiUITests` を新設（`UITests/ReportFormUITests.swift`）。DEBUG 起動引数 `--show-report-tab` で報告タブ直行。red-green 確認済み（修正前: 両テスト失敗 / 修正後: pass）
+
+### 適用範囲
+SwiftUI アプリ全般。UIViewRepresentable で UIKit テキスト入力を包む時・複数行 TextField を置く時は毎回この 2 点をチェックする。

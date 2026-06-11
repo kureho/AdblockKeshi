@@ -26,8 +26,18 @@ struct ContentView: View {
                         .controlSize(.regular)
                 }
             }
+            .padding(.horizontal, ScreenshotMode.extraHorizontalPadding)
         }
         .task {
+            #if DEBUG
+            // iOS 26 シミュレータ: --force-enabled 時に CompletedView render と並行で
+            // reloadContentBlocker が走ると SFContentBlockerStateChecker の XPC connection が
+            // _xpc_api_misuse で EXC_BREAKPOINT。force 系 flag 中は reload をスキップする。
+            let args = ProcessInfo.processInfo.arguments
+            if args.contains("--force-enabled") || args.contains("--force-error") || args.contains("--force-disabled") {
+                return
+            }
+            #endif
             await downloadAndReload()
         }
         .onAppear(perform: refreshState)
@@ -40,7 +50,18 @@ struct ContentView: View {
         #if DEBUG
         let args = ProcessInfo.processInfo.arguments
         if args.contains("--force-enabled") {
-            self.blockerState = .enabled
+            // iOS 26: 初期 frame で .enabled に切替えると SFContentBlockerStateChecker と
+            // CompletedView render が race で SIGTRAP。最初 .disabled で初期化 → 800ms 後に
+            // .enabled に遷移して system 側の state check が安定してから CompletedView を見せる。
+            self.blockerState = .disabled
+            self.isChecking = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                self.blockerState = .enabled
+            }
+            return
+        }
+        if args.contains("--force-disabled") {
+            self.blockerState = .disabled
             self.isChecking = false
             return
         }
@@ -139,8 +160,12 @@ struct CompletedView: View {
                         )
                 }
                 .onAppear {
-                    withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
-                        pulse = true
+                    // iOS 26 + ScrollView 内で `.repeatForever` 直起動が NSISEngine の API Misuse
+                    // (EXC_BREAKPOINT) を引き起こすため、次 runloop に逃して 1 回 layout が安定してから開始する
+                    DispatchQueue.main.async {
+                        withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
+                            pulse = true
+                        }
                     }
                 }
 
@@ -202,6 +227,10 @@ struct CompletedView: View {
             )
             .ignoresSafeArea()
         )
+        // iOS 26: NavigationStack の中に navigationTitle 未設定の View が来ると
+        // NavigationBar 配置時に NSISEngine が API Misuse で SIGTRAP (EXC_BREAKPOINT)。
+        // CompletedView は title を持たないので NavigationBar を明示的に非表示にする。
+        .toolbar(.hidden, for: .navigationBar)
         .onAppear {
             versionInfo = versionStore.read()
         }

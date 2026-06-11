@@ -8,7 +8,7 @@ settings:
   base:
     DEVELOPMENT_TEAM: L455WPL8QZ
     MARKETING_VERSION: "3.1.0"
-    CURRENT_PROJECT_VERSION: "18"
+    CURRENT_PROJECT_VERSION: "19"
     SWIFT_VERSION: "5.10"
     CODE_SIGN_STYLE: Automatic
     TARGETED_DEVICE_FAMILY: "1"  # iPhone only (iPad multitasking 対応不要にする)
@@ -116,12 +116,26 @@ targets:
         BUNDLE_LOADER: $(TEST_HOST)
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/AdblockKeshi.app/AdblockKeshi
 
+  AdblockKeshiUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: AdblockKeshi
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: AdblockKeshi
+
 schemes:
   AdblockKeshi:
     build:
       targets:
         AdblockKeshi: all
         AdblockKeshiTests: [test]
+        AdblockKeshiUITests: [test]
     test:
       targets:
         - AdblockKeshiTests
+        - AdblockKeshiUITests

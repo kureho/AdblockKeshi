@@ -3,7 +3,13 @@ import SwiftUI
 struct OnboardingView: View {
     let onReady: () -> Void
 
-    @State private var showFilterInfo = false
+    @State private var showFilterInfo: Bool = {
+        #if DEBUG
+        return ProcessInfo.processInfo.arguments.contains("--show-filter-sheet")
+        #else
+        return false
+        #endif
+    }()
 
     var body: some View {
         ScrollView {

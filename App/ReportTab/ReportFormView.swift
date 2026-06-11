@@ -33,6 +33,10 @@ private struct URLTextField: UIViewRepresentable {
             attributes: [.foregroundColor: UIColor.secondaryLabel]
         )
         tf.addTarget(context.coordinator, action: #selector(Coordinator.editingChanged(_:)), for: .editingChanged)
+        // intrinsicContentSize がテキスト長で伸びると Form の行幅を突き破り
+        // 隣の「貼り付け」ボタンを画面外へ押し出すため、横方向は割当幅に従わせる
+        tf.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        tf.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return tf
     }
 
@@ -171,6 +175,16 @@ struct ReportFormView: View {
         }
         .navigationTitle("報告")
         .navigationBarTitleDisplayMode(.inline)
+        // メモ欄は複数行 (axis: .vertical) で Return が改行になるため、
+        // 「完了」ボタンとスクロール dismiss が無いとキーボードを閉じられず
+        // 送信ボタンが押せなくなる
+        .scrollDismissesKeyboard(.interactively)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("完了") { focusedField = nil }
+            }
+        }
         .sheet(isPresented: turnstileBinding) {
             TurnstileChallengeSheet { result in
                 switch result {

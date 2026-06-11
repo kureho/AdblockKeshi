@@ -59,9 +59,11 @@ struct SFContentBlockerStateChecker: ContentRuleListStateChecker {
     static let reportedID = "com.kureho.adblockkeshi.reportedblocker"
 
     func check() async -> ContentRuleListSnapshot {
-        async let baseState = getEnabled(identifier: Self.baseID)
-        async let reportedState = getEnabled(identifier: Self.reportedID)
-        let (b, r) = await (baseState, reportedState)
+        // iOS 26 simulator: 並列 XPC コール (`async let` で 2 本) が SFContentBlockerManager の
+        // _contentBlockerLoaderConnection を _xpc_api_misuse で EXC_BREAKPOINT クラッシュさせる。
+        // 実機でも同じ race condition リスクがあるため逐次化する (2 回の XPC は速いので体感差なし)。
+        let b = await getEnabled(identifier: Self.baseID)
+        let r = await getEnabled(identifier: Self.reportedID)
         return ContentRuleListSnapshot.from(base: b, reported: r)
     }
 
