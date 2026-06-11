@@ -158,15 +158,15 @@ struct SatisfactionPromptView: View {
         #if DEBUG
         if let override = ReviewPromptCoordinator.shared.debugCountOverride { return override }
         #endif
-        let persisted = LocalReportHistoryStore.persistedCount()
-        return persisted > 0 ? persisted : ReviewPrompt.successCount()
+        // エンジンカウンタ = ブロッカー有効で使った日数（1日1回 bump）そのもの
+        return ReviewPrompt.successCount()
     }
 
     /// 利用実績に応じた感謝のひとこと。使い込んでいる人には実績そのもので語りかける
     private var thanksText: String {
         let count = usageCount
         if count >= 20 {
-            return "これまで \(count)件の広告報告、\nありがとうございます！"
+            return "これまで \(count)日間のご利用、\nありがとうございます！"
         } else {
             return "使っていただけてうれしいです\nありがとうございます！"
         }

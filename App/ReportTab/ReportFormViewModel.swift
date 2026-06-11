@@ -93,11 +93,8 @@ final class ReportFormViewModel: ObservableObject {
             memoInput = ""
             selectedAdType = nil
             onSuccess()
-            // ハッピーモーメント: 広告報告（学習データ）の送信成功直後。
-            // 買い切りで広告・paywall は無いため blocked は省略（常に発火可）。
-            ReviewPrompt.bumpAndMaybeRequest {
-                ReviewPromptCoordinator.shared.showSatisfactionPrompt = true
-            }
+            // 発火カウントは日数ベース（AdblockKeshiApp.bumpDailyUsageIfNeeded）に統一したため
+            // 報告成功での bump は行わない（2026-06-11 kureho 判断）
         } catch let err as APIError {
             state = .error(err)
             ReviewPrompt.recordNegativeEvent()

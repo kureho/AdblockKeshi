@@ -13,6 +13,11 @@ struct AdblockKeshiApp: App {
 
     init() {
         BackgroundTaskManager.register()
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--show-report-tab") {
+            _selectedTab = State(initialValue: .report)
+        }
+        #endif
     }
 
     var body: some Scene {
@@ -51,9 +56,32 @@ struct AdblockKeshiApp: App {
             .task {
                 ReviewPrompt.recordFirstLaunchIfNeeded()
                 await appState.refresh()
+                bumpDailyUsageIfNeeded()
             }
             .onAppear {
                 BackgroundTaskManager.schedule()
+            }
+        }
+    }
+}
+
+extension AdblockKeshiApp {
+    /// ハッピーモーメント: 「ブロッカーが有効な状態で使った日」を1日1回だけカウント。
+    /// 報告送信は行うユーザーが少なく発火機会にならないため、日数ベースに変更（2026-06-11 kureho 判断）。
+    /// 表示は起動直後を避けてひと呼吸（2.5秒）置く（起動時即表示は離脱+50%の実証データあり）。
+    private func bumpDailyUsageIfNeeded() {
+        let snapshot = appState.currentSnapshot
+        guard snapshot?.baseEnabled == true || snapshot?.reportedEnabled == true else { return }
+        let defaults = UserDefaults.standard
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        let today = formatter.string(from: Date())
+        guard defaults.string(forKey: "reviewPrompt.lastDailyBumpDay") != today else { return }
+        defaults.set(today, forKey: "reviewPrompt.lastDailyBumpDay")
+        ReviewPrompt.bumpAndMaybeRequest {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                ReviewPromptCoordinator.shared.showSatisfactionPrompt = true
             }
         }
     }
