@@ -32,6 +32,11 @@ enum ReviewPrompt {
     private static let kFired = "reviewPrompt.firedThresholds"
     private static let kNegative = "reviewPrompt.lastNegativeDate"
 
+    /// 累計成功回数（カードのパーソナライズ表示用・読み取り専用）
+    static func successCount(defaults: UserDefaults = .standard) -> Int {
+        defaults.integer(forKey: kSuccess)
+    }
+
     static func recordFirstLaunchIfNeeded(defaults: UserDefaults = .standard, now: Date = Date()) {
         if defaults.object(forKey: kFirst) == nil {
             defaults.set(now, forKey: kFirst)

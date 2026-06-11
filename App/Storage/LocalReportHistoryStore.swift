@@ -16,6 +16,15 @@ final class LocalReportHistoryStore: ObservableObject {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
+    /// 満足度カードの実績表示用: 永続化済みの報告履歴件数を副作用なしで読む。
+    /// store を生成せず UserDefaults を直接 decode する（read-only）。
+    static func persistedCount(defaults: UserDefaults = .standard) -> Int {
+        guard let data = defaults.data(forKey: storageKey),
+              let items = try? JSONDecoder().decode([ReportHistoryItem].self, from: data)
+        else { return 0 }
+        return items.count
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.encoder = JSONEncoder()

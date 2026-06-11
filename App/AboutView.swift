@@ -74,6 +74,8 @@ struct AboutView: View {
                 #if DEBUG
                 // シミュレータ確認用 (リリースビルドには含まれない)
                 Button {
+                    // 実績ありユーザーの見え方を確認するため表示を 23 件に上書き（UserDefaults/DB は変更しない）
+                    ReviewPromptCoordinator.shared.debugCountOverride = 23
                     ReviewPromptCoordinator.shared.showSatisfactionPrompt = true
                 } label: {
                     Label {
