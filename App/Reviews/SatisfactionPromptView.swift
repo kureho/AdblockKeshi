@@ -45,7 +45,7 @@ struct SatisfactionPromptView: View {
                 }
                 .accessibilityHidden(true)
 
-                Text("学習する広告消しはお役に立っていますか？")
+                Text("学習する広告消しは\nお役に立っていますか？")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(.primary)
                     .multilineTextAlignment(.center)
