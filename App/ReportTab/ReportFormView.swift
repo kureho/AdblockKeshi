@@ -185,7 +185,11 @@ struct ReportFormView: View {
             Alert(
                 title: Text("送信に失敗しました"),
                 message: Text(errorMessage),
-                dismissButton: .default(Text("OK")) { viewModel.dismissError() }
+                primaryButton: .default(Text("お問い合わせ")) {
+                    viewModel.dismissError()
+                    SupportLink.openContact()
+                },
+                secondaryButton: .cancel(Text("OK")) { viewModel.dismissError() }
             )
         }
     }

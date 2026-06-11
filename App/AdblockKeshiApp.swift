@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct AdblockKeshiApp: App {
     @State private var selectedTab: AppTab = .blocker
+    @State private var reviewCoordinator = ReviewPromptCoordinator.shared
     @StateObject private var appState = AppStateStore()
     @StateObject private var historyStore = LocalReportHistoryStore()
     private let apiClient: ReportAPIClientProtocol = ReportAPIClient(
@@ -37,7 +38,20 @@ struct AdblockKeshiApp: App {
             }
             .preferredColorScheme(.light)
             .environmentObject(appState)
-            .task { await appState.refresh() }
+            .overlay {
+                // 満足度カード (報告送信成功・閾値到達時のみ。頻度制御は ReviewPrompt が担う)
+                if reviewCoordinator.showSatisfactionPrompt {
+                    SatisfactionPromptView {
+                        reviewCoordinator.showSatisfactionPrompt = false
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: reviewCoordinator.showSatisfactionPrompt)
+            .task {
+                ReviewPrompt.recordFirstLaunchIfNeeded()
+                await appState.refresh()
+            }
             .onAppear {
                 BackgroundTaskManager.schedule()
             }

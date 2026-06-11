@@ -93,10 +93,17 @@ final class ReportFormViewModel: ObservableObject {
             memoInput = ""
             selectedAdType = nil
             onSuccess()
+            // ハッピーモーメント: 広告報告（学習データ）の送信成功直後。
+            // 買い切りで広告・paywall は無いため blocked は省略（常に発火可）。
+            ReviewPrompt.bumpAndMaybeRequest {
+                ReviewPromptCoordinator.shared.showSatisfactionPrompt = true
+            }
         } catch let err as APIError {
             state = .error(err)
+            ReviewPrompt.recordNegativeEvent()
         } catch {
             state = .error(.decodingFailed)
+            ReviewPrompt.recordNegativeEvent()
         }
     }
 

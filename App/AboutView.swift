@@ -60,6 +60,32 @@ struct AboutView: View {
                     LicenseTextView(title: "MIT", filename: "PhishingDatabase-MIT")
                 }
 
+                Divider()
+
+                Text("サポート")
+                    .font(.headline)
+                // ユーザー起点のレビュー導線は requestReview ではなく write-review deep link を使う (Apple 公式推奨)
+                Link(destination: URL(string: "https://apps.apple.com/app/id6774906945?action=write-review")!) {
+                    Label("レビューを書く", systemImage: "square.and.pencil")
+                }
+                Link(destination: URL(string: SupportLink.contactURLString)!) {
+                    Label("ご意見・お問い合わせ", systemImage: "envelope")
+                }
+                #if DEBUG
+                // シミュレータ確認用 (リリースビルドには含まれない)
+                Button {
+                    ReviewPromptCoordinator.shared.showSatisfactionPrompt = true
+                } label: {
+                    Label {
+                        Text(verbatim: "（DEBUG）満足度カードを表示")
+                    } icon: {
+                        Image(systemName: "star.bubble")
+                    }
+                    .foregroundStyle(.orange)
+                }
+                .buttonStyle(.plain)
+                #endif
+
                 Spacer()
             }
             .padding()
