@@ -34,7 +34,9 @@ jobs:
           swift build -c release
 
       - name: Install Python dependencies
-        run: python3 -m pip install --user pyyaml
+        # macos-latest runner の Homebrew Python は PEP 668 (externally-managed) で
+        # 素の pip install を拒否する。使い捨て CI 環境なので override してよい
+        run: python3 -m pip install --user --break-system-packages pyyaml
 
       - name: Run conversion
         run: bash scripts/convert.sh
