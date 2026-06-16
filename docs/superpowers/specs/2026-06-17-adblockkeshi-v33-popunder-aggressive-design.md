@@ -62,9 +62,13 @@ kureho が実使用し報告した `tokyomotion.net` を headless Chrome（iPhon
 - **popunder 専用ジェネレータ（新規・`scripts/build_popunder_rules.py` 想定）**: L1＋L2 ソースから `popunder-rules.json` を**手書き決定論的 JSON として生成**する独立スクリプト。
   - ⚠️ **本体フィルタの `scripts/convert.sh`（SafariConverterLib ベース・remote filter → `blockerList.json`）とは別物**。popunder は SafariConverterLib を通さず、この新規ジェネレータが Content Blocker JSON を直接 emit する。理由: (a) ルール順序（block→ignore）を完全制御する必要があり、SafariConverterLib の内部出力順に委ねられない、(b) L2 の `url-filter:".*"` 形は SafariConverterLib が emit しない手書き形。
   - **既存29ルールに generator が無い問題への対処**: 出荷済み29ルールは ConverterTool でアドホック生成されたもの。新ジェネレータは L1 で**この出荷形を再現**する（`||domain^$script` → `^[^:]+://+([^:/]+\.)?domain[/:]` + `resource-type:["script"]` の標準 ABP→WebKit 変換）。実装時に新生成物が既存 `popunder-rules.json` の L1 部分とルール等価であることをテストで担保（jads.co/glssp.net 追加分を除く）。
+  - **入力文法（契約）**: `popunder-script-networks.txt` のうち **`!` 始まりの行（`! Title:` 等のコメント/セクションヘッダ）と空行は無視**し、`||domain^$script` 形の行のみをパースする。`$script` 以外の修飾子は現状想定しない（将来追加時はジェネレータ側で対応）。この入力契約をテストの前提として固定する。
   - 出力先は (a) `PopunderBlockerExtension/Resources/popunder-rules.json`（bundle）と (b) `docs/cdn/popunder-rules.json`（CDN・**新規生成物・現状未存在**）の両方。
 - **CDN 配信**: 本体フィルタが既に使う GitHub Pages CDN（`docs/cdn/`）に popunder-rules.json と version 情報を配置。再生成・push する workflow を用意（§5）。
-- **downloader（拡張・クラス改変はしない）**: `FilterDownloader` は既に `blockerListURL`/`versionURL`/`filename` でパラメータ化済み（`reportedURL` で同パターンの前例あり）。**popunder-rules.json を指す2つ目の FilterDownloader インスタンスを生やす**だけにし、ライブの本体フィルタ DL を壊さない。起動時に CDN の popunder-rules.json を App Group へ best-effort 保存。
+- **downloader（2つ目インスタンス＋最小クラス改変）**: `FilterDownloader` を popunder-rules.json 用にもう1インスタンス生やす。**ただし「クラス改変ゼロ」は不可**: `downloadAndStore()` は成功時に必ず `downloadVersionInfoBestEffort` を呼び、**ハードコードされた `"version.json"`（共有 App Group）に書く**（filename パラメータは blockerList 側のみ制御）。このまま2つ目を生やすと本体フィルタの version.json を上書きし「最終更新日」UI（`ContentView.swift` が読む）を壊す。
+  - **対処（最小・安全なクラス改変）**: version 同期を **opt-out 可能**にする。`versionURL` を optional 化（or `skipVersionSync` フラグ追加）し、**popunder インスタンスは version 同期をスキップ**（popunder は「最終更新日」表示を持たないため不要）。本体フィルタ側の挙動・呼び出しは不変（既定で従来通り version 同期する）＝後方互換。
+  - `reportedURL` の前例（`ReportedGlobalSync`）は `versionURL` を既定のまま使い**本体 version.json を無害に再書き込み**しているだけで、「2つ目の version ストリーム共存」の前例にはならない点に注意。
+  - 起動時に CDN の popunder-rules.json を App Group へ best-effort 保存（失敗時は既存 bundle フォールバックを壊さない）。
 - **resolver（既存・変更なし）**: `PopunderRulesResolver` → `BlockerListResolver` が App Group →（無ければ）bundle を解決。CDN 版が来ていれば優先、無ければ bundle 同梱版。
 
 ## 4. ルール生成の具体（WebKit Content Blocker JSON）
@@ -80,16 +84,18 @@ kureho が実使用し報告した `tokyomotion.net` を headless Chrome（iPhon
 - 実測ギャップの即補充: **`jads.co`・`glssp.net` を追加**。さらに主要 popunder 網（ExoClick/Adsterra/JuicyAds/PropellerAds/PopAds 等）の **実配信サブドメイン**を監査して補強。
 
 ### L2（アグレッシブ・対象サイト限定）
-1サイトにつき以下を順序通り生成（**block の後に ignore-previous-rules**）:
+1サイトにつき以下を順序通り生成（**block 1件 → allow 各 domain ごとに ignore-previous-rules 1件**）。**allow は「1 entry = 1 ルール」に確定**（alternation 1本にまとめない。順序テストと差分レビューを明確にするため）:
 ```json
 { "trigger": { "url-filter": ".*", "resource-type": ["script"], "load-type": ["third-party"], "if-domain": ["*tokyomotion.net"] },
   "action": { "type": "block" } },
-{ "trigger": { "url-filter": "...(fluidplayer|googleapis|tokyo-motion\\.net 等 allow)...", "if-domain": ["*tokyomotion.net"] },
+{ "trigger": { "url-filter": "^[^:]+://+([^:/]+\\.)?fluidplayer\\.com[/:]", "if-domain": ["*tokyomotion.net"] },
+  "action": { "type": "ignore-previous-rules" } },
+{ "trigger": { "url-filter": "^[^:]+://+([^:/]+\\.)?googleapis\\.com[/:]", "if-domain": ["*tokyomotion.net"] },
   "action": { "type": "ignore-previous-rules" } }
 ```
 - `if-domain` でサイトを限定するため、**他サイトには一切影響しない**（アグレッシブだがスコープ限定）。
-- allowlist は domain 単位の url-filter で `ignore-previous-rules`。
-- 初期収録は tokyomotion（実測の allow セット）。
+- allow の url-filter は L1 と同じ domain-anchor 形（`^[^:]+://+([^:/]+\.)?domain[/:]`）を allow entry ごとに emit。
+- 初期収録は tokyomotion（実測の allow セット: fluidplayer / googleapis / googletagmanager / サイト自身 CDN `cdn.tokyo-motion.net` 等）。
 
 ### ルール数・順序
 - L1 数百規模＋L2（約2〜6ルール×サイト数）。別拡張の上限（iOS の content blocker 上限・15万想定）に対し余裕。
