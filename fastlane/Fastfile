@@ -102,7 +102,7 @@ platform :ios do
     upload_to_testflight(
       api_key: asc_api_key,
       skip_waiting_for_build_processing: false,
-      changelog: "v3.1.0 build 19: レビュー依頼施策 v2 + 満足度カード。報告フォーム修正（URL はみ出し・キーボード閉じ）。iOS 26 クラッシュ対策。"
+      changelog: "v3.2.0 build 20: 報告した広告をその端末で即座にブロックへ反映。決済・銀行など重要サイトは誤報告でもブロックしない安全装置を追加。"
     )
   end
 
