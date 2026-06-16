@@ -51,6 +51,8 @@ enum BackgroundTaskManager {
                 }
                 // 報告から配信されたグローバル学習フィルタも取得して自己報告とマージ・reload
                 await ReportedGlobalSync.sync()
+                // popunder 対策フィルタ(CDN living list)も取得して App Group へ反映・reload（best-effort）
+                await PopunderGlobalSync.sync()
                 task.setTaskCompleted(success: true)
             } catch {
                 print("[BGTask] failed: \(error.localizedDescription)")
