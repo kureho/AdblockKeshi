@@ -11,19 +11,25 @@ actor FilterDownloader {
     let appGroupIdentifier: String
     let filename: String
     let session: URLSession
+    /// version.json 同期を行うか。既定 true（本体フィルタは従来通り「最終更新日」を更新）。
+    /// 2つ目以降のインスタンス（popunder 等）は false にして、共有 App Group の
+    /// version.json（本体 UI が読む）を上書きしないようにする。
+    let syncsVersion: Bool
 
     init(
         blockerListURL: URL = FilterDownloader.defaultURL,
         versionURL: URL = FilterDownloader.defaultVersionURL,
         appGroupIdentifier: String = "group.com.kureho.adblockkeshi.shared",
         filename: String = "blockerList.json",
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        syncsVersion: Bool = true
     ) {
         self.blockerListURL = blockerListURL
         self.versionURL = versionURL
         self.appGroupIdentifier = appGroupIdentifier
         self.filename = filename
         self.session = session
+        self.syncsVersion = syncsVersion
     }
 
     /// 最新フィルタを取得して App Group コンテナに atomic write。成功時にバイト数を返す。
@@ -56,7 +62,10 @@ actor FilterDownloader {
         try data.write(to: destination, options: [.atomic])
 
         // version.json は補助情報。失敗しても blockerList の DL 結果は維持する。
-        await downloadVersionInfoBestEffort(containerURL: containerURL)
+        // 2つ目以降のインスタンス（popunder 等）は syncsVersion=false で本体 version.json を上書きしない。
+        if syncsVersion {
+            await downloadVersionInfoBestEffort(containerURL: containerURL)
+        }
 
         return data.count
     }

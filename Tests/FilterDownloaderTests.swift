@@ -19,6 +19,18 @@ final class FilterDownloaderTests: XCTestCase {
         XCTAssertEqual(id, "group.com.kureho.adblockkeshi.shared")
     }
 
+    func test_syncsVersion_defaults_true_and_can_opt_out() async {
+        // 既定は version 同期 ON（本体フィルタの後方互換）。
+        let dflt = FilterDownloader()
+        let on = await dflt.syncsVersion
+        XCTAssertTrue(on)
+        // popunder 等の2つ目インスタンスは version 同期 OFF にして
+        // 共有 App Group の version.json（本体「最終更新日」UI）の上書きを避ける。
+        let off = FilterDownloader(syncsVersion: false)
+        let isOff = await off.syncsVersion
+        XCTAssertFalse(isOff)
+    }
+
     func test_invalid_url_throws() async {
         let downloader = FilterDownloader(
             blockerListURL: URL(string: "https://nonexistent.invalid.example/x.json")!,
