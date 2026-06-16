@@ -92,9 +92,12 @@ final class ReportFormViewModel: ObservableObject {
             try await apiClient.requestToken(turnstileResponse: turnstileResponse, scope: .submit)
             let memo = memoInput.isEmpty ? nil : memoInput
             try await apiClient.submitReport(url: url, memo: memo, adType: selectedAdType)
-            historyStore?.append(url: url, memo: memo)
-            // 自己報告ファストレーン: 自分の端末で即ブロック反映（サーバ3人閾値を待たない）
+            // 自己報告ファストレーン: 自分の端末で即ブロック反映（サーバ3人閾値を待たない）。
+            // 端末で即反映できる広告URLか（重要ドメイン等は対象外）で履歴の表示を分ける。
+            let appliedLocally = selfReportApplier != nil
+                && ReportedRuleBuilder.blockRule(forURL: url.absoluteString) != nil
             selfReportApplier?.apply(reportedURL: url)
+            historyStore?.append(url: url, memo: memo, status: appliedLocally ? .appliedLocally : .pending)
             state = .idle
             urlInput = ""
             memoInput = ""

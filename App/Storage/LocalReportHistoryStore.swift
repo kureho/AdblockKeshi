@@ -33,16 +33,16 @@ final class LocalReportHistoryStore: ObservableObject {
     }
 
     /// 報告送信成功時に呼ぶ。新しい行は先頭へ。
-    func append(url: URL, memo: String?) {
+    func append(url: URL, memo: String?, status: ReportStatus = .pending) {
         let item = ReportHistoryItem(
             id: UUID().uuidString,
             url: url.absoluteString,
             memo: memo,
             memoRedacted: false,
-            status: .pending,
+            status: status,
             createdAt: Date(),
             validatedAt: nil,
-            appliedAt: nil
+            appliedAt: status == .appliedLocally ? Date() : nil
         )
         items.insert(item, at: 0)
         persist()
