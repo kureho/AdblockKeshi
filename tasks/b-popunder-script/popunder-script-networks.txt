@@ -26,6 +26,7 @@
 ! JuicyAds
 ||juicyads.com^$script
 ||adexchangegate.com^$script
+||jads.co^$script
 ! TrafficStars
 ||tsyndicate.com^$script
 ||ad-delivery.net^$script
@@ -48,3 +49,4 @@
 ||serving-sys.com^$script
 ||poptm.com^$script
 ||popwin.net^$script
+||glssp.net^$script
