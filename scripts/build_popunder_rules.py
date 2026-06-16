@@ -45,3 +45,28 @@ def network_rule(domain: str) -> dict:
         "trigger": {"url-filter": _domain_anchor(domain), "resource-type": ["script"]},
         "action": {"type": "block"},
     }
+
+
+def aggressive_site_rules(site: dict) -> list[dict]:
+    """L2: 1サイト分のルールを順序厳守で生成する。
+
+    block（全 third-party script を if-domain 限定で遮断）→ allow 各 domain ごとに
+    ignore-previous-rules 1件（block の後）。allow は「1 entry = 1 ルール」（alternation にしない）。
+    """
+    domain = site["domain"]
+    if_domain = [f"*{domain}"]
+    rules: list[dict] = [{
+        "trigger": {
+            "url-filter": ".*",
+            "resource-type": ["script"],
+            "load-type": ["third-party"],
+            "if-domain": if_domain,
+        },
+        "action": {"type": "block"},
+    }]
+    for allow in site.get("allow", []):
+        rules.append({
+            "trigger": {"url-filter": _domain_anchor(allow), "if-domain": if_domain},
+            "action": {"type": "ignore-previous-rules"},
+        })
+    return rules

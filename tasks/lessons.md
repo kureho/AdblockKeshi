@@ -1,5 +1,23 @@
 # AdblockKeshi 教訓集
 
+## 2026-06-12: 月次フィルタ更新が runner イメージ更新で silent fail（6/1〜6/12 の12日間停止）
+
+### 事象
+`monthly-filter-update.yml` の 2026-06-01 schedule 実行が `python3 -m pip install --user pyyaml` で failure（PEP 668 externally-managed-environment）。GitHub の macos-latest イメージ更新で Homebrew Python が素の pip install を拒否するようになった。気づいたのは 6/12 に kureho がアプリ内「フィルタ最終更新: 2026/05/30」表示で異変を察知してから。
+
+### 修正
+`--break-system-packages` フラグ追加（576b11e）。使い捨て CI 環境なので安全。workflow_dispatch で実走検証し、version.json 更新 → GitHub Pages CDN 反映まで確認済み。
+
+### 教訓
+1. **月次など低頻度 schedule は失敗に気づきにくい**。失敗時に何も通知が無い構造だった。github-actions-audit.sh は timeout/hang 監査のみで「failure 通知」はしない
+2. **runner イメージ更新は予告なく依存を壊す**。pip 直叩き・brew 依存・OS バンドルツールに依存する step は破壊リスクを持つ
+3. v2.1.0 で入れた「フィルタ最終更新日のアプリ内表示」が異変検知に機能した（ユーザー向け機能が監視としても働いた）
+
+### 同時対応
+checkout@v4 → v5 を全 9 workflow に適用（2026-06-16 からの Node.js 24 強制対応、8d71a3d）。
+
+---
+
 ## 2026-06-03 v2.1.0: iOS は Safari スタートページを開く公開 API を持たない
 
 ### 事象

@@ -45,5 +45,20 @@ cd tasks/b-popunder-script/test-harness && python3 -m http.server 8000
 - **ReportedRuleBuilder の script-block 拡張は見送り**: iOS は devtools 無し＝ユーザーが横取り .js ドメインを観測できず、報告フローに材料が無い（律速）。
 - **Web Extension化(v4)**: (b)を狙える唯一の道だが iOS で racy・全サイト権限・¥500買い切りと不整合。(a)-script-block の実機効果を測ってからの判断。
 
+## 実機相当 desktop 実測（2026-06-17・headless Chrome + iPhone Safari UA）
+
+kureho が報告した **tokyomotion.net** を headless Chrome（iPhone UA）で読み込み、`window.open` 計装＋gesture event リスナー登録元の origin 解析＋「既知網 script 遮断」比較実験を実施（スクリプトは使い捨て・実行後削除）。
+
+**結果（baseline vs 既知網遮断）**:
+- `matchedPopunderNetworks`: **realsrv.com(ExoClick)・pemsrv.com(Adsterra)** を script として読込（=リスト収録の安定網は実在）。
+- gesture listener 登録元: **firstPartyOrInline = 0**（インライン (b) ではない）。登録は全て第三者 script: `reservedghettocrimpycrimpy.com`(5)・`chaseherbalpasty.com`(1)・`poweredby.jads.co`(JuicyAds)・`glssp.net` 等。
+- **決定実験**: `a.realsrv.com`（ExoClick 安定網・我々の $script リスト収録）を遮断しても、`reservedghettocrimpycrimpy.com` 等の**ランダム生成ドメインの gesture listener は消えず残存**＝ローテーション系は安定網と独立にロードされる。
+
+**結論**: tokyomotion は「第三者 script 由来だが、毎回変わる gibberish ドメインで配信される＝実質 **(c) ドメインローテーション**」。静的 $script リストは安定網（realsrv/ExoClick・pemsrv/Adsterra・jads/JuicyAds）は捕捉できるが、回転ドメインは原理的に追えず、かつ安定網を止めても回避ドメインが独立稼働する。→ 上記 research-rigor 結論を実データで裏付け、(b) ではなく **(c)** と精密化。
+
+**v3.3.0 への含意**: $script popunder-block 拡張は安定網には効くが、**adult/pirate 系（kureho の実報告対象）の主流である回転ドメイン popunder は止めきれない**。実効的な上限は依然 **host-block（黒画面）** か、回転ドメインを追う動的フィード（重い運用）か、Web Extension(v4・racy)。**買い切り¥500 の費用対効果としては v3.3.0 の $script 拡張は「部分的にしか効かない」と理解した上で着手判断すべき**。
+
+**測定上の留保**: headless 検知で `window.open` 実発火は 0（gesture listener 登録から推定・下振れ方向の誤差）。単一サイト（tokyomotion）の結果。厳密確定には実機ネットワークログ（README 上部の Option 3）が必要だが、本実測で v3.3.0 の費用対効果判断には十分な解像度が得られた。
+
 ## 出典
-research-rigor 調査（2026-06-16）+ WebKit content-blockers docs + AdGuard SafariConverterLib README + ExoClick 公式（ドメインローテAPI/inline推奨）+ EasyList adult popup 実測。
+research-rigor 調査（2026-06-16）+ WebKit content-blockers docs + AdGuard SafariConverterLib README + ExoClick 公式（ドメインローテAPI/inline推奨）+ EasyList adult popup 実測 + **desktop 実測（2026-06-17・本ファイル上記セクション）**。
