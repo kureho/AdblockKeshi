@@ -54,3 +54,15 @@ def test_build_rules_orders_l1_then_l2():
 def test_build_rules_rejects_over_limit():
     with pytest.raises(ValueError):
         build_rules([f"d{i}.com" for i in range(50001)], [])
+
+
+def test_l1_reproduces_shipped_rules():
+    """新ジェネレータの L1 が出荷済み popunder-rules.json の block ルールと等価（v3.3.0追加分除く）。"""
+    repo = Path(__file__).resolve().parents[2]
+    shipped = json.loads((repo / "PopunderBlockerExtension/Resources/popunder-rules.json").read_text())
+    networks = parse_networks((repo / "tasks/b-popunder-script/popunder-script-networks.txt").read_text())
+    shipped_set = {json.dumps(r, sort_keys=True) for r in shipped}
+    for d in networks:
+        if d in ("jads.co", "glssp.net"):  # v3.3.0 で追加する分は出荷形に無い
+            continue
+        assert json.dumps(network_rule(d), sort_keys=True) in shipped_set, f"{d} の生成ルールが出荷形と不一致"

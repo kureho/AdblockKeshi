@@ -35,8 +35,13 @@ def parse_networks(text: str) -> list[str]:
 
 
 def _domain_anchor(domain: str) -> str:
-    """||domain^ の標準 ABP→WebKit url-filter 変換（出荷形と一致）。"""
-    return r"^[^:]+://+([^:/]+\.)?" + re.escape(domain) + r"[/:]"
+    """||domain^ の標準 ABP→WebKit url-filter 変換（出荷形=SafariConverterLib 出力と一致）。
+
+    SafariConverterLib はドットのみをエスケープし、ハイフン等はエスケープしない
+    （正規表現の非文字クラス文脈ではハイフンはリテラル）。re.escape は `-` も escape するため使わない。
+    """
+    escaped = domain.replace(".", r"\.")
+    return r"^[^:]+://+([^:/]+\.)?" + escaped + r"[/:]"
 
 
 def network_rule(domain: str) -> dict:
