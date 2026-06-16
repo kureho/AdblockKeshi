@@ -19,6 +19,8 @@ export interface AggregationDeps {
   fetch: typeof globalThis.fetch
   uuidv4: () => string
   now: () => number
+  /** 信頼レポーター(kureho 自身等)の uuid_hash 集合。L2 閾値をバイパスさせる。 */
+  trustedUuidHashes?: Set<string>
 }
 
 export interface AggregationRunResult {
@@ -51,7 +53,9 @@ export async function runAggregation(
     created_at: r.created_at,
   }))
 
-  const aggregations = computeAggregations(reports, deps.now())
+  const aggregations = computeAggregations(reports, deps.now(), {
+    trustedUuidHashes: deps.trustedUuidHashes,
+  })
   if (aggregations.length === 0) {
     return { candidates_created: 0, reports_aggregated: 0 }
   }
