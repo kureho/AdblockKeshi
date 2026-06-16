@@ -1,0 +1,41 @@
+# popunder-rules.json を L1(networks) + L2(aggressive-sites) ソースから再生成し、
+# bundle 同梱版 と CDN(docs/cdn) を更新する。
+# heavy-process-safety / workflow-timeout-guard 遵守: Linux runner・timeout 必須・最小トリガー。
+# 本体フィルタの monthly-filter-update.yml (macOS/SafariConverterLib) とは責務分離（混ぜない）。
+name: popunder-rules-update
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'tasks/b-popunder-script/popunder-script-networks.txt'
+      - 'tasks/b-popunder-script/popunder-aggressive-sites.json'
+      - 'scripts/build_popunder_rules.py'
+
+concurrency:
+  group: popunder-rules
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Generate popunder rules (bundle + cdn)
+        run: |
+          python3 scripts/build_popunder_rules.py \
+            --networks tasks/b-popunder-script/popunder-script-networks.txt \
+            --sites tasks/b-popunder-script/popunder-aggressive-sites.json \
+            --out PopunderBlockerExtension/Resources/popunder-rules.json \
+            --out docs/cdn/popunder-rules.json
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add PopunderBlockerExtension/Resources/popunder-rules.json docs/cdn/popunder-rules.json
+          git diff --cached --quiet || git commit -m "build(popunder): regenerate rules [skip ci]"
+          git push
