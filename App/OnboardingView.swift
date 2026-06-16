@@ -61,17 +61,18 @@ struct OnboardingView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("2 つのフィルタを両方 ON")
+                            Text("3 つのフィルタを ON")
                                 .font(.system(.callout, weight: .semibold))
 
-                            // 2 フィルタ inline 列挙 (アイコン + 名前)
+                            // フィルタ inline 列挙 (アイコン + 名前)
                             VStack(alignment: .leading, spacing: 6) {
                                 FilterInlineRow(iconName: "shield.fill", name: "標準フィルタ")
                                 FilterInlineRow(iconName: "sparkles", name: "自己学習フィルタ")
+                                FilterInlineRow(iconName: "hand.raised.fill", name: "ポップアップ広告対策")
                             }
 
                             // グレー補足文
-                            Text("両方 ON で広告ブロックが完全に有効になります")
+                            Text("標準＋自己学習で広告ブロックが有効に。ポップアップ広告対策も ON にすると、タップ時に広告サイトへ飛ばされる誘導も防げます")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -210,14 +211,20 @@ struct FilterInfoSheet: View {
                         detail: "他のブロッカーで消えない広告を、ユーザーからの報告で自動で取り込んで進化していきます。"
                     )
 
-                    Text("両方を ON にすると、基本ブロック + 進化するフィルタで、より強力に広告を消せます。")
+                    FilterDescriptionCard(
+                        iconName: "hand.raised.fill",
+                        title: "ポップアップ広告対策",
+                        detail: "動画・まとめサイト等でサムネをタップすると広告サイトに飛ばされる「タップ乗っ取り」を、既知のポップアップ広告ネットワークのスクリプトをブロックして抑えます。"
+                    )
+
+                    Text("標準＋自己学習で広告を消し、ポップアップ広告対策で不要な誘導も防ぐと、より強力です。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .padding(.top, 4)
                 }
                 .padding(20)
             }
-            .navigationTitle("2 つのフィルタについて")
+            .navigationTitle("フィルタについて")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

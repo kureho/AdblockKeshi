@@ -36,9 +36,11 @@ enum BannerType: Equatable {
 struct ContentRuleListSnapshot: Equatable {
     let baseEnabled: Bool
     let reportedEnabled: Bool
+    /// 「ポップアップ広告対策」拡張（任意の追加保護）の ON/OFF。core(標準+学習)の判定には影響しない。
+    let popunderEnabled: Bool
     let mode: ContentRuleListMode
 
-    static func from(base: Bool, reported: Bool) -> ContentRuleListSnapshot {
+    static func from(base: Bool, reported: Bool, popunder: Bool = false) -> ContentRuleListSnapshot {
         let mode: ContentRuleListMode
         switch (base, reported) {
         case (true, true): mode = .bothEnabled
@@ -46,7 +48,16 @@ struct ContentRuleListSnapshot: Equatable {
         case (false, true): mode = .reportedOnly
         case (false, false): mode = .bothDisabled
         }
-        return ContentRuleListSnapshot(baseEnabled: base, reportedEnabled: reported, mode: mode)
+        return ContentRuleListSnapshot(
+            baseEnabled: base, reportedEnabled: reported, popunderEnabled: popunder, mode: mode
+        )
+    }
+
+    /// core(標準+学習)が ON のとき、追加保護の「ポップアップ広告対策」も勧める任意ヒント。
+    /// core が未完了のときは出さない（まずそちらの設定に集中させる）。
+    var popunderSuggestion: BannerType? {
+        guard mode == .bothEnabled, !popunderEnabled else { return nil }
+        return .yellow("「ポップアップ広告対策」も ON にすると、タップ時に広告サイトへ飛ばされる誘導をブロックします")
     }
 }
 
@@ -57,14 +68,16 @@ protocol ContentRuleListStateChecker: Sendable {
 struct SFContentBlockerStateChecker: ContentRuleListStateChecker {
     static let baseID = "com.kureho.adblockkeshi.blocker"
     static let reportedID = "com.kureho.adblockkeshi.reportedblocker"
+    static let popunderID = "com.kureho.adblockkeshi.popunderblocker"
 
     func check() async -> ContentRuleListSnapshot {
-        // iOS 26 simulator: 並列 XPC コール (`async let` で 2 本) が SFContentBlockerManager の
+        // iOS 26 simulator: 並列 XPC コール (`async let`) が SFContentBlockerManager の
         // _contentBlockerLoaderConnection を _xpc_api_misuse で EXC_BREAKPOINT クラッシュさせる。
-        // 実機でも同じ race condition リスクがあるため逐次化する (2 回の XPC は速いので体感差なし)。
+        // 実機でも同じ race condition リスクがあるため逐次化する (XPC は速いので体感差なし)。
         let b = await getEnabled(identifier: Self.baseID)
         let r = await getEnabled(identifier: Self.reportedID)
-        return ContentRuleListSnapshot.from(base: b, reported: r)
+        let p = await getEnabled(identifier: Self.popunderID)
+        return ContentRuleListSnapshot.from(base: b, reported: r, popunder: p)
     }
 
     private func getEnabled(identifier: String) async -> Bool {
