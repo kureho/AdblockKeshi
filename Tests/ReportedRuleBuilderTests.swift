@@ -23,6 +23,12 @@ final class ReportedRuleBuilderTests: XCTestCase {
         XCTAssertNil(ReportedRuleBuilder.blockRule(forURL: "https:///nohost"))
     }
 
+    /// 安全弁: 重要ドメイン（決済/銀行/大手等）を報告しても自端末でブロックしない。
+    func test_returns_nil_for_critical_domain() {
+        XCTAssertNil(ReportedRuleBuilder.blockRule(forURL: "https://pay.stripe.com/checkout"))
+        XCTAssertNil(ReportedRuleBuilder.blockRule(forURL: "https://www.mizuhobank.co.jp/"))
+    }
+
     /// JSON エンコードが Safari の期待キー（url-filter / type）になること。
     func test_encodes_to_safari_json_keys() throws {
         let rule = try XCTUnwrap(ReportedRuleBuilder.blockRule(forURL: "https://x.test/"))

@@ -22,6 +22,8 @@ enum ReportedRuleBuilder {
 
     static func blockRule(forURL urlString: String) -> ContentBlockerRule? {
         guard let host = host(from: urlString) else { return nil }
+        // 安全弁: 決済/銀行/大手など重要ドメインは誤報告でもブロックしない
+        guard !CriticalDomainGuard.isCritical(host) else { return nil }
         let escaped = host.replacingOccurrences(of: ".", with: #"\."#)
         let filter = #"^[^:]+://+([^:/]+\.)?"# + escaped + "[/:]"
         return ContentBlockerRule(
