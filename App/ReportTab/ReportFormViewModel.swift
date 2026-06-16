@@ -19,12 +19,17 @@ final class ReportFormViewModel: ObservableObject {
     private let apiClient: ReportAPIClientProtocol
     private let historyStore: LocalReportHistoryStore?
     private let onSuccess: () -> Void
+    /// 自己報告ファストレーン。報告成功時に報告URLを端末で即ブロック反映する。
+    /// テストでは nil（no-op）、本番では SelfReportApplier を注入する。
+    private let selfReportApplier: SelfReportApplying?
 
     init(apiClient: ReportAPIClientProtocol,
          historyStore: LocalReportHistoryStore? = nil,
+         selfReportApplier: SelfReportApplying? = nil,
          onSuccess: @escaping () -> Void) {
         self.apiClient = apiClient
         self.historyStore = historyStore
+        self.selfReportApplier = selfReportApplier
         self.onSuccess = onSuccess
     }
 
@@ -88,6 +93,8 @@ final class ReportFormViewModel: ObservableObject {
             let memo = memoInput.isEmpty ? nil : memoInput
             try await apiClient.submitReport(url: url, memo: memo, adType: selectedAdType)
             historyStore?.append(url: url, memo: memo)
+            // 自己報告ファストレーン: 自分の端末で即ブロック反映（サーバ3人閾値を待たない）
+            selfReportApplier?.apply(reportedURL: url)
             state = .idle
             urlInput = ""
             memoInput = ""

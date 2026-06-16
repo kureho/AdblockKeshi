@@ -70,6 +70,7 @@ struct ReportFormView: View {
         _viewModel = StateObject(wrappedValue: ReportFormViewModel(
             apiClient: apiClient,
             historyStore: historyStore,
+            selfReportApplier: SelfReportApplier(),
             onSuccess: onSubmitSuccess
         ))
     }
