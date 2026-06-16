@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>(b)型テスト: インライン window.open による乗っ取り</title>
+<style>body{font-family:-apple-system,sans-serif;padding:24px;line-height:1.6}
+#thumb{display:block;width:90%;height:180px;background:#222;color:#fff;text-align:center;line-height:180px;border-radius:12px;font-size:18px;text-decoration:none;margin:16px auto}</style>
+</head>
+<body>
+<h2>(b)型: インライン JS がクリックを乗っ取る</h2>
+<p>乗っ取りロジックがページ本体の inline &lt;script&gt; に直書き。<b>Content Blocker では原理的に止められない</b>（ネットワーク要求が無い＝マッチ対象外）。</p>
+<a id="thumb" href="./dest.html?nohijack=1">▶ サムネ（タップ）</a>
+<p>判定: script-block を入れても <b>必ず dest.html に飛ぶ</b>はず（= (b)型は宣言型で不可の実証）。</p>
+<script>
+  // インライン: 外部リソースを持たないので resource-type:script ではブロックできない
+  document.getElementById('thumb').addEventListener('click', function (e) {
+    e.preventDefault();
+    window.location.href = './dest.html?hijacked=inline';
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,50 @@
+! Title: AdblockKeshi Popunder/Tab-under Script Block (curated)
+! Purpose: (a)型「分離可能な第三者広告スクリプト」を読込時にブロックし、
+!          タップ乗っ取り/popunder の遷移そのものを起こさせない（黒画面も出さない）。
+! Mechanism: $script 修飾子 → Safari Content Blocker の resource-type:["script"] に変換され、
+!            当該 .js のネットワーク読込を中止 → クリックハンドラが付与されない。
+! Scope限界: (b)インライン window.open / (c)ドメインローテーション には効かない（宣言型の原理的限界）。
+! Note: 別 Content Blocker 拡張に同梱する想定（標準フィルタ15万上限を圧迫しないため）。
+! 出典: research-rigor 2026-06-16 調査 + 公開広告網ドキュメント。誤ブロック(プレーヤー破壊)に注意し $script 限定。
+!
+! ===== 既知 popunder / tab-under 広告ネットワーク（第三者スクリプト）=====
+! PopAds
+||popads.net^$script
+||popadscdn.com^$script
+! PopCash
+||popcash.net^$script
+||cdn.popcash.net^$script
+! Adsterra (Adsterra/Terra) 系
+||pemsrv.com^$script
+||adsterratech.com^$script
+||profitabledisplaynetwork.com^$script
+! ExoClick / ExoSrv
+||exoclick.com^$script
+||exosrv.com^$script
+||exdynsrv.com^$script
+||realsrv.com^$script
+! JuicyAds
+||juicyads.com^$script
+||adexchangegate.com^$script
+! TrafficStars
+||tsyndicate.com^$script
+||ad-delivery.net^$script
+! HilltopAds
+||hilltopads.net^$script
+||hilltopads.com^$script
+! Clickadu
+||clickadu.com^$script
+||fpctraffic2.com^$script
+! PropellerAds / propu
+||propellerads.com^$script
+||propellerpops.com^$script
+||propu.net^$script
+! AdMaven
+||ad-maven.com^$script
+||admaven.com^$script
+! Others (popunder 配信でよく使われる)
+||onclickads.net^$script
+||onclkds.com^$script
+||serving-sys.com^$script
+||poptm.com^$script
+||popwin.net^$script

@@ -1,0 +1,9 @@
+[
+  {
+    "trigger": {
+      "url-filter": "hijack\\.js",
+      "resource-type": ["script"]
+    },
+    "action": { "type": "block" }
+  }
+]

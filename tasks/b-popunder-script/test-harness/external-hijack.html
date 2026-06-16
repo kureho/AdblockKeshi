@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>(a)型テスト: 外部スクリプトによるタップ乗っ取り</title>
+<style>body{font-family:-apple-system,sans-serif;padding:24px;line-height:1.6}
+#thumb{display:block;width:90%;height:180px;background:#222;color:#fff;text-align:center;line-height:180px;border-radius:12px;font-size:18px;text-decoration:none;margin:16px auto}
+#status{color:#c00;font-weight:bold}</style>
+</head>
+<body>
+<h2>(a)型: 外部 hijack.js がクリックを乗っ取る</h2>
+<p>このページは <code>./hijack.js</code>（第三者広告スクリプト相当）を読み込む。</p>
+<p id="status" style="color:#080">✅ hijack.js がブロックされた → タップしても飛ばない（成功）<br>※ブロックOFFなら下が⚠️に変わり、タップで飛ぶ</p>
+<a id="thumb" href="./dest.html?nohijack=1">▶ サムネ（タップ）</a>
+<p>判定: タップして <b>dest.html に飛んだら「飛ばされた」</b>、<b>このページのままなら「飛ばさせない化 成功」</b>。</p>
+<!-- この script を resource-type:script でブロックすると addEventListener が実行されない -->
+<script src="./hijack.js"></script>
+</body>
+</html>
