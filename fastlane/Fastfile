@@ -102,7 +102,7 @@ platform :ios do
     upload_to_testflight(
       api_key: asc_api_key,
       skip_waiting_for_build_processing: false,
-      changelog: "v3.2.0 build 20: 報告した広告をその端末で即座にブロックへ反映。決済・銀行など重要サイトは誤報告でもブロックしない安全装置を追加。"
+      changelog: "v3.2.0 build 22: 報告した広告をその端末で即座にブロック + 重要サイト保護。『ポップアップ広告対策』拡張（タップ乗っ取り対策）を追加し、設定導線も整備。"
     )
   end
 
