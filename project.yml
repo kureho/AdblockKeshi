@@ -8,7 +8,7 @@ settings:
   base:
     DEVELOPMENT_TEAM: L455WPL8QZ
     MARKETING_VERSION: "3.2.0"
-    CURRENT_PROJECT_VERSION: "20"
+    CURRENT_PROJECT_VERSION: "21"
     SWIFT_VERSION: "5.10"
     CODE_SIGN_STYLE: Automatic
     TARGETED_DEVICE_FAMILY: "1"  # iPhone only (iPad multitasking 対応不要にする)
@@ -52,6 +52,8 @@ targets:
       - target: ContentBlockerExtension
         embed: true
       - target: ReportedRulesExtension
+        embed: true
+      - target: PopunderBlockerExtension
         embed: true
 
   ContentBlockerExtension:
@@ -102,6 +104,29 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.kureho.adblockkeshi.reportedblocker
         CODE_SIGN_ENTITLEMENTS: ReportedRulesExtension/Extension.entitlements
         PRODUCT_NAME: ReportedRulesExtension
+
+  PopunderBlockerExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: PopunderBlockerExtension
+      - path: Shared
+    info:
+      path: PopunderBlockerExtension/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.Safari.content-blocker
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PopunderContentBlockerRequestHandler
+          NSExtensionAttributes:
+            ContentBlockerExtensionType: "general"
+        CFBundleDisplayName: ポップアップ広告対策
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kureho.adblockkeshi.popunderblocker
+        CODE_SIGN_ENTITLEMENTS: PopunderBlockerExtension/Extension.entitlements
+        PRODUCT_NAME: PopunderBlockerExtension
 
   AdblockKeshiTests:
     type: bundle.unit-test
