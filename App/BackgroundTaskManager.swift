@@ -49,6 +49,8 @@ enum BackgroundTaskManager {
                         cont.resume()
                     }
                 }
+                // 報告から配信されたグローバル学習フィルタも取得して自己報告とマージ・reload
+                await ReportedGlobalSync.sync()
                 task.setTaskCompleted(success: true)
             } catch {
                 print("[BGTask] failed: \(error.localizedDescription)")

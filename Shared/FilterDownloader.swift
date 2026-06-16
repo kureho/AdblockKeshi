@@ -3,6 +3,8 @@ import Foundation
 actor FilterDownloader {
     static let defaultURL = URL(string: "https://kureho.github.io/AdblockKeshi/cdn/blockerList.json")!
     static let defaultVersionURL = URL(string: "https://kureho.github.io/AdblockKeshi/cdn/version.json")!
+    /// 報告から承認・配信されたグローバル学習フィルタ。標準フィルタ更新と同時に取得する。
+    static let reportedURL = URL(string: "https://kureho.github.io/AdblockKeshi/cdn/rules-reported.json")!
 
     let blockerListURL: URL
     let versionURL: URL

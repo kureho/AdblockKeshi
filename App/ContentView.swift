@@ -101,6 +101,8 @@ struct ContentView: View {
                     refreshState()
                 }
             }
+            // 報告から配信されたグローバル学習フィルタも取得して自己報告とマージ・reload
+            await ReportedGlobalSync.sync()
         } catch {
             print("[FilterDownloader] failed: \(error.localizedDescription). Bundle fallback active.")
         }
