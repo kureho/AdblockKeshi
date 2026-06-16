@@ -70,3 +70,36 @@ def aggressive_site_rules(site: dict) -> list[dict]:
             "action": {"type": "ignore-previous-rules"},
         })
     return rules
+
+
+MAX_RULES = 50000  # WebKit content blocker 上限の保守値（別拡張枠・実数は数百）
+
+
+def build_rules(networks: list[str], sites: list[dict]) -> list[dict]:
+    """L1（network block 群）→ L2（サイト別 block→ignore 群）の順で全ルールを組み立てる。"""
+    rules = [network_rule(d) for d in networks]
+    for site in sites:
+        rules.extend(aggressive_site_rules(site))
+    if len(rules) > MAX_RULES:
+        raise ValueError(f"rule count {len(rules)} exceeds MAX_RULES {MAX_RULES}")
+    return rules
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="Generate popunder-rules.json from L1+L2 sources.")
+    p.add_argument("--networks", required=True, help="popunder-script-networks.txt のパス")
+    p.add_argument("--sites", required=True, help="popunder-aggressive-sites.json のパス")
+    p.add_argument("--out", action="append", required=True, help="出力先（複数指定可: bundle と cdn）")
+    a = p.parse_args()
+    networks = parse_networks(Path(a.networks).read_text())
+    sites = json.loads(Path(a.sites).read_text())
+    rules = build_rules(networks, sites)
+    payload = json.dumps(rules, ensure_ascii=False, indent=2) + "\n"
+    for out in a.out:
+        Path(out).write_text(payload)
+    print(f"wrote {len(rules)} rules to {len(a.out)} file(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

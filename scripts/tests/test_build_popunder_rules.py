@@ -3,7 +3,14 @@ import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from build_popunder_rules import parse_networks, network_rule, aggressive_site_rules
+import pytest
+from build_popunder_rules import (
+    parse_networks,
+    network_rule,
+    aggressive_site_rules,
+    build_rules,
+    _domain_anchor,
+)
 
 
 def test_parse_networks_ignores_comments_and_blanks():
@@ -34,3 +41,16 @@ def test_aggressive_site_rules_order_and_shape():
     assert rules[2]["action"] == {"type": "ignore-previous-rules"}
     assert "googleapis" in rules[2]["trigger"]["url-filter"]
     assert len(rules) == 3
+
+
+def test_build_rules_orders_l1_then_l2():
+    rules = build_rules(["popads.net"], [{"domain": "x.net", "allow": ["a.com"]}])
+    assert rules[0]["trigger"]["url-filter"] == _domain_anchor("popads.net")  # L1 先
+    assert rules[1]["trigger"]["url-filter"] == ".*"  # L2 block
+    assert rules[2]["action"]["type"] == "ignore-previous-rules"
+    assert len(rules) == 3
+
+
+def test_build_rules_rejects_over_limit():
+    with pytest.raises(ValueError):
+        build_rules([f"d{i}.com" for i in range(50001)], [])
