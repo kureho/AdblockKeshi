@@ -1,0 +1,13 @@
+[
+  {
+    "domain": "tokyomotion.net",
+    "allow": [
+      "fluidplayer.com",
+      "googleapis.com",
+      "googletagmanager.com",
+      "gstatic.com",
+      "tokyo-motion.net"
+    ],
+    "note": "2026-06-17 desktop実測。fluidplayer=動画プレーヤー / tokyo-motion.net=サイト自身CDN / googleapis=jQuery等。回転popunder(reservedghettocrimpycrimpy等)はblock側で消え、これらallowでプレーヤーは生存する。"
+  }
+]
