@@ -12,7 +12,7 @@
   - bundle id `com.kureho.adblockkeshi.popunderblocker`、App Group `group.com.kureho.adblockkeshi.shared`、表示名「ポップアップ広告対策」。
   - `PopunderBlockerExtension/Resources/popunder-rules.json` = **29 ルール**（既知 popunder 網の `resource-type:[script]` block）。
   - `Shared/PopunderRulesResolver.swift` → `BlockerListResolver(filterFilename: "popunder-rules.json")` で **App Group →（無ければ）bundle フォールバック**構造を既に持つ（コメントに「将来 CDN 更新で配信」と明記）。
-- ⚠️ `tasks/b-popunder-script/README.md` の「v3.3.0 配線TODO（未着手）」は **build22 で実装済みなのに更新漏れの陳腐化記述**。本 spec 実装時に README を現状へ修正する。
+- ⚠️ `tasks/b-popunder-script/README.md` の「v3.3.0 配線TODO（未着手）」は **build22 で実装済みなのに更新漏れの陳腐化記述**。**README の現状修正は実装プランの明示タスクとする**（落とさない・§8 と並ぶ独立 deliverable）。
 
 ### 1.2 問題（desktop 実測 2026-06-17 で確定）
 kureho が実使用し報告した `tokyomotion.net` を headless Chrome（iPhone Safari UA）で解析:
@@ -59,20 +59,25 @@ kureho が実使用し報告した `tokyomotion.net` を headless Chrome（iPhon
 | **L2 アグレッシブ（対象サイト）** | **新規** `tasks/b-popunder-script/popunder-aggressive-sites.json` = `[{ "domain": "...", "allow": ["...", ...] }]` | `if-domain` 限定で「third-party script 全 `block`」→ allowlist 各々を `ignore-previous-rules` で解除 |
 
 ### コンポーネント
-- **convert（拡張）**: 既存 `scripts/convert.sh` / converter を拡張し、L1＋L2 ソースから `popunder-rules.json` を生成。生成先は (a) `PopunderBlockerExtension/Resources/popunder-rules.json`（bundle）と (b) `docs/cdn/popunder-rules.json`（CDN）の両方。
-- **CDN 配信**: 本体フィルタが既に使う GitHub Pages CDN（`docs/cdn/`）に popunder-rules.json と version 情報を配置。`monthly-filter-update.yml`（または専用 dispatch workflow）で再生成・push。
-- **downloader（拡張）**: `FilterDownloader` を拡張し、起動時に CDN の popunder-rules.json を App Group へ best-effort 保存（本体フィルタの DL と同型）。
+- **popunder 専用ジェネレータ（新規・`scripts/build_popunder_rules.py` 想定）**: L1＋L2 ソースから `popunder-rules.json` を**手書き決定論的 JSON として生成**する独立スクリプト。
+  - ⚠️ **本体フィルタの `scripts/convert.sh`（SafariConverterLib ベース・remote filter → `blockerList.json`）とは別物**。popunder は SafariConverterLib を通さず、この新規ジェネレータが Content Blocker JSON を直接 emit する。理由: (a) ルール順序（block→ignore）を完全制御する必要があり、SafariConverterLib の内部出力順に委ねられない、(b) L2 の `url-filter:".*"` 形は SafariConverterLib が emit しない手書き形。
+  - **既存29ルールに generator が無い問題への対処**: 出荷済み29ルールは ConverterTool でアドホック生成されたもの。新ジェネレータは L1 で**この出荷形を再現**する（`||domain^$script` → `^[^:]+://+([^:/]+\.)?domain[/:]` + `resource-type:["script"]` の標準 ABP→WebKit 変換）。実装時に新生成物が既存 `popunder-rules.json` の L1 部分とルール等価であることをテストで担保（jads.co/glssp.net 追加分を除く）。
+  - 出力先は (a) `PopunderBlockerExtension/Resources/popunder-rules.json`（bundle）と (b) `docs/cdn/popunder-rules.json`（CDN・**新規生成物・現状未存在**）の両方。
+- **CDN 配信**: 本体フィルタが既に使う GitHub Pages CDN（`docs/cdn/`）に popunder-rules.json と version 情報を配置。再生成・push する workflow を用意（§5）。
+- **downloader（拡張・クラス改変はしない）**: `FilterDownloader` は既に `blockerListURL`/`versionURL`/`filename` でパラメータ化済み（`reportedURL` で同パターンの前例あり）。**popunder-rules.json を指す2つ目の FilterDownloader インスタンスを生やす**だけにし、ライブの本体フィルタ DL を壊さない。起動時に CDN の popunder-rules.json を App Group へ best-effort 保存。
 - **resolver（既存・変更なし）**: `PopunderRulesResolver` → `BlockerListResolver` が App Group →（無ければ）bundle を解決。CDN 版が来ていれば優先、無ければ bundle 同梱版。
 
 ## 4. ルール生成の具体（WebKit Content Blocker JSON）
 
 ### L1（安定網・全サイト）
-`||jads.co^$script` 形式のソース行 →
+**出荷済み29ルールと同一の形（`resource-type:["script"]` のみ・`load-type` は付けない）を維持し、ドメインを追加するだけの純粋拡充**にする（既存挙動を変えない）:
 ```json
-{ "trigger": { "url-filter": "^[^:]+://+([^:/]+\\.)?jads\\.co[/:]", "resource-type": ["script"], "load-type": ["third-party"] },
+{ "trigger": { "url-filter": "^[^:]+://+([^:/]+\\.)?jads\\.co[/:]", "resource-type": ["script"] },
   "action": { "type": "block" } }
 ```
-実測ギャップの即補充: **`jads.co`・`glssp.net` を追加**。さらに主要 popunder 網（ExoClick/Adsterra/JuicyAds/PropellerAds/PopAds 等）の **実配信サブドメイン**を監査して補強。
+- 出荷形に `load-type` は無い。**L1 には付けない**（特定の既知広告ドメインを resource-type:script で落とすだけなので load-type は不要・冗長。付けると既存挙動の変更になるため避ける）。
+- 一方 **L2 では `load-type:["third-party"]` を付ける**（全 script を落とす広域ルールなので、サイト自身の first-party script を巻き込まないために third-party 限定が必須）。この L1/L2 の差は意図的。
+- 実測ギャップの即補充: **`jads.co`・`glssp.net` を追加**。さらに主要 popunder 網（ExoClick/Adsterra/JuicyAds/PropellerAds/PopAds 等）の **実配信サブドメイン**を監査して補強。
 
 ### L2（アグレッシブ・対象サイト限定）
 1サイトにつき以下を順序通り生成（**block の後に ignore-previous-rules**）:
@@ -103,6 +108,8 @@ CDN 不達時 → bundle 同梱版にフォールバック（resolver 既存挙�
 ```
 [[feedback_content_blocker_must_bundle_full_ruleset]] 遵守: bundle には常に「その時点の完全な popunder-rules.json」を同梱（初回 DL 前/CDN 不達でも機能する）。
 
+**再生成 workflow**: popunder 専用ジェネレータ（`build_popunder_rules.py`）は **Linux runner で十分**（SafariConverterLib＝macOS は不要）。新規 workflow を足すなら `runs-on: ubuntu-latest` + **`timeout-minutes` 必須**（workflow-timeout-guard hook 遵守）・トリガーは `workflow_dispatch`＋`push: paths: [popunder ソース]` の最小限・`concurrency.cancel-in-progress: true`。本体 `monthly-filter-update.yml`（macos-latest）には混ぜない（責務分離・無駄な macOS 課金回避）。
+
 ## 6. メンテナンス（dogfooding）フロー
 - kureho が新サイトで popunder を踏む → そのサイトを `popunder-aggressive-sites.json` に追加。
 - **allowlist の決め方**: 2026-06-17 に作成した desktop 解析を **`scripts/analyze-popunder.js`（リポジトリ常設ツール）に昇格**。サイト URL を渡すと「遮断される third-party script ＋ 残すべき player/CDN（＝allowlist 候補）」を headless で出力 → `allow` に転記。
@@ -115,7 +122,7 @@ CDN 不達時 → bundle 同梱版にフォールバック（resolver 既存挙�
 - **ルール budget**: 別拡張枠に余裕。converter が上限超過を検知したら build を fail させる（安全弁）。
 
 ## 8. テスト（TDD）
-- **converter 単体**: `popunder-script-networks.txt` / `popunder-aggressive-sites.json` → 期待 Content Blocker JSON。検証点: (a) L1 の url-filter/resource-type/load-type、(b) L2 の `if-domain` 限定、(c) **block → ignore-previous-rules の順序**、(d) ルール数上限。
+- **ジェネレータ単体**: `popunder-script-networks.txt` / `popunder-aggressive-sites.json` → 期待 Content Blocker JSON。検証点: (a) L1 が出荷形（`resource-type:[script]` のみ・`load-type` 無し）でドメイン追加分のみ差分、(b) L2 の `if-domain` 限定＋`load-type:[third-party]`、(c) **block → ignore-previous-rules の順序を emit された JSON 配列の literal index で固定検証**（最低1サイトで「block が index N・allow が N+1…」をアサート。順序崩れが本設計で最も壊れやすい性質のため）、(d) ルール数上限を超えたら build fail、(e) **新生成物の L1 部分が既存出荷 `popunder-rules.json` とルール等価**（jads.co/glssp.net 追加分を除く・回帰防止）。
 - **resolver**: 既存 `PopunderRulesResolverTests` 維持＋ App Group 優先 / bundle フォールバックの分岐。
 - **downloader**: CDN DL → App Group 保存の best-effort。失敗時に既存挙動（bundle）を壊さない。
 - **回帰検証（headless）**: `scripts/analyze-popunder.js` で対象サイトの「popunder gesture listener 消滅 ＋ player 生存」を確認（手動/任意の verification ツール。CI 必須化はしない＝外部サイト依存のため flaky）。
