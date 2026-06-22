@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Popup Shield Fixture</title>
+<style>
+  body { margin: 0; font-family: sans-serif; }
+  #player { position: relative; width: 100%; height: 240px; background: #111; color: #fff; }
+  #player video { width: 100%; height: 100%; }
+  .overlay { position: absolute; inset: 0; z-index: 99999; opacity: 0; background: transparent; }
+  .area { padding: 16px; }
+  button, a.btn { display: inline-block; margin: 6px; padding: 10px 14px; }
+  #legitLink { color: #06c; }
+</style>
+</head>
+<body>
+<!--
+  popup-shield.js（強力モード content script）の決定論テスト用 fixture。
+  各ベクタを「実クリック」で発火させ、結果を window.__fixtureResults に記録する。
+  cross-site の判定は registrable ドメインで行うため、広告 URL は実在不要の
+  別 registrable 文字列（例: doubleclick-ad.test）にしてある（ネットワーク不要・決定論）。
+-->
+<div id="player">
+  <video id="video" muted playsinline></video>
+  <!-- (D) 透明全面 anchor overlay（cross-site target=_blank）でクリック乗っ取り -->
+  <a id="overlayAnchor" class="overlay" href="https://overlay-ad.test/landing" target="_blank"></a>
+</div>
+
+<div class="area">
+  <button id="vInline">inline window.open</button>
+  <button id="vProtoRel">protocol-relative window.open</button>
+  <button id="vThird">third-party-script window.open</button>
+  <button id="vAboutBlank">about:blank → external</button>
+  <button id="vMutationOverlay">add overlay via MutationObserver</button>
+  <button id="vSyntheticClick">synthetic anchor.click()</button>
+  <button id="vIframe">same-origin about:blank iframe window.open</button>
+  <button id="vPlayer">play video (legit)</button>
+  <a id="legitLink" class="btn" href="https://news.example/article" target="_blank">legit external link</a>
+  <a id="legitInternal" class="btn" href="/watch/123" target="_blank">legit internal link</a>
+</div>
+
+<div id="mutHost"></div>
+<iframe id="helper" src="about:blank" style="display:none"></iframe>
+
+<script src="./third-party-popunder.js"></script>
+<script>
+'use strict';
+// 結果記録（hook 注入の有無に関わらず動く）。値: OPENED / BLOCKED / STUB / ALLOWED / PLAYING / NAV
+window.__fixtureResults = {};
+function classifyOpen(w) {
+  if (w === null || w === undefined) return 'BLOCKED';
+  if (w && w.__popupShieldStub === true) return 'STUB';
+  return 'OPENED';
+}
+function rec(k, v) { window.__fixtureResults[k] = v; }
+
+// (C) inline first-party window.open（streamtape の主因と同型）
+document.getElementById('vInline').addEventListener('click', function () {
+  rec('inline', classifyOpen(window.open('https://doubleclick-ad.test/pop?z=1', '_blank')));
+});
+
+// protocol-relative URL（//host）でのクロスサイト popunder（base 解決の検証）
+document.getElementById('vProtoRel').addEventListener('click', function () {
+  rec('protoRel', classifyOpen(window.open('//protorel-ad.test/pop', '_blank')));
+});
+
+// (E) about:blank を開いて後から location を別オリジンへ
+document.getElementById('vAboutBlank').addEventListener('click', function () {
+  var w = window.open('about:blank', '_blank');
+  var cls = classifyOpen(w);
+  if (w && cls !== 'BLOCKED') { try { w.location = 'https://deferred-ad.test/x'; } catch (e) {} }
+  rec('aboutBlank', cls);
+});
+
+// MutationObserver で後付けされる透明 overlay anchor（cross-site）→ クリックで乗っ取り
+document.getElementById('vMutationOverlay').addEventListener('click', function () {
+  var a = document.createElement('a');
+  a.className = 'overlay'; a.href = 'https://mutation-ad.test/x'; a.target = '_blank';
+  a.id = 'mutAnchor';
+  document.getElementById('player').appendChild(a);
+  rec('mutationOverlay', 'ADDED');
+});
+
+// 合成クリック（anchor.click()）cross-site
+document.getElementById('vSyntheticClick').addEventListener('click', function () {
+  var a = document.createElement('a');
+  a.href = 'https://synthetic-ad.test/x'; a.target = '_blank';
+  document.body.appendChild(a);
+  // hook が click を BLOCK すると navigation/popup は起きない。記録は hook decision で判定。
+  a.click();
+  rec('syntheticClick', 'CLICKED');
+});
+
+// 同一オリジン about:blank iframe からの window.open（streamtape ヘルパーフレーム機構）
+document.getElementById('vIframe').addEventListener('click', function () {
+  var ifr = document.getElementById('helper');
+  try {
+    var iw = ifr.contentWindow;
+    // iframe コンテキストの window.open を使う（親と別の関数オブジェクト）
+    var w = iw.open('https://iframe-ad.test/pop', '_blank');
+    rec('iframeOpen', classifyOpen(w));
+  } catch (e) { rec('iframeOpen', 'ERROR:' + e.message); }
+});
+
+// (正規) 動画再生。hook はこれを妨げてはならない（受入条件 6/7）。
+document.getElementById('vPlayer').addEventListener('click', function () {
+  var v = document.getElementById('video');
+  // src は付けない（実メディア不要）。play() が拒否されても「呼べた＝妨害されていない」を記録。
+  try { var p = v.play(); if (p && p.catch) p.catch(function(){}); rec('player', 'PLAYING'); }
+  catch (e) { rec('player', 'ERROR:' + e.message); }
+});
+
+// (正規) ユーザーが選んだ外部リンク（可視・非 overlay・target=_blank）→ 許可されるべき
+document.getElementById('legitLink').addEventListener('click', function () { rec('legitLink', 'CLICKED'); });
+document.getElementById('legitInternal').addEventListener('click', function () { rec('legitInternal', 'CLICKED'); });
+</script>
+</body>
+</html>
