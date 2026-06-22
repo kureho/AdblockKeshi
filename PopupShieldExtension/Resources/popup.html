@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>強力ポップアップ対策</title>
+<style>
+  :root { color-scheme: light; }
+  body { font: -apple-system-body, sans-serif; margin: 0; padding: 16px; width: 300px; background: #fff; color: #111; }
+  h1 { font-size: 16px; margin: 0 0 4px; }
+  p.sub { font-size: 12px; color: #666; margin: 0 0 14px; }
+  .row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-top: 1px solid #eee; }
+  .row .label { font-size: 14px; }
+  .row .hint { font-size: 11px; color: #888; margin-top: 2px; }
+  .counts { font-size: 12px; color: #444; margin-top: 12px; }
+  .counts b { color: #111; }
+  /* simple toggle */
+  .sw { position: relative; width: 46px; height: 28px; flex: 0 0 auto; }
+  .sw input { opacity: 0; width: 0; height: 0; }
+  .sw .track { position: absolute; inset: 0; background: #ccc; border-radius: 999px; transition: .2s; }
+  .sw .track::before { content: ""; position: absolute; height: 22px; width: 22px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+  .sw input:checked + .track { background: #34c759; }
+  .sw input:checked + .track::before { transform: translateX(18px); }
+  .disabled { opacity: .4; pointer-events: none; }
+</style>
+</head>
+<body>
+<h1>強力ポップアップ対策</h1>
+<p class="sub">対象サイトで、タップ時に広告サイトへ飛ばす「タブ乗っ取り」を抑えます。閲覧履歴やページ内容を外部に送ることはありません。</p>
+
+<div class="row">
+  <div>
+    <div class="label">強力モード</div>
+    <div class="hint">オンにすると対象サイトで動作します（既定オフ）</div>
+  </div>
+  <label class="sw"><input type="checkbox" id="enabled"><span class="track"></span></label>
+</div>
+
+<div class="row" id="siteRow">
+  <div>
+    <div class="label">このサイトで一時停止</div>
+    <div class="hint" id="siteHost">—</div>
+  </div>
+  <label class="sw"><input type="checkbox" id="paused"><span class="track"></span></label>
+</div>
+
+<div class="counts">ブロック件数: <b id="countNum">0</b></div>
+
+<script src="popup-shield-core.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

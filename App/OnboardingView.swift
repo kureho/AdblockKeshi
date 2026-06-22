@@ -217,6 +217,14 @@ struct FilterInfoSheet: View {
                         detail: "動画・まとめサイト等でサムネをタップすると広告サイトに飛ばされる「タップ乗っ取り」を、既知のポップアップ広告ネットワークのスクリプトをブロックして抑えます。"
                     )
 
+                    FilterDescriptionCard(
+                        iconName: "bolt.shield.fill",
+                        title: "強力ポップアップ対策（任意・上級者向け）",
+                        detail: "上の対策でも消えない「サイト自身のスクリプトが開くタブ乗っ取り」を、対象サイトに限って止めます。Safari の機能拡張として、ご自身でオンにしたときだけ動きます。"
+                    )
+
+                    StrongModePermissionNote()
+
                     Text("標準＋自己学習で広告を消し、ポップアップ広告対策で不要な誘導も防ぐと、より強力です。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
