@@ -411,5 +411,44 @@
     "action": {
       "type": "ignore-previous-rules"
     }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*",
+      "resource-type": [
+        "script"
+      ],
+      "load-type": [
+        "third-party"
+      ],
+      "if-domain": [
+        "*streamtape.com"
+      ]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "^[^:]+://+([^:/]+\\.)?gstatic\\.com[/:]",
+      "if-domain": [
+        "*streamtape.com"
+      ]
+    },
+    "action": {
+      "type": "ignore-previous-rules"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "^[^:]+://+([^:/]+\\.)?google\\.com[/:]",
+      "if-domain": [
+        "*streamtape.com"
+      ]
+    },
+    "action": {
+      "type": "ignore-previous-rules"
+    }
   }
 ]

@@ -15,10 +15,30 @@ import re
 from pathlib import Path
 
 _NETWORK_LINE = re.compile(r"^\|\|([^/^]+)\^\$script$")
+# 妥当な domain = 英数 / ドット / ハイフンのみ（空白・スキーム・パス・コロンを含まない）。
+_VALID_DOMAIN = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}$")
+
+
+def _validate_domain(domain: str) -> str:
+    """domain 文字列を検証する。不正（空白・スキーム・パス等）なら ValueError。"""
+    if not isinstance(domain, str) or not _VALID_DOMAIN.match(domain.strip()):
+        raise ValueError(f"invalid domain: {domain!r}")
+    return domain.strip()
+
+
+def _dedup(seq: list[str]) -> list[str]:
+    """出現順を保ったまま重複を除去する。"""
+    seen: set[str] = set()
+    out: list[str] = []
+    for x in seq:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
 
 
 def parse_networks(text: str) -> list[str]:
-    """popunder-script-networks.txt から domain を抽出する。
+    """popunder-script-networks.txt から domain を抽出する（重複は出現順で除去）。
 
     `!` 始まりの行（コメント/セクションヘッダ）と空行は無視し、
     `||domain^$script` 形の行のみをパースする（入力契約）。
@@ -31,7 +51,7 @@ def parse_networks(text: str) -> list[str]:
         m = _NETWORK_LINE.match(s)
         if m:
             domains.append(m.group(1))
-    return domains
+    return _dedup(domains)
 
 
 def _domain_anchor(domain: str) -> str:
@@ -46,6 +66,7 @@ def _domain_anchor(domain: str) -> str:
 
 def network_rule(domain: str) -> dict:
     """L1: 既知広告網ドメインを resource-type:script で block（出荷29ルールと同形・load-type は付けない）。"""
+    domain = _validate_domain(domain)
     return {
         "trigger": {"url-filter": _domain_anchor(domain), "resource-type": ["script"]},
         "action": {"type": "block"},
@@ -58,7 +79,7 @@ def aggressive_site_rules(site: dict) -> list[dict]:
     block（全 third-party script を if-domain 限定で遮断）→ allow 各 domain ごとに
     ignore-previous-rules 1件（block の後）。allow は「1 entry = 1 ルール」（alternation にしない）。
     """
-    domain = site["domain"]
+    domain = _validate_domain(site["domain"])
     if_domain = [f"*{domain}"]
     rules: list[dict] = [{
         "trigger": {
@@ -70,6 +91,7 @@ def aggressive_site_rules(site: dict) -> list[dict]:
         "action": {"type": "block"},
     }]
     for allow in site.get("allow", []):
+        allow = _validate_domain(allow)
         rules.append({
             "trigger": {"url-filter": _domain_anchor(allow), "if-domain": if_domain},
             "action": {"type": "ignore-previous-rules"},

@@ -9,5 +9,13 @@
       "tokyo-motion.net"
     ],
     "note": "2026-06-17 desktop実測。fluidplayer=動画プレーヤー / tokyo-motion.net=サイト自身CDN / googleapis=jQuery等。回転popunder(reservedghettocrimpycrimpy等)はblock側で消え、これらallowでプレーヤーは生存する。"
+  },
+  {
+    "domain": "streamtape.com",
+    "allow": [
+      "gstatic.com",
+      "google.com"
+    ],
+    "note": "2026-06-23 headless実測(tasks/streamtape-hardening/baseline.md)。L2=third-party script全blockで広告scriptを抑止し実popupを22→7に低減（defense-in-depth）。allowは実測present かつ既知安全なinfraのみ(gstatic/google=recaptcha温存)。プレーヤーはfirst-partyのみ＝third-party全blockでも生存(static-sim実証3/3)。注意:主因のfirst-party inline window.open popunderはL2では止まらない→強力モード(PopupShieldExtension)が必要。"
   }
 ]
