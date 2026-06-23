@@ -85,6 +85,15 @@ App Store 説明で強力モード対応を断定しない。
 - エラー分類（あれば）:
 ```
 
-## build/install/launch 実行結果（自走分）
+## build/install/launch 実行結果（自走分）— 2026-06-23
 
-（下に追記）
+- 端末: KPhone = iPhone 17 Pro（iPhone18,1・現行 iOS）
+- **device build: BUILD SUCCEEDED**（`-allowProvisioningUpdates`・自動署名）。
+  新規 bundle id `com.kureho.adblockkeshi.popupshield` の provisioning profile も自動生成され、
+  app + 全 4 拡張（標準/自己学習/ポップアップ/**強力ポップアップ**）が署名された。
+- **install: 成功**（`xcrun devicectl device install app`・bundleID com.kureho.adblockkeshi）。
+- **launch: 成功**（`xcrun devicectl device process launch`・「Launched application」確認）。
+
+→ 実機での build / install / launch は自走で確認済み。**ただし挙動の E2E（拡張有効化・権限付与・
+streamtape での 3 cold load × 10 操作・popup 0・プレーヤー生存・active 表示）は画面操作と目視が必要で
+自動化できないため kureho 手動待ち。よって「実機挙動 未確認」＝本 PR はマージ不可。**
