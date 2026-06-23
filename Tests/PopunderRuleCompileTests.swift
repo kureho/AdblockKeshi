@@ -37,4 +37,23 @@ final class PopunderRuleCompileTests: XCTestCase {
         )
         XCTAssertNotNil(list, "WebKit が L2 アグレッシブルールのコンパイルに失敗した")
     }
+
+    /// 出荷する popunder-rules.json「全体」（L1 + streamtape/tokyomotion の L2 含む）が
+    /// WebKit Content Blocker コンパイラに丸ごと受理されることを検証する（Phase 4-B）。
+    /// 1 ルールでも不正だと全体 load 失敗（all-or-nothing）になるため、提出前の要となる検証。
+    func test_full_popunder_rules_json_compiles_in_webkit() async throws {
+        // リポジトリ内の出荷 JSON を #filePath 起点で読む（Tests/ → repo ルート → PopunderBlockerExtension/...）。
+        let testFile = URL(fileURLWithPath: #filePath)
+        let repoRoot = testFile.deletingLastPathComponent().deletingLastPathComponent()
+        let rulesURL = repoRoot
+            .appendingPathComponent("PopunderBlockerExtension/Resources/popunder-rules.json")
+        let json = try String(contentsOf: rulesURL, encoding: .utf8)
+
+        let store = try XCTUnwrap(WKContentRuleListStore.default())
+        let list = try await store.compileContentRuleList(
+            forIdentifier: "popunder-full-compile-test",
+            encodedContentRuleList: json
+        )
+        XCTAssertNotNil(list, "出荷 popunder-rules.json 全体の WebKit コンパイルに失敗した")
+    }
 }

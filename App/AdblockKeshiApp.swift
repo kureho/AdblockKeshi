@@ -1,4 +1,5 @@
 import SwiftUI
+import SafariServices
 
 @main
 struct AdblockKeshiApp: App {
@@ -54,6 +55,7 @@ struct AdblockKeshiApp: App {
             }
             .animation(.easeOut(duration: 0.2), value: reviewCoordinator.showSatisfactionPrompt)
             .task {
+                migrateReportedRulesIfNeeded()
                 ReviewPrompt.recordFirstLaunchIfNeeded()
                 await appState.refresh()
                 bumpDailyUsageIfNeeded()
@@ -84,6 +86,19 @@ extension AdblockKeshiApp {
                 ReviewPromptCoordinator.shared.showSatisfactionPrompt = true
             }
         }
+    }
+}
+
+extension AdblockKeshiApp {
+    /// 既存端末治癒（2026-06-23）: 旧版で生成された「document を遮断し得る自己報告ルール」を
+    /// 起動時に purge する。ネットワーク非依存・idempotent。除去が発生したときだけ報告
+    /// Content Blocker を reload して即座に反映する（被害端末がアップデートしただけで治る）。
+    private func migrateReportedRulesIfNeeded() {
+        guard let store = SelfReportedRulesStore() else { return }
+        guard (try? store.sanitizeStoredSelfRules()) == true else { return }
+        SFContentBlockerManager.reloadContentBlocker(
+            withIdentifier: SFContentBlockerStateChecker.reportedID
+        ) { _ in }
     }
 }
 

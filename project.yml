@@ -7,8 +7,8 @@ options:
 settings:
   base:
     DEVELOPMENT_TEAM: L455WPL8QZ
-    MARKETING_VERSION: "3.3.0"
-    CURRENT_PROJECT_VERSION: "23"
+    MARKETING_VERSION: "3.4.0"
+    CURRENT_PROJECT_VERSION: "24"
     SWIFT_VERSION: "5.10"
     CODE_SIGN_STYLE: Automatic
     TARGETED_DEVICE_FAMILY: "1"  # iPhone only (iPad multitasking 対応不要にする)
@@ -54,6 +54,8 @@ targets:
       - target: ReportedRulesExtension
         embed: true
       - target: PopunderBlockerExtension
+        embed: true
+      - target: PopupShieldExtension
         embed: true
 
   ContentBlockerExtension:
@@ -127,6 +129,40 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.kureho.adblockkeshi.popunderblocker
         CODE_SIGN_ENTITLEMENTS: PopunderBlockerExtension/Extension.entitlements
         PRODUCT_NAME: PopunderBlockerExtension
+
+  PopupShieldExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: PopupShieldExtension/SafariWebExtensionHandler.swift
+      # Web Extension リソース: ルート直下ファイルは個別指定で resources phase へ（bundle ルートに平坦化）。
+      # _locales は階層（_locales/ja/messages.json）を保つためフォルダ参照にする。
+      - path: PopupShieldExtension/Resources/manifest.json
+      - path: PopupShieldExtension/Resources/background.js
+      - path: PopupShieldExtension/Resources/popup.html
+      - path: PopupShieldExtension/Resources/popup.js
+      - path: PopupShieldExtension/Resources/popup-shield-core.js
+      - path: PopupShieldExtension/Resources/popup-shield-main.js
+      - path: PopupShieldExtension/Resources/popup-shield-bridge.js
+      - path: PopupShieldExtension/Resources/popup-shield-status.js
+      - path: PopupShieldExtension/Resources/_locales
+        type: folder
+      - path: PopupShieldExtension/Resources/images
+        type: folder
+    info:
+      path: PopupShieldExtension/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.Safari.web-extension
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SafariWebExtensionHandler
+        CFBundleDisplayName: 強力ポップアップ対策
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kureho.adblockkeshi.popupshield
+        CODE_SIGN_ENTITLEMENTS: PopupShieldExtension/Extension.entitlements
+        PRODUCT_NAME: PopupShieldExtension
 
   AdblockKeshiTests:
     type: bundle.unit-test

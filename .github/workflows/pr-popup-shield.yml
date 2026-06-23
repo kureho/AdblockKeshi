@@ -1,0 +1,122 @@
+# PR 検証: 強力モード(PopupShield) + popunder ルールの品質ゲート。
+# heavy-process-safety / workflow-timeout-guard 遵守: timeout 必須・concurrency・cache・secret 不要・push しない。
+# macOS runner（Swift/Xcode/Release）は [paid-approved-by-kureho] 2026-06-23 承認済み。
+#   本リポは PUBLIC のため GitHub Actions は全 runner 無料（$0）。timeout 30 分 + cancel-in-progress で暴走防止。
+name: pr-popup-shield
+
+on:
+  pull_request:
+    paths:
+      - 'PopupShieldExtension/**'
+      - 'PopunderBlockerExtension/Resources/popunder-rules.json'
+      - 'docs/cdn/popunder-rules.json'
+      - 'scripts/build_popunder_rules.py'
+      - 'scripts/tests/**'
+      - 'tasks/b-popunder-script/**'
+      - 'project.yml'
+      - 'Tests/PopunderRuleCompileTests.swift'
+      - 'workers/**'
+      - '.github/workflows/pr-popup-shield.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: pr-popup-shield-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: workers/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-pytest-${{ runner.os }}
+      - name: Install pytest
+        run: python3 -m pip install --quiet pytest
+      - name: Python rule generation tests
+        run: python3 -m pytest scripts/tests/test_build_popunder_rules.py -q
+      - name: Node extension unit tests (core/bridge/plan/health)
+        run: node --test PopupShieldExtension/Tests/popup-shield-core.test.js PopupShieldExtension/Tests/popup-shield-bridge.test.js PopupShieldExtension/Tests/background-plan.test.js PopupShieldExtension/Tests/background-health.test.js
+      - name: Static check (MAIN world has no Extension API)
+        run: node --test PopupShieldExtension/Tests/popup-shield-static.test.js
+      - name: Deterministic fixture (MAIN/ISOLATED runtime path, headless chromium)
+        run: |
+          npm install --no-save playwright@1
+          npx playwright install --with-deps chromium
+          node PopupShieldExtension/Tests/fixtures/run-fixture.js
+      - name: Generated artifact consistency (regenerate, bundle==cdn)
+        run: |
+          python3 scripts/build_popunder_rules.py \
+            --networks tasks/b-popunder-script/popunder-script-networks.txt \
+            --sites tasks/b-popunder-script/popunder-aggressive-sites.json \
+            --out /tmp/a.json --out /tmp/b.json
+          cmp /tmp/a.json /tmp/b.json
+          cmp /tmp/a.json PopunderBlockerExtension/Resources/popunder-rules.json
+          cmp PopunderBlockerExtension/Resources/popunder-rules.json docs/cdn/popunder-rules.json
+      - name: Manifest JSON validation
+        run: node -e "JSON.parse(require('fs').readFileSync('PopupShieldExtension/Resources/manifest.json','utf8')); JSON.parse(require('fs').readFileSync('PopupShieldExtension/Resources/_locales/ja/messages.json','utf8')); console.log('manifest + locales JSON valid')"
+      - name: Web Extension resource structure
+        run: |
+          for f in manifest.json background.js popup.html popup.js \
+                   popup-shield-core.js popup-shield-main.js popup-shield-bridge.js popup-shield-status.js \
+                   _locales/ja/messages.json images/icon-128.png; do
+            test -f "PopupShieldExtension/Resources/$f" || { echo "missing $f"; exit 1; }
+          done
+          echo "resource structure ok"
+      - name: manifest / project version consistency
+        run: |
+          node -e '
+            const fs=require("fs");
+            const m=JSON.parse(fs.readFileSync("PopupShieldExtension/Resources/manifest.json","utf8")).version;
+            const p=(fs.readFileSync("project.yml","utf8").match(/MARKETING_VERSION:\s*"([^"]+)"/)||[])[1];
+            if(m!==p){console.error("version mismatch manifest="+m+" project="+p);process.exit(1);}
+            console.log("version consistent: "+m);
+          '
+      - name: Workers rule-safety tests (vitest, local workerd)
+        # decideL6 が 'block' を出さない不変条件等を CI で保護する。
+        # npm test = vitest run（ローカル workerd・deploy/remote D1/secret 不要）。
+        working-directory: workers
+        run: |
+          npm ci
+          npm test
+
+  # macOS runner は kureho 承認済み [paid-approved-by-kureho] 2026-06-23。PUBLIC repo = 無料。
+  macos-xcode:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      - name: Unit tests + WebKit Content Rule List compile
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project AdblockKeshi.xcodeproj -scheme AdblockKeshi \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -only-testing:AdblockKeshiTests \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Release build (app + all extensions, unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project AdblockKeshi.xcodeproj -scheme AdblockKeshi \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO
