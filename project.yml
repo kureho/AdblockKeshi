@@ -75,7 +75,7 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ContentBlockerRequestHandler
           NSExtensionAttributes:
             ContentBlockerExtensionType: "general"
-        CFBundleDisplayName: 標準フィルタ
+        CFBundleDisplayName: 広告消し — 基本保護
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     settings:
@@ -101,7 +101,7 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PopunderContentBlockerRequestHandler
           NSExtensionAttributes:
             ContentBlockerExtensionType: "general"
-        CFBundleDisplayName: ポップアップ広告対策
+        CFBundleDisplayName: 広告消し — 報告反映
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     settings:
@@ -135,7 +135,7 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.Safari.web-extension
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SafariWebExtensionHandler
-        CFBundleDisplayName: 強力ポップアップ対策
+        CFBundleDisplayName: 広告消し — 遷移保護
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     settings:
