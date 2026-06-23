@@ -115,6 +115,22 @@ final class CombinedRuleListBuilderTests: XCTestCase {
         XCTAssertEqual(try combinedRules("merged-rules.json"), good)
     }
 
+    /// 非アクティブ variant の combined は cleanup で削除（disk 肥大回避）。
+    func test_cleanup_removes_non_active_variant_combined() throws {
+        let b = CombinedRuleListBuilder(directory: dir, appBuildVersion: "100")
+        let mStd = try writeStandard([block("a.test")], "merged-rules.json")
+        let aStd = try writeStandard([block("b.test")], "ad-rules.json")
+        _ = try b.rebuildIfNeeded(variantFilename: "merged-rules.json", standardRulesURL: mStd,
+                                  mayTruncate: false, reportedSafe: [block("c.test")])
+        _ = try b.rebuildIfNeeded(variantFilename: "ad-rules.json", standardRulesURL: aStd,
+                                  mayTruncate: true, reportedSafe: [block("c.test")])
+        XCTAssertTrue(combinedExists("merged-rules.json"))
+        XCTAssertTrue(combinedExists("ad-rules.json"))
+        b.cleanupCombined(except: "merged-rules.json")
+        XCTAssertTrue(combinedExists("merged-rules.json"))   // アクティブは残る
+        XCTAssertFalse(combinedExists("ad-rules.json"))      // 非アクティブは削除
+    }
+
     /// mayTruncate 経路（小入力では truncation 起きず prefix+reported）。truncation 算術は ReportedRuleBudgetTests が担保。
     func test_truncate_path_small_input_no_truncation() throws {
         let std = try writeStandard((0..<5).map { block("s\($0).test") }, "ad-rules.json")

@@ -42,9 +42,25 @@ final class SelfReportedRulesStoreTests: XCTestCase {
         XCTAssertEqual(merged, Set([a, b].map { $0.trigger.urlFilter }))
     }
 
-    /// 保存先 merged ファイル名が、Extension が読むファイル名と一致していること（silent failure 防止）。
-    func test_merged_filename_matches_resolver_filename() {
-        XCTAssertEqual(SelfReportedRulesStore.mergedFilename, ReportedRulesResolver.filename)
+    /// 自己学習 merged のファイル名は rules-reported.json に固定（rebuildMerged が書く正準名）。
+    func test_merged_filename_is_canonical() {
+        XCTAssertEqual(SelfReportedRulesStore.mergedFilename, "rules-reported.json")
+    }
+
+    /// round-trip: ReportedRuleBuilder 生成ルールは安全(document非遮断)なので safeMerged を生き残り、
+    /// 予算超過時に self が優先されるよう順序は global → self（self が末尾）。
+    func test_safeMerged_keeps_generated_rules_and_orders_self_last() throws {
+        let store = SelfReportedRulesStore(directory: dir)
+        let selfRule = try XCTUnwrap(ReportedRuleBuilder.blockRule(forURL: "https://self-ad.test/"))
+        let globalRule = try XCTUnwrap(ReportedRuleBuilder.blockRule(forURL: "https://global-ad.test/"))
+        try JSONEncoder().encode([selfRule]).write(to: dir.appendingPathComponent("rules-self.json"))
+        try JSONEncoder().encode([globalRule]).write(to: dir.appendingPathComponent("rules-global.json"))
+
+        let safe = store.safeMergedReportedRules()
+        XCTAssertTrue(safe.contains(selfRule), "生成ルール(self)は安全なので残る")
+        XCTAssertTrue(safe.contains(globalRule))
+        XCTAssertFalse(safe.contains(where: { ReportedRuleSafety.isDocumentBlockingRisk($0) }))
+        XCTAssertEqual(safe.last, selfRule, "予算超過時に優先保持されるよう self は末尾")
     }
 
     // MARK: - 2026-06-23 既存端末治癒 + 防御多層

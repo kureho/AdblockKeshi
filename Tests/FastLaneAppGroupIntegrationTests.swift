@@ -25,7 +25,7 @@ final class FastLaneAppGroupIntegrationTests: XCTestCase {
 
         XCTAssertTrue(try store.appendSelfRule(rule))
 
-        // 報告Extension(ReportedRulesResolver)が読むファイル名で、実FS上に出来ていること
+        // 自己学習 merged のファイル名(rules-reported.json)で、実FS上に出来ていること
         let mergedURL = subdir.appendingPathComponent(SelfReportedRulesStore.mergedFilename)
         XCTAssertTrue(FileManager.default.fileExists(atPath: mergedURL.path),
                       "rules-reported.json が実コンテナFSに書かれていない")

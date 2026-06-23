@@ -11,9 +11,14 @@ import WebKit
 enum CombinedRuleListCoordinator {
     enum CoordinatorError: Error { case encoding, compileTimeout }
 
-    /// 任意スレッドから安全に起動（内部で utility queue へ載せ替え）。fire-and-forget。
+    /// 再生成は **serial queue で直列化**する。報告追加とトグル変更が連打されても、
+    /// 並行実行で「古い combined が新しい combined を上書きする」順序逆転を防ぐ（off-main も兼ねる）。
+    private static let regenQueue = DispatchQueue(
+        label: "com.kureho.adblockkeshi.combined-regen", qos: .utility)
+
+    /// 任意スレッドから安全に起動。fire-and-forget。
     static func scheduleRegenerate() {
-        DispatchQueue.global(qos: .utility).async { regenerateIfNeeded() }
+        regenQueue.async { regenerateIfNeeded() }
     }
 
     /// 現在 state の combined を必要時のみ再生成し、変化時だけ標準 ContentBlocker を reload。
@@ -36,6 +41,8 @@ enum CombinedRuleListCoordinator {
             reportedSafe: reportedSafe,
             compileVerify: compileVerify
         )
+        // 非アクティブ state の combined-* は孤児なので一掃（App Group の disk 肥大回避）。
+        builder.cleanupCombined(except: variant)
         guard outcome?.rebuilt == true else { return }
         DispatchQueue.main.async {
             SFContentBlockerManager.reloadContentBlocker(
@@ -63,6 +70,8 @@ enum CombinedRuleListCoordinator {
         }
         // off-main 前提。completion は別 queue で発火するので deadlock しない。30s でタイムアウト。
         if sem.wait(timeout: .now() + 30) == .timedOut { throw CoordinatorError.compileTimeout }
+        // 検証用にコンパイルした孤児エントリを削除（WKContentRuleListStore に溜めない）。best-effort。
+        WKContentRuleListStore.default().removeContentRuleList(forIdentifier: "combined-verify") { _ in }
         if let e = compileError { throw e }
     }
 }

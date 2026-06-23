@@ -34,6 +34,21 @@ struct CombinedRuleListBuilder {
     /// 標準 variant ファイル名（例 "merged-rules.json"）から combined ファイル名を導く。
     static func combinedFilename(forVariant variant: String) -> String { "combined-" + variant }
 
+    /// 全 state の標準 variant ファイル名（BlockerListResolver.filename(for:) と対応）。
+    static let allVariants = ["merged-rules.json", "ad-rules.json", "security-rules.json", "empty-rules.json"]
+
+    /// アクティブ variant 以外の combined-* と .meta を削除する（非アクティブ state の孤児を一掃）。
+    /// 当該 state に切り替わった際は change-guard が miss して再生成されるので安全。
+    func cleanupCombined(except activeVariant: String) {
+        let keep = Self.combinedFilename(forVariant: activeVariant)
+        for variant in Self.allVariants {
+            let name = Self.combinedFilename(forVariant: variant)
+            guard name != keep else { continue }
+            try? fileManager.removeItem(at: directory.appendingPathComponent(name))
+            try? fileManager.removeItem(at: directory.appendingPathComponent(name + ".meta"))
+        }
+    }
+
     struct Outcome: Equatable {
         var rebuilt: Bool
         var droppedStandard: Int

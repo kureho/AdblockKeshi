@@ -65,6 +65,15 @@ WebKit 上限 = **150,000/拡張**（一次ソース確認済み・`PHASE1-merge
 project.yml の target + app dependency / `ReportedRulesExtension/` dir / `ReportedContentBlockerRequestHandler` / `reportedID` reload 呼び出し / BackgroundTask の reported reload / UI・onboarding・README・docs の「自己学習フィルタ＝独立拡張」記述。`ReportedRulesResolver` は reported 拡張専用だったので削除（self/global/merged の store ロジックは存続）。
 - 履歴・migration 説明・互換テストでの文字列利用は必要性明記で可。
 
+## レビュー反映（2026-06-23・code-reviewer + Codex）
+critical なし。指摘を以下のとおり修正済み:
+- **[HIGH] 並行再生成の順序逆転**: coordinator を専用 **serial queue** で直列化（報告+トグル連打で古い combined が新しいものを上書きするのを防止）。
+- **[MEDIUM] 非アクティブ state の combined 孤児蓄積（40MB+）**: `CombinedRuleListBuilder.cleanupCombined(except:)` でアクティブ以外の combined-* を一掃（coordinator が再生成時に呼ぶ）。
+- **[MEDIUM] 予算選別の self/global 優先順**: `safeMergedReportedRules()` を **global → self** 順にし、`selectReported` の末尾優先保持で**ユーザー自身の報告(self/ファストレーン)を global より優先**して残す。
+- **[LOW] dead code**: 到達不能 `.baseOnly/.reportedOnly`（消えた拡張を案内する誤誘導バナー）と `reportedEnabled` を削除（mode は bothEnabled/bothDisabled の2値）。`ReportedRulesResolver` を削除（設計どおり・production 参照ゼロ）。
+- **[LOW] compile-verify 孤児**: 検証用 `combined-verify` エントリを検証後に `removeContentRuleList` で削除。
+- **[LOW] テスト網羅**: 生成ルール→safety filter 生存→self 優先順の round-trip テスト、cleanup テストを追加。
+
 ## TDD 対象（pure・unit）
 budget 計算 / merge ordering（standard→reported）/ structural dedup / document-block 除外 pass-through / 決定論選別（新しさ）/ change-guard key / byte-splice 正当性（splice 結果 == decode→merge→encode と等価）。
 - compile-verify（WKContentRuleListStore）と標準拡張が combined を実際に読むことは **device 検証（Phase 7）**。report ではこの線を honest に保つ。
