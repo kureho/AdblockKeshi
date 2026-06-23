@@ -52,8 +52,8 @@ async function clickEl(page, sel) {
 
 async function main() {
   const coreSrc = fs.readFileSync(path.join(RES, 'popup-shield-core.js'), 'utf8');
-  const hookPath = path.join(RES, 'popup-shield.js');
-  if (!fs.existsSync(hookPath)) { console.error('FAIL: popup-shield.js が存在しない（RED）'); process.exit(1); }
+  const hookPath = path.join(RES, 'popup-shield-main.js');
+  if (!fs.existsSync(hookPath)) { console.error('FAIL: popup-shield-main.js が存在しない（RED）'); process.exit(1); }
   const hookSrc = fs.readFileSync(hookPath, 'utf8');
 
   const srv = await serve(DIR);
@@ -61,7 +61,7 @@ async function main() {
   const base = `http://127.0.0.1:${port}/`;
   const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--no-sandbox'] });
   const popups = [];
-  let results = {}, decisions = [];
+  let results = {}, decisions = [], shieldEvents = [];
   try {
     const context = await browser.newContext({ userAgent: IPHONE_UA, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     // 広告 popup が万一生成されてもコンテンツを読み込まない（.test は非解決だが保険で abort）
@@ -81,6 +81,9 @@ async function main() {
     await page.evaluate(({ c, h }) => {
       // テスト観測用フック（PII 無し: kind/action/reason のみ）
       window.__popupShieldTest = { onDecision: (d) => (window.__decisions = window.__decisions || [], window.__decisions.push(d)) };
+      // MAIN→ISOLATED bridge へ飛ぶ CustomEvent を捕捉（bridge の代わりに観測）
+      window.__shieldEvents = [];
+      window.addEventListener('__popupShieldMsg', (e) => { window.__shieldEvents.push(e.detail); }, false);
       // eslint-disable-next-line no-eval
       (0, eval)(c); (0, eval)(h);
     }, { c: coreSrc, h: hookSrc });
@@ -107,6 +110,7 @@ async function main() {
 
     results = await page.evaluate(() => window.__fixtureResults || {});
     decisions = await page.evaluate(() => window.__decisions || []);
+    shieldEvents = await page.evaluate(() => window.__shieldEvents || []);
   } finally {
     await browser.close();
     await new Promise((r) => srv.close(r));
@@ -117,6 +121,11 @@ async function main() {
   // 広告 window.open は全て block されるので popup を生成しない。よって生成された popup は
   // 許可された target=_blank（正規リンク 2 件: legitLink/legitInternal）だけになるはず。
   const legitCrossSiteAllowed = decisions.some((d) => d.kind === 'native-anchor' && d.action === 'allow' && d.crossSite === true && d.overlay === false);
+  // MAIN→bridge イベント検証（PII を含まない最小スキーマ）
+  const ALLOWED_EVENT_KEYS = ['version', 'type', 'frame', 'reason'];
+  const readyEmitted = shieldEvents.some((e) => e && e.type === 'ready' && e.version === 1);
+  const blockedEmitted = shieldEvents.filter((e) => e && e.type === 'blocked' && e.reason).length;
+  const eventsNoPII = shieldEvents.every((e) => e && typeof e === 'object' && Object.keys(e).every((k) => ALLOWED_EVENT_KEYS.indexOf(k) !== -1));
 
   const checks = [
     ['inline window.open BLOCKED', results.inline === 'BLOCKED'],
@@ -130,6 +139,9 @@ async function main() {
     ['正規: 内部リンクがクリックできる', results.legitInternal === 'CLICKED'],
     ['正規: ユーザーが選んだ cross-site 可視リンクは許可', legitCrossSiteAllowed],
     ['広告由来の popup が 0 件（許可された正規リンクの 2 popup のみ）', popups.length === 2],
+    ['MAIN→bridge: ready イベント発行', readyEmitted],
+    ['MAIN→bridge: blocked イベントが reason 付きで発行', blockedEmitted >= 3],
+    ['MAIN→bridge: イベントに URL/PII を含まない（最小スキーマのみ）', eventsNoPII && shieldEvents.length > 0],
   ];
 
   let ok = true;
@@ -137,6 +149,7 @@ async function main() {
   console.log('\n--- detail ---');
   console.log('results:', JSON.stringify(results));
   console.log('decisions:', JSON.stringify(decisions));
+  console.log('shieldEvents:', JSON.stringify(shieldEvents));
   console.log('popups:', JSON.stringify(popups));
   process.exit(ok ? 0 : 1);
 }
