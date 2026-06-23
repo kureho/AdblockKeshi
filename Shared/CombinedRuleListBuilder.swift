@@ -60,7 +60,26 @@ struct CombinedRuleListBuilder {
         let combinedURL = directory.appendingPathComponent(combinedName)
         let metaURL = directory.appendingPathComponent(combinedName + ".meta")
 
-        let reportedData = try JSONEncoder().encode(reportedSafe)
+        // 自己学習が空: combined を作らない（標準と同一の 19.5MB 複製を App Group に残さない）。
+        // 既存 combined があれば削除して resolver を bundle 標準へフォールバックさせる
+        // （reported 無し時は bundle 標準が正しい。migration purge で空になった端末の stale combined も除去）。
+        if reportedSafe.isEmpty {
+            let combinedURL = directory.appendingPathComponent(Self.combinedFilename(forVariant: variantFilename))
+            let metaURL = directory.appendingPathComponent(Self.combinedFilename(forVariant: variantFilename) + ".meta")
+            guard fileManager.fileExists(atPath: combinedURL.path) else {
+                return Outcome(rebuilt: false, droppedStandard: 0, droppedReported: 0)
+            }
+            try? fileManager.removeItem(at: combinedURL)
+            try? fileManager.removeItem(at: metaURL)
+            return Outcome(rebuilt: true, droppedStandard: 0, droppedReported: 0)
+        }
+
+        // change-key 用は .sortedKeys で決定的にエンコードする。
+        // 既定の JSONEncoder は keyed container のキー順が非決定的で、hash がブレて change-guard が
+        // 毎回再生成してしまう（起動フリーズ回避の目的が無効化される）ため。
+        let keyEncoder = JSONEncoder()
+        keyEncoder.outputFormatting = [.sortedKeys]
+        let reportedData = try keyEncoder.encode(reportedSafe)
         let key = changeKey(variant: variantFilename, reportedData: reportedData)
 
         // change-guard: 入力が変わっておらず combined が既にあれば再生成しない（起動フリーズ回避）。

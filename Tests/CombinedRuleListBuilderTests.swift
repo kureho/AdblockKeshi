@@ -66,13 +66,36 @@ final class CombinedRuleListBuilderTests: XCTestCase {
         XCTAssertTrue(out.rebuilt)
     }
 
-    func test_empty_reported_yields_standard_only() throws {
+
+    private func combinedExists(_ variant: String) -> Bool {
+        FileManager.default.fileExists(atPath:
+            dir.appendingPathComponent(CombinedRuleListBuilder.combinedFilename(forVariant: variant)).path)
+    }
+
+    /// 自己学習が空なら combined を書かない（19.5MB の標準複製を作らない＝disk 肥大回避）。
+    /// resolver は combined 不在時に bundle 標準へフォールバックする（reported 無し時はそれが正しい）。
+    func test_empty_reported_writes_no_combined() throws {
         let std = try writeStandard([block("a.test"), block("b.test")], "merged-rules.json")
         let b = CombinedRuleListBuilder(directory: dir, appBuildVersion: "100")
         let out = try b.rebuildIfNeeded(variantFilename: "merged-rules.json", standardRulesURL: std,
                                         mayTruncate: false, reportedSafe: [])
-        XCTAssertTrue(out.rebuilt)
-        XCTAssertEqual(try combinedRules("merged-rules.json"), [block("a.test"), block("b.test")])
+        XCTAssertFalse(out.rebuilt)               // 書く対象なし
+        XCTAssertFalse(combinedExists("merged-rules.json")) // combined 不在
+    }
+
+    /// 自己学習が空になったら（migration purge 等）既存 combined を削除し、bundle 標準へ戻す。
+    func test_empty_reported_removes_stale_combined() throws {
+        let std = try writeStandard([block("a.test")], "merged-rules.json")
+        let b = CombinedRuleListBuilder(directory: dir, appBuildVersion: "100")
+        // 一度 reported ありで生成 → combined 存在
+        _ = try b.rebuildIfNeeded(variantFilename: "merged-rules.json", standardRulesURL: std,
+                                  mayTruncate: false, reportedSafe: [block("c.test")])
+        XCTAssertTrue(combinedExists("merged-rules.json"))
+        // reported 空 → stale combined を削除して reload を促す
+        let out = try b.rebuildIfNeeded(variantFilename: "merged-rules.json", standardRulesURL: std,
+                                        mayTruncate: false, reportedSafe: [])
+        XCTAssertTrue(out.rebuilt)                // 削除＝変化あり → reload
+        XCTAssertFalse(combinedExists("merged-rules.json"))
     }
 
     /// compile-verify が throw したら install せず、既存 combined（last-known-good）を保持する。
