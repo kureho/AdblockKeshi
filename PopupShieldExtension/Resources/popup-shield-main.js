@@ -1,17 +1,19 @@
 /*
- * popup-shield.js — 強力モードのページ計装（MAIN world content script）。
+ * popup-shield-main.js — 強力モードのページ計装（MAIN world content script）。
  *
- * 役割: ページの window.open / 合成 anchor.click / native target=_blank / 同一オリジン子フレームの
- *   window.open を計装し、popup-shield-core.js の判定で「cross-site のプログラム的遷移」だけを止める。
- *   正規の動画再生・同一オリジンナビ・ユーザーが選んだリンクは壊さない。
+ * 責務（ページ側 API への介入のみ）:
+ *   window.open のラップ / anchor.click 検査 / overlay anchor 検査 / same-origin frame への hook 伝播 /
+ *   判定エンジン実行 / ブロック実行 / 稼働開始(ready)イベント発行 / ブロック発生(blocked)イベント発行。
  *
- * iOS 17 対応の要点（tasks/streamtape-hardening/baseline.md・design.md）:
- *   - streamtape の popunder は同一オリジン about:blank ヘルパーフレームの window.open から発火する。
- *     iOS 17 は page 生成 about:blank に content script を注入しない（match_origin_as_fallback は 18.4+）ため、
- *     親フレームから同一オリジン子フレームへ override を伝播（traversal + MutationObserver）する。
- *   - 出荷時は scripting.registerContentScripts({world:"MAIN", allFrames:true, runAt:"document_start"}) で注入。
+ * 禁止（このファイルに存在してはならない）: browser.* / chrome.* / storage.* / runtime.sendMessage /
+ *   Extension 固有 API / URL・ページ内容の永続化。
+ *   → Extension API との橋渡しは ISOLATED world の popup-shield-bridge.js が担当する。
+ *   → MAIN world では content script 専用 Extension API が使えないため（本 PR の最重要修正）、
+ *     件数報告は window への CustomEvent（最小情報・URL なし）で bridge に渡す。
  *
- * プライバシー: ネットワーク送信なし。ログは件数・分類（reason）のみ（URL/ページ内容は保存しない）。
+ * iOS 17 対応: streamtape の popunder は同一オリジン about:blank ヘルパーフレームの window.open から
+ *   発火する。iOS 17 は page 生成 about:blank に content script を注入しない（match_origin_as_fallback は
+ *   18.4+）ため、親フレームから同一オリジン子フレームへ override を伝播（traversal + MutationObserver）する。
  */
 (function () {
   'use strict';
@@ -20,6 +22,9 @@
 
   var Core = window.PopupShieldCore;
   if (!Core || !Core.makeDecider) return; // core 未ロードなら何もしない（安全側）
+
+  // bridge と一致させること（popup-shield-bridge.js の EVENT_NAME と同一文字列）。
+  var EVENT_NAME = '__popupShieldMsg';
 
   function topHost() {
     try { return (window.top && window.top.location && window.top.location.hostname) || window.location.hostname; }
@@ -31,6 +36,16 @@
   }
   // base を渡して相対/protocol-relative URL を正しく解決する（cross-site 判定の取りこぼし防止）。
   var decide = Core.makeDecider(topHost(), { base: topHref() });
+  var frameLabel = (window.top === window) ? 'top' : 'child';
+
+  // ISOLATED world bridge への一方向通知（最小情報のみ・URL/ページ内容は載せない）。
+  function emit(type, reason) {
+    try {
+      var detail = { version: 1, type: type, frame: frameLabel };
+      if (reason) detail.reason = reason;
+      window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: detail }));
+    } catch (e) {}
+  }
 
   // 1 ユーザージェスチャ = 1 id。capture 段で trusted 入力を検出して採番する。
   var currentGesture = 0;
@@ -49,7 +64,7 @@
   });
 
   function report(kind, d, meta) {
-    // テスト観測用シーム。送る情報は kind/action/reason と boolean メタ（crossSite/overlay）のみ＝URL・PII 無し。
+    // テスト観測用シーム（URL・PII 無し: kind/action/reason と boolean メタのみ）。
     try {
       if (window.__popupShieldTest && window.__popupShieldTest.onDecision) {
         var o = { kind: kind, action: d.action, reason: d.reason };
@@ -59,15 +74,11 @@
     } catch (e) {}
     if (d.action === 'block' || d.action === 'stub') {
       try { var s = (window.top.__popupShield = window.top.__popupShield || { count: 0 }); s.count++; } catch (e) {}
-      try {
-        var b = (typeof browser !== 'undefined') ? browser : (typeof chrome !== 'undefined' ? chrome : null);
-        if (b && b.runtime && b.runtime.sendMessage) b.runtime.sendMessage({ type: 'popupShieldBlock', reason: d.reason });
-      } catch (e) {}
+      emit('blocked', d.reason); // Extension API は使わず bridge に委譲
     }
   }
 
   // 非 throw な about:blank スタブ窓（遅延型 popunder=vector E を無害化）。
-  // 正規の `var w=open('about:blank'); w.document.write(...)` が例外を投げず劣化するように最低限の API を備える。
   function makeStub() {
     var loc = { _href: '', assign: function () {}, replace: function () {}, reload: function () {} };
     Object.defineProperty(loc, 'href', { get: function () { return loc._href; }, set: function () { /* 遷移させない（href 書き換えを一律無視＝遅延 popunder 無害化） */ } });
@@ -123,17 +134,16 @@
 
   // native target=_blank（透明全面 overlay の乗っ取り）を capture 段で止める。
   function isOverlayAnchor(a) {
-    // クリック乗っ取り overlay の特徴: (1) 実質不可視（opacity:0 / visibility:hidden）、または
+    // overlay の特徴: (1) 実質不可視（opacity:0 / visibility:hidden）、または
     // (2) 「読めるテキストもアイコンも無い」リンクが一定面積を覆う。
-    // ※ 背景色が transparent なだけでは判定しない（正規の大型カードリンクは背景透明＋可視テキストが普通で、
-    //   それを overlay 扱いするとユーザーが選んだ cross-site リンクを誤ブロックする＝Codex MEDIUM 指摘）。
+    // 背景色 transparent だけでは判定しない（正規の大型カードリンクを誤ブロックしないため）。
     try {
       var cs = getComputedStyle(a);
       var r = a.getBoundingClientRect();
       var vw = window.innerWidth || 390, vh = window.innerHeight || 844;
       var invisible = cs.opacity === '0' || cs.visibility === 'hidden';
       var noVisibleContent = (a.textContent || '').trim() === '' && !a.querySelector('img,svg,picture,video,canvas');
-      var coversArea = (r.width * r.height) >= (vw * vh * 0.12); // 画面の 12% 以上を覆う
+      var coversArea = (r.width * r.height) >= (vw * vh * 0.12);
       return invisible || (noVisibleContent && coversArea);
     } catch (e) { return false; }
   }
@@ -159,13 +169,12 @@
   // インストール: 自フレーム + 同一オリジン子フレーム伝播。
   installOpen(window);
   traverseFrames(window);
-  // 動的に追加される iframe / フレーム navigation を追う（settle 後の生成も拾う）。
   try {
     var mo = new MutationObserver(function () { traverseFrames(window); });
     mo.observe(document.documentElement || document, { childList: true, subtree: true });
   } catch (e) {}
-  // 念のため数回 re-scan（about:blank 子フレームの生成タイミング差を吸収）。
   [0, 200, 800, 2000].forEach(function (t) { try { setTimeout(function () { traverseFrames(window); }, t); } catch (e) {} });
 
   window.__popupShield = window.__popupShield || { count: 0 };
+  emit('ready'); // 稼働開始を bridge → background へ通知（active 判定の根拠）
 })();
