@@ -6,6 +6,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { buildRegistrations, classifyRegistrationError, deriveUiStatus, STATE, ERR, ID_MAIN, ID_BRIDGE } = require('../Resources/background.js');
+const { deriveUiStatus: statusDerive } = require('../Resources/popup-shield-status.js');
 
 test('buildRegistrations: MAIN と ISOLATED を別 ID で生成', () => {
   const regs = buildRegistrations(['*://*.streamtape.com/*']);
@@ -57,4 +58,16 @@ test('deriveUiStatus: registered + ready 受信で active', () => {
 test('deriveUiStatus: failed / unsupported はそのまま表示', () => {
   assert.strictEqual(deriveUiStatus({ desiredEnabled: true, registrationState: STATE.FAILED }), STATE.FAILED);
   assert.strictEqual(deriveUiStatus({ desiredEnabled: true, registrationState: STATE.UNSUPPORTED }), STATE.UNSUPPORTED);
+});
+
+test('background と popup-shield-status の deriveUiStatus が全状態で一致（drift ロック・MEDIUM-2）', () => {
+  const states = ['off', 'registering', 'registered', 'active', 'unsupported', 'failed', 'weird', undefined];
+  for (const de of [true, false]) {
+    for (const rs of states) {
+      for (const ready of [null, 123]) {
+        const s = { desiredEnabled: de, registrationState: rs, lastReadyAt: ready };
+        assert.strictEqual(statusDerive(s), deriveUiStatus(s), `mismatch de=${de} rs=${rs} ready=${ready}`);
+      }
+    }
+  }
 });

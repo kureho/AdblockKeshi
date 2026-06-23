@@ -10,7 +10,14 @@ const path = require('node:path');
 
 const RES = path.resolve(__dirname, '../Resources');
 const MAIN_WORLD_FILES = ['popup-shield-core.js', 'popup-shield-main.js'];
-const FORBIDDEN = [/browser\.runtime/, /chrome\.runtime/, /browser\.storage/, /chrome\.storage/, /sendMessage\s*\(/];
+const FORBIDDEN = [
+  /browser\.runtime/, /chrome\.runtime/,
+  /browser\.storage/, /chrome\.storage/,
+  /browser\.tabs/, /chrome\.tabs/,
+  /browser\.scripting/, /chrome\.scripting/,
+  /browser\.permissions/, /chrome\.permissions/,
+  /sendMessage\s*\(/
+];
 
 for (const f of MAIN_WORLD_FILES) {
   test(`MAIN world ファイル ${f} に Extension API が無い`, () => {

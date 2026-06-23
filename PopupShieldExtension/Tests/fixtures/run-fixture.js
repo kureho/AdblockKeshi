@@ -59,7 +59,14 @@ async function main() {
   const srv = await serve(DIR);
   const port = srv.address().port;
   const base = `http://127.0.0.1:${port}/`;
-  const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--no-sandbox'] });
+  // ポータブル起動: system Chrome（channel）があれば使い、無ければ playwright bundled chromium に fallback
+  // （ローカルは system Chrome / CI は bundled chromium で動かすため）。
+  let browser;
+  try {
+    browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--no-sandbox'] });
+  } catch (e) {
+    browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+  }
   const popups = [];
   let results = {}, decisions = [], shieldEvents = [];
   try {
