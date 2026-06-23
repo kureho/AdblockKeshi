@@ -7,6 +7,10 @@ name: popunder-rules-update
 on:
   workflow_dispatch:
   push:
+    # main のみ（feature branch では auto-commit/push できず失敗するため除外）。
+    # PR での検証は pr-popup-shield.yml（artifact 再生成一致チェック）が担う。
+    branches:
+      - main
     paths:
       - 'tasks/b-popunder-script/popunder-script-networks.txt'
       - 'tasks/b-popunder-script/popunder-aggressive-sites.json'
