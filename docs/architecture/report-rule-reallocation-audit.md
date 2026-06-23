@@ -3,6 +3,24 @@
 実施日: 2026-06-23 / 起点 origin/main `52614a7` / read-only 監査 + 実装設計。
 背景: ADR（`report-driven-protection-suite.md`）の名称統一で「報告反映」(PopunderBlockerExtension) を採用したが、**ユーザー報告ルール(self/global)は PR #30 で「基本保護」(標準 ContentBlocker) の combined に在る**乖離。名称を実態と一致させるため再配置する。
 
+## 🚨 監査中の重大発見: PR #30 は reported 配信を regression させていた（empirical 確定）
+
+App テストホスト（`.main`=app バンドル）で実測:
+- `BlockerListResolver().standardRulesURL(for: merged/ad)` = **nil**
+- `BlockerListResolver(filterFilename:"popunder-rules.json").resolve()` = **nil**
+- `.main` に `merged-rules.json` / `popunder-rules.json` **無し**（rule JSON は各 appex バンドルのみ・App 本体バンドルには version.json だけ）
+
+→ App で動く `CombinedRuleListCoordinator` は標準 variant を取得できず（App Group にも標準 variant を書く経路なし）、**`combined-<state>` を生成できない**。結果、標準 ContentBlocker 拡張は**自前バンドルの variant(130k)を読み**、**self/global reported は標準拡張に届かない**。一般広告ブロックは bundle variant fallback で生きているため device 上は正常に見えた（kureho の「combined へ反映」確認はこの理由で誤認・Settings UI から観測不能）。
+
+- **PR #30 が導入した regression**（既存ではない）。PR #30 前は `ReportedRulesExtension` が App Group `rules-reported.json`（app が書く小ファイル）を直読みして機能していた。PR #30 が同拡張を削除し 22MB variant を要する標準 combined へ畳もうとして破綻。
+- **CI が green だった理由（テストギャップ）**: `CombinedRuleListBuilder` テストは temp-dir URL を注入。coordinator が**実 app バンドルから rule source URL を取得できるか**は未テスト。修正には「app が `.main` から rule source を解決できる」regression テストを必須とする。
+- **blast radius**: main のみ・**未提出**（live App Store は旧4拡張 v3.2.0 build22 / v3.3.0 build23 で reported は機能）＝**production 障害なし**。ただし consolidation を提出する前に必ず修正が要る。
+
+### 再配置はこの問題を"解消"する（"継承"ではない）
+- basic は reported を持たなくなり combined を作らない → **bundle variant へ戻る（22MB を app が読む必要が消える＝壊れた経路を削除）**。
+- reported は base **8KB** の `combined-popunder` へ。**`popunder-rules.json` を App ターゲットにもバンドル**すれば coordinator は `.main` から読める（App Group コピー頼みは fresh install で nil＝同じバグ再発なので不可）。
+- → **本再配置 PR は PR #30 の reported regression の修正も兼ねる**（scope: 責務整合 + reported 配信修正）。
+
 ## gate 判定: **安全に再配置可能（reported を popunder L1+L2 の最後尾に置く）**
 
 ### WebKit semantics（一次ソース・推測なし）
@@ -50,6 +68,9 @@ reported が L2 許可ドメイン（gstatic/google/googleapis/googletagmanager/
 - **基本保護は bundle へフォールバック（標準のみ combined を作らない）**: advisor 指摘で確定。標準のみ combined を書くと 19.5MB 複製が再発するため、coordinator は basic builder に **`reportedSafe=[]`** を渡し、既存の empty-skip ロジックで `combined-<state>` を**削除**→resolver が bundle variant へ自動フォールバック。基本保護は標準フル（147k floor truncation 不要）に戻る。basic 側に新規コードを足さず既存テスト済み経路を再利用。
 - **behavior change（明記・ADR/PR 記載）**: 再配置後、ユーザー自身の self-report は「**報告反映 ON 時のみ**」効く（PR #30 では basic ON で効いた）。名称整合の本質であり「3つすべて ON 推奨」に整合するが、basic のみ ON のユーザーは自分の報告効果を失う（自己学習→basic 統合の鏡像）。意識的決定として記録。
 - **byte-splice**: popunder は ~40件/8KB なので decode コストは無視可。ただし `CombinedRuleListBuilder` を `variantFilename="popunder-rules.json"` で**再利用**すれば splice 経路が無料で付くので、新規コードを足さず再利用する（mayTruncate=false）。
+- **【必須】App ターゲットに `popunder-rules.json`(8KB) をバンドル**: coordinator は App で動くため、combined-popunder の base を `.main` から読めるようにする。App Group コピー（PopunderGlobalSync）だけに頼ると fresh install で nil＝PR #30 と同じバグ再発。8KB なのでバンドル複製のコストは無視可（22MB 標準 variant とは違う）。
+- **【必須】regression テスト**: 「App の `.main` から combined-popunder の base（popunder-rules.json）を解決できる」ことをテストで固定（temp URL 注入でなく実 `.main` 解決。PR #30 のテストギャップを塞ぐ）。
+- **基本保護の bundle 復帰の検証**: basic に reportedSafe=[] を渡し combined-<state> を削除 → 標準拡張が bundle variant を読むことを確認（標準拡張内では `.main`=拡張バンドルで variant 有り＝正常。app 側は variant を読む必要が消える）。
 - **報告 reload 先**: self/global report → **`.popunderblocker`** を reload（`.blocker` は報告のたびに reload しない）。サーバ送信は従来維持。
 - **rule budget（報告反映側）**: L1(31)+L2(9)+reported。popunder は元々小さい（40件）ので 150,000 上限に対し余裕大。reportedReserve 2,000 は据置で十分（実測: popunder 40 + reported 数十〜数百 ≪ 150,000）。基本保護側は reported 枠が消え標準を truncate 不要に→ただし ad-only 150,000 ちょうどは安全余白を再評価（149,000 等へ寄せるか検討）。
 - **migration 順序（防御消失を防ぐ）**: ①self/global 読込 ②safety filter ③報告反映リスト生成 ④compile ⑤atomic install ⑥`.popunderblocker` reload 成功 ⑦基本保護 標準のみリスト生成・compile ⑧`.blocker` reload 成功 ⑨旧 combined cleanup。idempotent・途中失敗で旧構成維持。

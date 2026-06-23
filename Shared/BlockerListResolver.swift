@@ -21,8 +21,19 @@ struct BlockerListResolver {
     /// App Group コンテナ優先 → Bundle フォールバック。
     /// Plan B で runtime download が App Group に書き込んだ最新フィルタを優先採用するための構造。
     func resolve() -> URL? {
-        if let url = appGroupURL(), fileManager.fileExists(atPath: url.path) {
-            return url
+        // 統合: App Group の `combined-<filename>`（popunder L1+L2 + 安全化 reported）を最優先。
+        // 無ければ App Group の元ファイル（CDN 配信）→ bundle にフォールバック（fail-safe）。
+        if let container = fileManager
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
+            let combined = container.appendingPathComponent(
+                CombinedRuleListBuilder.combinedFilename(forVariant: filterFilename))
+            if fileManager.fileExists(atPath: combined.path) {
+                return combined
+            }
+            let direct = container.appendingPathComponent(filterFilename)
+            if fileManager.fileExists(atPath: direct.path) {
+                return direct
+            }
         }
         return bundleURL()
     }
