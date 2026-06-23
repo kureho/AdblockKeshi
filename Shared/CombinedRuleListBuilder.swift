@@ -37,6 +37,24 @@ struct CombinedRuleListBuilder {
     /// 全 state の標準 variant ファイル名（BlockerListResolver.filename(for:) と対応）。
     static let allVariants = ["merged-rules.json", "ad-rules.json", "security-rules.json", "empty-rules.json"]
 
+    /// basic（標準 variant）の combined-* と .meta を全て削除し、何か消したら true を返す。
+    /// 報告ルールを報告反映(popunder)へ移したので basic は bundle variant に戻す（combined を持たない）。
+    /// popunder の combined（combined-popunder-rules.json）は allVariants に含まれないので消さない。
+    @discardableResult
+    func removeBasicCombined() -> Bool {
+        var removedAny = false
+        for variant in Self.allVariants {
+            let name = Self.combinedFilename(forVariant: variant)
+            let combined = directory.appendingPathComponent(name)
+            if fileManager.fileExists(atPath: combined.path) {
+                try? fileManager.removeItem(at: combined)
+                removedAny = true
+            }
+            try? fileManager.removeItem(at: directory.appendingPathComponent(name + ".meta"))
+        }
+        return removedAny
+    }
+
     /// アクティブ variant 以外の combined-* と .meta を削除する（非アクティブ state の孤児を一掃）。
     /// 当該 state に切り替わった際は change-guard が miss して再生成されるので安全。
     func cleanupCombined(except activeVariant: String) {

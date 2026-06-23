@@ -38,6 +38,15 @@ struct BlockerListResolver {
         return bundleURL()
     }
 
+    /// combined を考慮しない base 解決: App Group の `filterFilename`（CDN 配信）→ bundle。
+    /// combined-<filename> の生成元（base）を取得するために使う（combined を見ると循環するため除外）。
+    func resolveDirect() -> URL? {
+        if let url = appGroupURL(), fileManager.fileExists(atPath: url.path) {
+            return url
+        }
+        return bundleURL()
+    }
+
     func appGroupURL() -> URL? {
         fileManager
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)?
