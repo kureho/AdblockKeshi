@@ -106,12 +106,37 @@ jobs:
         run: brew install xcodegen
       - name: Generate project
         run: xcodegen generate
+      # GitHub macOS runner のイメージ更新で特定モデル名(iPhone 16 等)のシミュレータが
+      # 存在しないことがある（destination 解決で "Unable to find a device matching" 失敗）。
+      # モデル名を固定せず、利用可能な iPhone シミュレータを動的に選択（無ければ生成）して堅牢化する。
+      - name: Select an available iOS simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          UDID=$(xcrun simctl list devices available --json | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)['devices']
+          for rt,devs in sorted(d.items()):
+              if 'iOS' not in rt: continue
+              for dev in devs:
+                  if dev.get('isAvailable') and 'iPhone' in dev.get('name',''):
+                      print(dev['udid']); raise SystemExit
+          ")
+          if [ -z "${UDID:-}" ]; then
+            echo "利用可能な iPhone シミュレータが無いので生成する"
+            RT=$(xcrun simctl list runtimes --json | python3 -c "import json,sys; r=[x['identifier'] for x in json.load(sys.stdin)['runtimes'] if x.get('isAvailable') and 'iOS' in x['identifier']]; print(r[-1] if r else '')")
+            DT=$(xcrun simctl list devicetypes --json | python3 -c "import json,sys; d=[x['identifier'] for x in json.load(sys.stdin)['devicetypes'] if 'iPhone' in x.get('name','')]; print(d[-1] if d else '')")
+            test -n "$RT" && test -n "$DT"
+            UDID=$(xcrun simctl create ci-iphone "$DT" "$RT")
+          fi
+          echo "選択した simulator UDID=$UDID"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
       - name: Unit tests + WebKit Content Rule List compile
         run: |
           set -o pipefail
           xcodebuild test \
             -project AdblockKeshi.xcodeproj -scheme AdblockKeshi \
-            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
             -only-testing:AdblockKeshiTests \
             CODE_SIGNING_ALLOWED=NO
       - name: Release build (app + all extensions, unsigned)
