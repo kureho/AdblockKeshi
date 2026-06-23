@@ -29,13 +29,13 @@ var ALLOWED_FRAMES = { top: 1, child: 1 };
 function parseShieldEvent(detail) {
   if (!detail || typeof detail !== 'object') return null;
   if (detail.version !== 1) return null;
-  if (!Object.prototype.hasOwnProperty.call(ALLOWED_TYPES, detail.type)) return null;
+  if (typeof detail.type !== 'string' || !Object.prototype.hasOwnProperty.call(ALLOWED_TYPES, detail.type)) return null;
   var out = { version: 1, type: detail.type };
   if (detail.type === 'blocked') {
-    if (!Object.prototype.hasOwnProperty.call(ALLOWED_REASONS, detail.reason)) return null;
+    if (typeof detail.reason !== 'string' || !Object.prototype.hasOwnProperty.call(ALLOWED_REASONS, detail.reason)) return null;
     out.reason = detail.reason;
   }
-  out.frame = Object.prototype.hasOwnProperty.call(ALLOWED_FRAMES, detail.frame) ? detail.frame : 'top';
+  out.frame = (typeof detail.frame === 'string' && Object.prototype.hasOwnProperty.call(ALLOWED_FRAMES, detail.frame)) ? detail.frame : 'top';
   return out;
 }
 

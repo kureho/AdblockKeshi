@@ -16,16 +16,10 @@
   var retryBtn = document.getElementById('retry');
   var diagEl = document.getElementById('diag');
 
-  // background.deriveUiStatus と同じ規則（トグル ON だけでは active にしない）。
+  // UI ステータス導出は共有モジュール popup-shield-status.js を使う（background と一致・テストでロック）。
   function uiStatus(s) {
-    if (!s.desiredEnabled) return 'off';
-    var rs = s.registrationState;
-    if (rs === 'unsupported') return 'unsupported';
-    if (rs === 'failed') return 'failed';
-    if (rs === 'active') return 'active';
-    if (rs === 'registered') return s.lastReadyAt ? 'active' : 'registered';
-    if (rs === 'registering') return 'registering';
-    return 'registering';
+    if (typeof PopupShieldStatus !== 'undefined' && PopupShieldStatus.deriveUiStatus) return PopupShieldStatus.deriveUiStatus(s);
+    return s.desiredEnabled ? (s.registrationState || 'registering') : 'off'; // フォールバック
   }
   var LABEL = {
     off: { t: '強力モード: オフ', dot: 'off', retry: false },
