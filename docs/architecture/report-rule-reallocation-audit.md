@@ -76,5 +76,13 @@ reported が L2 許可ドメイン（gstatic/google/googleapis/googletagmanager/
 - **migration 順序（防御消失を防ぐ）**: ①self/global 読込 ②safety filter ③報告反映リスト生成 ④compile ⑤atomic install ⑥`.popunderblocker` reload 成功 ⑦基本保護 標準のみリスト生成・compile ⑧`.blocker` reload 成功 ⑨旧 combined cleanup。idempotent・途中失敗で旧構成維持。
 - **テスト**: 上記順序・共存・ipr 後方配置・compile 拡張・budget・migration・report→`.popunderblocker` reload・基本保護に reported が入らない、を TDD。
 
+## self-report の効き方の限界（2026-06-23 実機検証で確認・PR #32 スコープ外・別途 product 検討）
+実機で「報告したページで広告がブロックされない」を確認。**PR#29 安全設計の必然でありバグではない**:
+- 報告フォームは**ユーザー手入力 URL**（実態はページ URL）を取り、`ReportedRuleBuilder` が `load-type:["third-party"]`+document 除外の host-block を生成（PR#29 で streamtape 誤ブロックを防ぐため必須）。
+- ページ URL のホストは**そのページ上では first-party** → third-party 限定ルールは無効 → 報告元ページの広告は（再読込しても）消えない＝「報告元ページを壊さない」の裏返し。
+- ページ URL 自己報告の価値は**サーバ解析→ルール昇格の遅延・全体モデル**（completion「7〜14日」）。instant-local fast-lane が局所的に効くのは ad-network ドメイン直入力時のみ。
+- 「報告した広告がその場で消える」には**広告そのものの捕捉（Safari Web拡張の要素ピッカー＋サイト限定 cosmetic）**が要る＝別途 product 判断（kureho: PR #32 を先に仕上げ・本件は別途検討）。
+- **本再配置はルールの"効き方"を変えない**（置き場所を報告反映へ正すだけ）ので、この限界は PR #32 のマージ可否に**直交**。
+
 ## 制約
 拡張数・Bundle ID・L2・ipr・PopupShield 介入・version 不変。名称変更(PR #31)とは別 PR。App Store 操作なし。
