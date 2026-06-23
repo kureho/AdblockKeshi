@@ -130,3 +130,31 @@ distinct reporter 数 / 同一端末連投除外 / 一定期間の再現性 / co
 
 ## 本 ADR に基づく今回 PR のスコープ（厳守）
 **名称・アイコン・説明・UX のみ**変更。以下は**変更しない**: 広告 blocking ロジック / rule budget / reported rule 保存先 / L1/L2 内容 / `ignore-previous-rules` / PopupShield 介入ロジック / 拡張数 / Bundle ID / version・build。責務再配置・registry・privacy 強化は**別 PR 提案**として本 ADR に記録済み。
+
+---
+
+## 実機検証（Safari 設定上の表示名・2026-06-24 kureho 目視）
+KPhone（iPhone 17 Pro）で署名ビルドを上書き install し、Safari 設定の拡張一覧で表示名を確認した。
+
+### 1回目: 名称二重化を検出（要修正）
+Content Blocker 2拡張が二重表示になっていた:
+- `広告消し — 広告消し — 基本保護`
+- `広告消し — 広告消し — 報告反映`
+- `広告消し — 遷移保護`（正常）
+
+**原因**: iOS は **Content Blocker 型**拡張の一覧表示に親アプリ名「広告消し — 」を自動前置する。CFBundleDisplayName に「広告消し — 基本保護」を入れると前置と重複し二重化。**Safari Web Extension 型**（遷移保護）は自動前置されないため重複しなかった。
+
+### 修正: Content Blocker の CFBundleDisplayName を役割名のみに
+- ContentBlockerExtension: `広告消し — 基本保護` → `基本保護`
+- PopunderBlockerExtension: `広告消し — 報告反映` → `報告反映`
+- PopupShieldExtension（Web Extension）: `広告消し — 遷移保護` を維持（自動前置されないため完全名）
+
+`Tests/ExtensionDisplayNameTests.swift` で拡張の種類ごとの期待表示を固定（RED→GREEN）。
+
+### 2回目: PASS
+Safari 設定上の実機表示:
+- `広告消し — 基本保護`
+- `広告消し — 報告反映`
+- `広告消し — 遷移保護`
+
+「広告消し —」の二重表示なし / 3項目の判別問題なし / 文字切れによる区別困難なし。Bundle ID・blocking ロジック・rule budget・reported 経路・拡張数・version/build は不変。
