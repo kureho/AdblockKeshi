@@ -4,6 +4,13 @@
   "name": "__MSG_extName__",
   "description": "__MSG_extDesc__",
   "version": "3.4.0",
+  "icons": {
+    "48": "images/icon-48.png",
+    "96": "images/icon-96.png",
+    "128": "images/icon-128.png",
+    "256": "images/icon-256.png",
+    "512": "images/icon-512.png"
+  },
   "permissions": ["scripting", "storage"],
   "host_permissions": [
     "*://*.streamtape.com/*"
@@ -13,6 +20,11 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "__MSG_actionTitle__"
+    "default_title": "__MSG_actionTitle__",
+    "default_icon": {
+      "16": "images/icon-16.png",
+      "32": "images/icon-32.png",
+      "48": "images/icon-48.png"
+    }
   }
 }

@@ -141,9 +141,12 @@ targets:
       - path: PopupShieldExtension/Resources/background.js
       - path: PopupShieldExtension/Resources/popup.html
       - path: PopupShieldExtension/Resources/popup.js
-      - path: PopupShieldExtension/Resources/popup-shield.js
       - path: PopupShieldExtension/Resources/popup-shield-core.js
+      - path: PopupShieldExtension/Resources/popup-shield-main.js
+      - path: PopupShieldExtension/Resources/popup-shield-bridge.js
       - path: PopupShieldExtension/Resources/_locales
+        type: folder
+      - path: PopupShieldExtension/Resources/images
         type: folder
     info:
       path: PopupShieldExtension/Info.plist
