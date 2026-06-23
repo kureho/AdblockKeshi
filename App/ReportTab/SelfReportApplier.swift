@@ -8,8 +8,8 @@ protocol SelfReportApplying {
 }
 
 /// 本番実装: 報告URLを host-block ルール化 → App Group の自己報告ストアへ追記 →
-/// 統合 ContentBlocker(`com.kureho.adblockkeshi.blocker`)の combined を再生成して reload。
-/// 4→3 統合後、自己学習は標準 ContentBlocker に統合された（旧 reportedblocker は廃止）。
+/// 報告反映(popunder)の combined を再生成して報告反映 ContentBlocker(`.popunderblocker`)を reload。
+/// 4→3 統合後、自己学習は「報告反映」拡張に統合された（旧 reportedblocker は廃止・名称整合のため popunder へ再配置）。
 @MainActor
 struct SelfReportApplier: SelfReportApplying {
     func apply(reportedURL: URL) {

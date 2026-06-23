@@ -1,5 +1,6 @@
 import XCTest
 import WebKit
+@testable import AdblockKeshi
 
 /// v3.3.0 L2 アグレッシブルール（url-filter:".*" + load-type:third-party + if-domain + ignore-previous-rules）が
 /// WebKit Content Blocker コンパイラに実際に受理されることを runtime で検証する。
@@ -55,5 +56,29 @@ final class PopunderRuleCompileTests: XCTestCase {
             encodedContentRuleList: json
         )
         XCTAssertNotNil(list, "出荷 popunder-rules.json 全体の WebKit コンパイルに失敗した")
+    }
+
+    /// 報告反映の combined（出荷 popunder-rules.json 全体 + 安全化 reported を最後尾に splice）が
+    /// WebKit でコンパイルできることを検証（報告ルール再配置）。reported は third-party/document 除外の host-block。
+    /// 注: これは compile（受理）の検証であり、ランタイム順序（reported が L2 ipr の後ろで有効）は実機検証(Phase 6)。
+    func test_popunder_combined_with_reported_compiles_in_webkit() async throws {
+        let testFile = URL(fileURLWithPath: #filePath)
+        let repoRoot = testFile.deletingLastPathComponent().deletingLastPathComponent()
+        let baseURL = repoRoot
+            .appendingPathComponent("PopunderBlockerExtension/Resources/popunder-rules.json")
+        let baseData = try Data(contentsOf: baseURL)
+        let reported = [
+            try XCTUnwrap(ReportedRuleBuilder.blockRule(forURL: "https://ads.example.com/")),
+            try XCTUnwrap(ReportedRuleBuilder.blockRule(forURL: "https://tracker.test/")),
+        ]
+        let combined = try CombinedRuleListMerge.splice(standardJSON: baseData, appending: reported)
+        let json = String(data: combined, encoding: .utf8)!
+
+        let store = try XCTUnwrap(WKContentRuleListStore.default())
+        let list = try await store.compileContentRuleList(
+            forIdentifier: "popunder-combined-reported-compile-test",
+            encodedContentRuleList: json
+        )
+        XCTAssertNotNil(list, "popunder L1+L2 + reported の combined の WebKit コンパイルに失敗した")
     }
 }

@@ -30,30 +30,32 @@ enum CombinedRuleListCoordinator {
 
         // 1) 報告反映(popunder)= popunder L1+L2（base）+ 安全化 reported（最後尾）。
         //    base は App 同梱/CDN の popunder-rules.json（combined ではない）。
+        //    base が取れなければ報告反映を更新できないので、basic にも触らず終了する
+        //    （popunder 不在時に basic を bundle へ剥がして防御を一時消失させない）。
         let popunderResolver = BlockerListResolver(filterFilename: PopunderRulesResolver.filename)
-        if let popunderBase = popunderResolver.resolveDirect(),
-           let baseData = try? Data(contentsOf: popunderBase) {
-            let popunderRules = (try? JSONDecoder().decode([ContentBlockerRule].self, from: baseData)) ?? []
-            // L2 ipr が許可するドメイン（プレーヤー等）に一致する reported は除外（再 block で破壊しない）。
-            let l2Allowed = PopunderReportedFilter.l2AllowedDomains(popunderRules: popunderRules)
-            let reportedForPopunder = PopunderReportedFilter.excludingL2Allowed(
-                store.safeMergedReportedRules(), allowed: l2Allowed)
-            let outcome = try? builder.rebuildIfNeeded(
-                variantFilename: PopunderRulesResolver.filename,
-                standardRulesURL: popunderBase,
-                mayTruncate: false,                 // popunder+reported ≪ 150,000・truncation 不要
-                reportedSafe: reportedForPopunder,
-                compileVerify: compileVerify
-            )
-            if outcome?.rebuilt == true {
-                DispatchQueue.main.async {
-                    SFContentBlockerManager.reloadContentBlocker(
-                        withIdentifier: SFContentBlockerStateChecker.popunderID) { _ in }
-                }
+        guard let popunderBase = popunderResolver.resolveDirect(),
+              let baseData = try? Data(contentsOf: popunderBase) else { return }
+        let popunderRules = (try? JSONDecoder().decode([ContentBlockerRule].self, from: baseData)) ?? []
+        // L2 ipr が許可するドメイン（プレーヤー等）に一致する reported は除外（再 block で破壊しない）。
+        let l2Allowed = PopunderReportedFilter.l2AllowedDomains(popunderRules: popunderRules)
+        let reportedForPopunder = PopunderReportedFilter.excludingL2Allowed(
+            store.safeMergedReportedRules(), allowed: l2Allowed)
+        let outcome = try? builder.rebuildIfNeeded(
+            variantFilename: PopunderRulesResolver.filename,
+            standardRulesURL: popunderBase,
+            mayTruncate: false,                 // popunder+reported ≪ 150,000・truncation 不要
+            reportedSafe: reportedForPopunder,
+            compileVerify: compileVerify
+        )
+        if outcome?.rebuilt == true {
+            DispatchQueue.main.async {
+                SFContentBlockerManager.reloadContentBlocker(
+                    withIdentifier: SFContentBlockerStateChecker.popunderID) { _ in }
             }
         }
 
         // 2) 基本保護は報告ルールを持たない → 旧 combined-<state> を一掃し bundle variant に戻す。
+        //    popunder base が取れている＝報告反映が機能する状態（combined or 直 base）なので安全。
         if builder.removeBasicCombined() {
             DispatchQueue.main.async {
                 SFContentBlockerManager.reloadContentBlocker(

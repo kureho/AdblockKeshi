@@ -17,6 +17,10 @@ enum PopunderGlobalSync {
             syncsVersion: false
         )
         guard (try? await downloader.downloadAndStore()) != nil else { return }
+        // CDN base が更新されたので combined-popunder を base 内容ハッシュ差分で作り直す
+        // （reported>0 のユーザーが stale な combined に CDN 更新をマスクされるのを防ぐ）。
+        CombinedRuleListCoordinator.scheduleRegenerate()
+        // reported が空で combined が無いユーザー向けに、新 base を直読みさせる即時 reload も行う。
         await MainActor.run {
             SFContentBlockerManager.reloadContentBlocker(
                 withIdentifier: SFContentBlockerStateChecker.popunderID
