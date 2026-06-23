@@ -45,10 +45,11 @@ function classifyRegistrationError(err) {
   var msg = '';
   try { msg = (err && (err.message || err.toString())) || ''; } catch (e) { msg = ''; }
   msg = String(msg).toLowerCase();
-  if (/world|main world|isolated/.test(msg)) return ERR.MAIN_WORLD_UNSUPPORTED;
+  // "main world" を含む文脈に限定（単独 "world" や "argument" の過広マッチを避ける。LOW 指摘）。
+  if (/main world|world['":]?\s*main|main_world|world.*not support|not support.*world/.test(msg)) return ERR.MAIN_WORLD_UNSUPPORTED;
   if (/permission|host_permission|not allowed|denied/.test(msg)) return ERR.PERMISSION_MISSING;
   if (/not a function|undefined is not|no such|unavailable|not supported on/.test(msg)) return ERR.API_UNAVAILABLE;
-  if (/invalid|reject|duplicate|already|argument|schema/.test(msg)) return ERR.REGISTRATION_REJECTED;
+  if (/invalid|reject|duplicate|already|schema/.test(msg)) return ERR.REGISTRATION_REJECTED;
   return ERR.UNKNOWN;
 }
 
@@ -103,14 +104,24 @@ if (typeof module !== 'undefined' && module.exports) {
     }));
   }
 
+  // reconcile は複数トリガー（onInstalled/onStartup/onChanged/起動時）から呼ばれるため、
+  // promise チェーンで直列化する（並行実行すると register が前回の生存 ID に衝突して
+  // duplicate-id→偽 FAILED になるため。HIGH-2）。
+  var reconcileChain = Promise.resolve();
   function reconcile() {
+    reconcileChain = reconcileChain.then(doReconcile, doReconcile);
+    return reconcileChain;
+  }
+  function doReconcile() {
     return getState().then(function (state) {
       var plan = popupShieldPlan(state, TARGET_HOSTS);
       // API 非対応の早期判定
       if (!b.scripting || !b.scripting.registerContentScripts) {
-        return patch({ registrationState: state.desiredEnabled ? STATE.UNSUPPORTED : STATE.OFF, lastRegistrationError: state.desiredEnabled ? ERR.API_UNAVAILABLE : null, registeredMatches: [], lastRegistrationAttemptAt: now() });
+        return patch({ registrationState: state.desiredEnabled ? STATE.UNSUPPORTED : STATE.OFF, lastRegistrationError: state.desiredEnabled ? ERR.API_UNAVAILABLE : null, registeredMatches: [], lastReadyAt: null, lastRegistrationAttemptAt: now() });
       }
-      return patch({ registrationState: plan.register ? STATE.REGISTERING : STATE.OFF, lastRegistrationAttemptAt: now() })
+      // REGISTERING へ遷移する際に lastReadyAt をクリアする（再有効化時に古い ready で
+      // 偽の active 表示になるのを防ぐ。HIGH-1）。
+      return patch({ registrationState: plan.register ? STATE.REGISTERING : STATE.OFF, lastReadyAt: null, lastRegistrationAttemptAt: now() })
         .then(unregisterAll)
         .then(function () {
           if (!plan.register) {
@@ -148,10 +159,10 @@ if (typeof module !== 'undefined' && module.exports) {
       if (msg.type === 'popupShieldReady') {
         // 対象ページで MAIN world が実際に動いた → active へ昇格（registered 以上のときのみ）。
         getState().then(function (s) {
+          // 現に登録中（registered/active）かつ ON のときだけ active 昇格 + lastReadyAt 更新。
+          // それ以外（OFF 等）の stale な ready は無視する（偽 active の根を断つ）。
           if (s.desiredEnabled && (s.registrationState === STATE.REGISTERED || s.registrationState === STATE.ACTIVE)) {
             patch({ lastReadyAt: now(), registrationState: STATE.ACTIVE });
-          } else {
-            patch({ lastReadyAt: now() });
           }
         });
       } else if (msg.type === 'popupShieldBlock' && msg.reason) {
@@ -160,6 +171,9 @@ if (typeof module !== 'undefined' && module.exports) {
           var day = new Date().toISOString().slice(0, 10);
           counts[day] = counts[day] || {};
           counts[day][msg.reason] = (counts[day][msg.reason] || 0) + 1;
+          // 無制限増加を防ぐため日次キーを直近 30 日に prune（端末内・件数のみ）。
+          var keys = Object.keys(counts).sort();
+          while (keys.length > 30) { delete counts[keys.shift()]; }
           patch({ counts: counts });
         });
       }
