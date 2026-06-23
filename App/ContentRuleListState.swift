@@ -35,11 +35,11 @@ struct ContentRuleListSnapshot: Equatable {
         )
     }
 
-    /// core(標準+学習)が ON のとき、追加保護の「ポップアップ広告対策」も勧める任意ヒント。
+    /// core(基本保護) が ON のとき、追加保護の「報告反映」も勧める任意ヒント。
     /// core が未完了のときは出さない（まずそちらの設定に集中させる）。
     var popunderSuggestion: BannerType? {
         guard mode == .bothEnabled, !popunderEnabled else { return nil }
-        return .yellow("「ポップアップ広告対策」も ON にすると、タップ時に広告サイトへ飛ばされる誘導をブロックします")
+        return .yellow("「報告反映」も ON にすると、タップ時に広告サイトへ飛ばされる誘導をブロックします")
     }
 }
 
