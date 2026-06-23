@@ -34,12 +34,14 @@ NODE_PATH="$HOME/.npm/_npx/<hash>/node_modules" \
 
 動画/ファイルホスト系サイトの「タップ乗っ取り（tab-under）」に 2 層で対応する。
 
-1. **ポップアップ広告対策（Content Blocker・`PopunderBlockerExtension`）** — 既知広告網の $script ブロック（L1）と
+1. **報告反映**（Content Blocker・`PopunderBlockerExtension`・表示名「広告消し — 報告反映」）— 既知広告網の $script ブロック（L1）と
    対象サイトの third-party script 全ブロック（L2）。`scripts/build_popunder_rules.py` で
    `popunder-rules.json`（bundle + CDN）を生成。第三者 script 由来の広告に有効。
-2. **強力ポップアップ対策（Safari Web Extension・`PopupShieldExtension`・任意/既定オフ）** — 静的ルールでは
+2. **遷移保護**（Safari Web Extension・`PopupShieldExtension`・表示名「広告消し — 遷移保護」・任意/既定オフ）— 静的ルールでは
    止められない「サイト本体の first-party `window.open` によるタブ乗っ取り」を、MAIN-world content script で
    cross-site のプログラム的遷移だけを止めて抑止する。詳細は `tasks/streamtape-hardening/`（再現調査・設計・実測検証）。
+
+> 表示名（2026-06-23 統一）: 基本保護=`ContentBlockerExtension` / 報告反映=`PopunderBlockerExtension` / 遷移保護=`PopupShieldExtension`。Bundle ID は不変。設計は `docs/architecture/report-driven-protection-suite.md`。
 
 ルール再生成:
 

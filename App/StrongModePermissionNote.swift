@@ -6,7 +6,7 @@ import SwiftUI
 struct StrongModePermissionNote: View {
     private let points: [(String, String)] = [
         ("hand.tap.fill", "ご自身でオンにしたときだけ動作します（初期状態はオフ）。"),
-        ("scope", "動くのは「強力ポップアップ対策」で指定した対象サイトだけ。それ以外のサイトには一切関与しません。"),
+        ("scope", "動くのは「遷移保護」で指定した対象サイトだけ。それ以外のサイトには一切関与しません。"),
         ("pause.circle.fill", "サイトごとに一時停止できます（機能拡張のポップアップから操作）。"),
         ("lock.shield.fill", "閲覧履歴・ページの内容・URL を外部に送信しません。記録するのは端末内のブロック件数のみです。")
     ]
@@ -15,7 +15,7 @@ struct StrongModePermissionNote: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "info.circle.fill").foregroundStyle(Color.accentColor)
-                Text("強力モードの権限について")
+                Text("遷移保護の権限について")
                     .font(.system(.callout, weight: .semibold))
             }
             Text("タブ乗っ取りを止めるには、対象サイトのページを読み取り・変更する権限が必要です。具体的には次のとおり扱います。")
