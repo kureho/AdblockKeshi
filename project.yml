@@ -75,7 +75,10 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ContentBlockerRequestHandler
           NSExtensionAttributes:
             ContentBlockerExtensionType: "general"
-        CFBundleDisplayName: 標準フィルタ
+        # Content Blocker 型は iOS が Safari 設定一覧で親アプリ名「広告消し — 」を自動前置するため、
+        # 役割名のみにする（「広告消し — 基本保護」だと実機で「広告消し — 広告消し — 基本保護」と二重化。
+        # 2026-06-24 kureho 実機スクショで確認）。Web Extension(遷移保護)は自動前置されないので別扱い。
+        CFBundleDisplayName: 基本保護
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     settings:
@@ -101,7 +104,8 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PopunderContentBlockerRequestHandler
           NSExtensionAttributes:
             ContentBlockerExtensionType: "general"
-        CFBundleDisplayName: ポップアップ広告対策
+        # Content Blocker 型は iOS が「広告消し — 」を自動前置するため役割名のみ（上記 ContentBlockerExtension と同理由）。
+        CFBundleDisplayName: 報告反映
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     settings:
@@ -135,7 +139,9 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.Safari.web-extension
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SafariWebExtensionHandler
-        CFBundleDisplayName: 強力ポップアップ対策
+        # Safari Web Extension 型は iOS が親アプリ名を自動前置しないため、完全名「広告消し — 遷移保護」を
+        # 明示で持つ（実機で重複しないことを 2026-06-24 確認）。Content Blocker と扱いを変える点に注意。
+        CFBundleDisplayName: 広告消し — 遷移保護
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     settings:

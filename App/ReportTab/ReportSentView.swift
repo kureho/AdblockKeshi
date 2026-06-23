@@ -15,10 +15,10 @@ struct ReportSentView: View {
                 .foregroundStyle(.green)
 
             VStack(spacing: 12) {
-                Text("送信しました")
+                Text("報告を受け付けました")
                     .font(.title2.bold())
 
-                Text("自動で検証して、通常 7〜14 日でブロックリストに追加します。\n結果はアプリ内通知でお知らせします。")
+                Text("安全に反映できる広告は、この端末の保護へ追加されます。\n複数の利用者から届いた報告は、確認後に全体の保護へ反映されることがあります。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
