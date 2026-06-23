@@ -8,13 +8,19 @@
   :root { color-scheme: light; }
   body { font: -apple-system-body, sans-serif; margin: 0; padding: 16px; width: 300px; background: #fff; color: #111; }
   h1 { font-size: 16px; margin: 0 0 4px; }
-  p.sub { font-size: 12px; color: #666; margin: 0 0 14px; }
+  p.sub { font-size: 12px; color: #666; margin: 0 0 12px; }
   .row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-top: 1px solid #eee; }
   .row .label { font-size: 14px; }
   .row .hint { font-size: 11px; color: #888; margin-top: 2px; }
+  .status { display: flex; align-items: center; gap: 8px; padding: 10px 0; font-size: 14px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #bbb; flex: 0 0 auto; }
+  .dot.active { background: #34c759; } .dot.warn { background: #ff9500; } .dot.err { background: #ff3b30; } .dot.off { background: #bbb; }
+  button.retry { margin-top: 8px; padding: 8px 12px; font-size: 13px; border: 1px solid #ccc; border-radius: 8px; background: #f7f7f7; }
   .counts { font-size: 12px; color: #444; margin-top: 12px; }
   .counts b { color: #111; }
-  /* simple toggle */
+  details { margin-top: 12px; font-size: 11px; color: #555; }
+  details summary { cursor: pointer; color: #06c; }
+  details .diag { margin-top: 8px; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 11px; color: #444; }
   .sw { position: relative; width: 46px; height: 28px; flex: 0 0 auto; }
   .sw input { opacity: 0; width: 0; height: 0; }
   .sw .track { position: absolute; inset: 0; background: #ccc; border-radius: 999px; transition: .2s; }
@@ -36,6 +42,10 @@
   <label class="sw"><input type="checkbox" id="enabled"><span class="track"></span></label>
 </div>
 
+<!-- 状態表示: トグル ON だけでは「有効」と出さない（実稼働状態を区別） -->
+<div class="status"><span class="dot off" id="statusDot"></span><span id="statusLabel">強力モード: オフ</span></div>
+<button class="retry" id="retry" style="display:none">登録をやり直す</button>
+
 <div class="row" id="siteRow">
   <div>
     <div class="label">このサイトで一時停止</div>
@@ -45,6 +55,11 @@
 </div>
 
 <div class="counts">ブロック件数: <b id="countNum">0</b></div>
+
+<details id="diagWrap">
+  <summary>詳細（診断）</summary>
+  <div class="diag" id="diag"></div>
+</details>
 
 <script src="popup-shield-core.js"></script>
 <script src="popup.js"></script>
