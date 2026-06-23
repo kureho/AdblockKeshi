@@ -84,5 +84,15 @@ reported が L2 許可ドメイン（gstatic/google/googleapis/googletagmanager/
 - 「報告した広告がその場で消える」には**広告そのものの捕捉（Safari Web拡張の要素ピッカー＋サイト限定 cosmetic）**が要る＝別途 product 判断（kureho: PR #32 を先に仕上げ・本件は別途検討）。
 - **本再配置はルールの"効き方"を変えない**（置き場所を報告反映へ正すだけ）ので、この限界は PR #32 のマージ可否に**直交**。
 
+## 実機検証結果（kureho 目視・2026-06-23 PASS）
+PR #32 版を既存アプリへ上書き install（削除なし）・3拡張すべて ON で確認:
+- 拡張構成: Safari 機能拡張 **3つのまま**・全 ON（旧名: 標準フィルタ/ポップアップ広告対策/強力ポップアップ対策）
+- **Streamtape**: ページ表示 OK・player 生存・media 再生 OK・意図しない popup 0・current-tab redirect 0・黒画面/操作不能なし
+- **TokyoMotion**: ページ表示 OK・player/主要コンテンツ生存・media 再生 OK・popup 0・redirect 0・黒画面/操作不能なし
+- 一般サイト: 表示崩れなし・通常の広告ブロック従来どおり・正常リンク操作 OK
+- 再起動: アプリ/Safari/iPhone いずれも維持 OK
+
+→ **reported を報告反映(popunder)末尾に統合しても L2 サイト(プレーヤー温存)を壊さず、一般ブロックも維持**を実機確認。kureho が PR #32 を merge 基準充足と判断（「報告→その場で広告ブロック」は merge 条件外＝別途 product 検討）。
+
 ## 制約
 拡張数・Bundle ID・L2・ipr・PopupShield 介入・version 不変。名称変更(PR #31)とは別 PR。App Store 操作なし。
