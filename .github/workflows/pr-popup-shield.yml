@@ -53,6 +53,8 @@ jobs:
         run: node --test PopupShieldExtension/Tests/popup-shield-core.test.js PopupShieldExtension/Tests/popup-shield-bridge.test.js PopupShieldExtension/Tests/background-plan.test.js PopupShieldExtension/Tests/background-health.test.js
       - name: Static check (MAIN world has no Extension API)
         run: node --test PopupShieldExtension/Tests/popup-shield-static.test.js
+      - name: Display name check (popup UI uses 遷移保護, no legacy name)
+        run: node --test PopupShieldExtension/Tests/popup-shield-display-name.test.js
       - name: Deterministic fixture (MAIN/ISOLATED runtime path, headless chromium)
         run: |
           npm install --no-save playwright@1
