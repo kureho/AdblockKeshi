@@ -53,6 +53,15 @@ struct SelfReportedRulesStore {
     /// 戻り値: merged ファイルの中身が以前と変わったら true（呼び出し側の reload 判断用）。
     @discardableResult
     func rebuildMerged() throws -> Bool {
+        let union = safeMergedReportedRules()
+        let previous = loadMergedRules()
+        try write(union, to: Self.mergedFilename)
+        return union != previous
+    }
+
+    /// self ∪ global を「document ブロック除外 + structural dedup」した安全な自己学習ルール集合を返す
+    /// （rebuildMerged が書き出す内容と同一・統合 ContentBlocker への入力に使う）。報告順を保持。
+    func safeMergedReportedRules() -> [ContentBlockerRule] {
         var seen = Set<ContentBlockerRule>()
         var union: [ContentBlockerRule] = []
         for rule in loadSelfRules() + loadGlobalRules() {
@@ -61,9 +70,7 @@ struct SelfReportedRulesStore {
                 union.append(rule)
             }
         }
-        let previous = loadMergedRules()
-        try write(union, to: Self.mergedFilename)
-        return union != previous
+        return union
     }
 
     /// 既存端末治癒: 保存済み self ルールから document ブロック(旧形式)を除去し merged を作り直す。

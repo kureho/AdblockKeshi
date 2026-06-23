@@ -67,7 +67,6 @@ protocol ContentRuleListStateChecker: Sendable {
 
 struct SFContentBlockerStateChecker: ContentRuleListStateChecker {
     static let baseID = "com.kureho.adblockkeshi.blocker"
-    static let reportedID = "com.kureho.adblockkeshi.reportedblocker"
     static let popunderID = "com.kureho.adblockkeshi.popunderblocker"
 
     func check() async -> ContentRuleListSnapshot {
@@ -75,9 +74,10 @@ struct SFContentBlockerStateChecker: ContentRuleListStateChecker {
         // _contentBlockerLoaderConnection を _xpc_api_misuse で EXC_BREAKPOINT クラッシュさせる。
         // 実機でも同じ race condition リスクがあるため逐次化する (XPC は速いので体感差なし)。
         let b = await getEnabled(identifier: Self.baseID)
-        let r = await getEnabled(identifier: Self.reportedID)
         let p = await getEnabled(identifier: Self.popunderID)
-        return ContentRuleListSnapshot.from(base: b, reported: r, popunder: p)
+        // 4→3 統合: 自己学習は標準 ContentBlocker に統合済み（独立 reportedblocker 拡張は廃止）。
+        // 標準が ON なら自己学習も有効なので reported は base に一致させる。
+        return ContentRuleListSnapshot.from(base: b, reported: b, popunder: p)
     }
 
     private func getEnabled(identifier: String) async -> Bool {

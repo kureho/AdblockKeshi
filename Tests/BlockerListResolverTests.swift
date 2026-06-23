@@ -43,4 +43,43 @@ final class BlockerListResolverTests: XCTestCase {
         // テスト bundle に anything.json は存在しないので nil
         XCTAssertNil(resolver.bundleURL())
     }
+
+    // MARK: - 統合(4→3): combined-<variant> 優先
+
+    /// App Group の `containerURL` を temp dir に差し替えるテスト用 FileManager。
+    private final class MockContainerFileManager: FileManager {
+        let container: URL
+        init(container: URL) { self.container = container; super.init() }
+        override func containerURL(forSecurityApplicationGroupIdentifier id: String) -> URL? { container }
+    }
+
+    func test_resolve_for_state_prefers_combined_when_present() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fm = MockContainerFileManager(container: dir)
+        let resolver = BlockerListResolver(appGroupIdentifier: "group.test",
+                                           bundle: Bundle(for: type(of: self)), fileManager: fm)
+        let state = BlockerTogglesState.default
+        let variant = resolver.filename(for: state)
+        // combined と 標準 variant の両方を置く → combined が優先される
+        let combined = dir.appendingPathComponent("combined-" + variant)
+        try Data("[]".utf8).write(to: combined)
+        try Data("[]".utf8).write(to: dir.appendingPathComponent(variant))
+        XCTAssertEqual(resolver.resolve(for: state), combined)
+    }
+
+    func test_resolve_for_state_falls_back_to_variant_when_no_combined() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fm = MockContainerFileManager(container: dir)
+        let resolver = BlockerListResolver(appGroupIdentifier: "group.test",
+                                           bundle: Bundle(for: type(of: self)), fileManager: fm)
+        let state = BlockerTogglesState.default
+        let variant = resolver.filename(for: state)
+        let variantURL = dir.appendingPathComponent(variant)
+        try Data("[]".utf8).write(to: variantURL)   // combined は無し
+        XCTAssertEqual(resolver.resolve(for: state), variantURL)
+    }
 }
