@@ -1,10 +1,10 @@
 import Foundation
 import SafariServices
 
+/// 4→3 統合後、自己学習は標準 ContentBlocker に内包されたため、状態は
+/// 「標準(自己学習込み) ON」/「OFF」の 2 値のみ（旧 baseOnly/reportedOnly は到達不能なので削除）。
 enum ContentRuleListMode: Equatable {
     case bothEnabled
-    case baseOnly
-    case reportedOnly
     case bothDisabled
 
     var isFullyOperational: Bool { self == .bothEnabled }
@@ -12,18 +12,7 @@ enum ContentRuleListMode: Equatable {
     var statusLabel: String {
         switch self {
         case .bothEnabled: return "広告ブロック中"
-        case .baseOnly: return "広告ブロック中 (学習機能 OFF)"
-        case .reportedOnly: return "⚠️ 本体ブロッカーが OFF です"
         case .bothDisabled: return "準備未完了"
-        }
-    }
-
-    var bannerType: BannerType? {
-        switch self {
-        case .bothEnabled: return nil
-        case .baseOnly: return .yellow("「自己学習フィルタ」を ON にすると、報告で広告ブロックが進化します")
-        case .reportedOnly: return .red("「標準フィルタ」を ON にしてください。学習機能だけでは大部分の広告が通り抜けます")
-        case .bothDisabled: return nil
         }
     }
 }
@@ -35,21 +24,14 @@ enum BannerType: Equatable {
 
 struct ContentRuleListSnapshot: Equatable {
     let baseEnabled: Bool
-    let reportedEnabled: Bool
     /// 「ポップアップ広告対策」拡張（任意の追加保護）の ON/OFF。core(標準+学習)の判定には影響しない。
     let popunderEnabled: Bool
     let mode: ContentRuleListMode
 
-    static func from(base: Bool, reported: Bool, popunder: Bool = false) -> ContentRuleListSnapshot {
-        let mode: ContentRuleListMode
-        switch (base, reported) {
-        case (true, true): mode = .bothEnabled
-        case (true, false): mode = .baseOnly
-        case (false, true): mode = .reportedOnly
-        case (false, false): mode = .bothDisabled
-        }
-        return ContentRuleListSnapshot(
-            baseEnabled: base, reportedEnabled: reported, popunderEnabled: popunder, mode: mode
+    static func from(base: Bool, popunder: Bool = false) -> ContentRuleListSnapshot {
+        ContentRuleListSnapshot(
+            baseEnabled: base, popunderEnabled: popunder,
+            mode: base ? .bothEnabled : .bothDisabled
         )
     }
 
@@ -67,7 +49,6 @@ protocol ContentRuleListStateChecker: Sendable {
 
 struct SFContentBlockerStateChecker: ContentRuleListStateChecker {
     static let baseID = "com.kureho.adblockkeshi.blocker"
-    static let reportedID = "com.kureho.adblockkeshi.reportedblocker"
     static let popunderID = "com.kureho.adblockkeshi.popunderblocker"
 
     func check() async -> ContentRuleListSnapshot {
@@ -75,9 +56,9 @@ struct SFContentBlockerStateChecker: ContentRuleListStateChecker {
         // _contentBlockerLoaderConnection を _xpc_api_misuse で EXC_BREAKPOINT クラッシュさせる。
         // 実機でも同じ race condition リスクがあるため逐次化する (XPC は速いので体感差なし)。
         let b = await getEnabled(identifier: Self.baseID)
-        let r = await getEnabled(identifier: Self.reportedID)
         let p = await getEnabled(identifier: Self.popunderID)
-        return ContentRuleListSnapshot.from(base: b, reported: r, popunder: p)
+        // 4→3 統合: 自己学習は標準 ContentBlocker に統合済み（独立 reportedblocker 拡張は廃止）。
+        return ContentRuleListSnapshot.from(base: b, popunder: p)
     }
 
     private func getEnabled(identifier: String) async -> Bool {

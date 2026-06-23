@@ -4,10 +4,11 @@ import Foundation
 ///
 /// - `rules-self.json`   … 報告した本人の端末ルール（即時追記）
 /// - `rules-global.json` … サーバ検証を通って配信されたグローバルルール（FilterDownloader が保存）
-/// - `rules-reported.json` … 上2つを union した結果。報告Extension(`ReportedContentBlockerRequestHandler`)
-///                           が `ReportedRulesResolver` 経由で読む実ファイル。
+/// - `rules-reported.json` … 上2つを union した安全な自己学習集合。4→3 統合後は
+///                           `CombinedRuleListCoordinator` が `safeMergedReportedRules()` 経由で
+///                           読み、標準 ContentBlocker の combined-<state> に統合する。
 ///
-/// 重複は `trigger.url-filter` で排除する。
+/// 重複はルール内容で排除する。
 struct SelfReportedRulesStore {
     static let selfFilename = "rules-self.json"
     static let globalFilename = "rules-global.json"
@@ -53,17 +54,26 @@ struct SelfReportedRulesStore {
     /// 戻り値: merged ファイルの中身が以前と変わったら true（呼び出し側の reload 判断用）。
     @discardableResult
     func rebuildMerged() throws -> Bool {
+        let union = safeMergedReportedRules()
+        let previous = loadMergedRules()
+        try write(union, to: Self.mergedFilename)
+        return union != previous
+    }
+
+    /// self ∪ global を「document ブロック除外 + structural dedup」した安全な自己学習ルール集合を返す。
+    /// 並び順は **global → self**（self を末尾に置く）。予算超過時に `ReportedRuleBudget.selectReported`
+    /// が末尾を優先保持するため、ユーザー自身の報告（self・ファストレーン）が global より優先して
+    /// combined に載る。dedup は内容一致で行い、最初の出現（global 側）を残す。
+    func safeMergedReportedRules() -> [ContentBlockerRule] {
         var seen = Set<ContentBlockerRule>()
         var union: [ContentBlockerRule] = []
-        for rule in loadSelfRules() + loadGlobalRules() {
+        for rule in loadGlobalRules() + loadSelfRules() {
             guard !ReportedRuleSafety.isDocumentBlockingRisk(rule) else { continue }
             if seen.insert(rule).inserted {
                 union.append(rule)
             }
         }
-        let previous = loadMergedRules()
-        try write(union, to: Self.mergedFilename)
-        return union != previous
+        return union
     }
 
     /// 既存端末治癒: 保存済み self ルールから document ブロック(旧形式)を除去し merged を作り直す。

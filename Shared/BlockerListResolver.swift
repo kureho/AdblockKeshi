@@ -42,10 +42,25 @@ struct BlockerListResolver {
     // MARK: - v2.0 state-aware resolution
 
     /// v2.0: state に応じて 4 種類のルール JSON を切替えるリゾルバ。
-    /// App Group → Bundle → empty-rules.json の fallback chain で URL 解決。
+    /// 統合(4→3): App Group の `combined-<variant>`（標準+安全化済み自己学習）を最優先し、
+    /// 無ければ標準のみ（App Group `<variant>` → bundle → empty）にフォールバックする（fail-safe）。
     func resolve(for state: BlockerTogglesState) -> URL? {
-        let filename = self.filename(for: state)
-        return resolveStateFile(filename: filename)
+        let variant = self.filename(for: state)
+        if let container = fileManager
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
+            let combined = container.appendingPathComponent(
+                CombinedRuleListBuilder.combinedFilename(forVariant: variant))
+            if fileManager.fileExists(atPath: combined.path) {
+                return combined
+            }
+        }
+        return resolveStateFile(filename: variant)
+    }
+
+    /// combined を考慮しない「標準 variant のみ」の解決（CombinedRuleListBuilder の入力源）。
+    /// App Group `<variant>` → bundle `<variant>` → bundle empty。combined は見ない（循環回避）。
+    func standardRulesURL(for state: BlockerTogglesState) -> URL? {
+        resolveStateFile(filename: filename(for: state))
     }
 
     /// state → filename マッピング（テスト容易性のため public）。

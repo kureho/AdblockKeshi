@@ -61,18 +61,17 @@ struct OnboardingView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("3 つのフィルタを ON")
+                            Text("2 つのフィルタを ON")
                                 .font(.system(.callout, weight: .semibold))
 
                             // フィルタ inline 列挙 (アイコン + 名前)
                             VStack(alignment: .leading, spacing: 6) {
                                 FilterInlineRow(iconName: "shield.fill", name: "標準フィルタ")
-                                FilterInlineRow(iconName: "sparkles", name: "自己学習フィルタ")
                                 FilterInlineRow(iconName: "hand.raised.fill", name: "ポップアップ広告対策")
                             }
 
                             // グレー補足文
-                            Text("標準＋自己学習で広告ブロックが有効に。ポップアップ広告対策も ON にすると、タップ時に広告サイトへ飛ばされる誘導も防げます")
+                            Text("標準フィルタで広告ブロックと自己学習が有効に。ポップアップ広告対策も ON にすると、タップ時に広告サイトへ飛ばされる誘導も防げます")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -202,13 +201,7 @@ struct FilterInfoSheet: View {
                     FilterDescriptionCard(
                         iconName: "shield.fill",
                         title: "標準フィルタ",
-                        detail: "15 万件の広告・詐欺サイトを基本ブロック。EasyList・AdGuard 等の公式リストを採用。"
-                    )
-
-                    FilterDescriptionCard(
-                        iconName: "sparkles",
-                        title: "自己学習フィルタ",
-                        detail: "他のブロッカーで消えない広告を、ユーザーからの報告で自動で取り込んで進化していきます。"
+                        detail: "15 万件の広告・詐欺サイトを基本ブロック（EasyList・AdGuard 等の公式リスト採用）。さらに、他のブロッカーで消えない広告をユーザー報告で自動で取り込み進化する自己学習も内蔵しています。"
                     )
 
                     FilterDescriptionCard(
@@ -225,7 +218,7 @@ struct FilterInfoSheet: View {
 
                     StrongModePermissionNote()
 
-                    Text("標準＋自己学習で広告を消し、ポップアップ広告対策で不要な誘導も防ぐと、より強力です。")
+                    Text("標準フィルタ（自己学習込み）で広告を消し、ポップアップ広告対策で不要な誘導も防ぐと、より強力です。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .padding(.top, 4)

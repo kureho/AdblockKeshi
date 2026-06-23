@@ -51,8 +51,6 @@ targets:
     dependencies:
       - target: ContentBlockerExtension
         embed: true
-      - target: ReportedRulesExtension
-        embed: true
       - target: PopunderBlockerExtension
         embed: true
       - target: PopupShieldExtension
@@ -81,31 +79,8 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Extension/Extension.entitlements
         PRODUCT_NAME: ContentBlockerExtension
 
-  ReportedRulesExtension:
-    type: app-extension
-    platform: iOS
-    sources:
-      - path: ReportedRulesExtension
-      # Shared/ は Phase 5 で App Group fallback chain (BlockerListResolver / StateStore) を
-      # ReportedContentBlockerRequestHandler が利用するため事前同梱。Phase 1 では未使用だが、
-      # Phase 5 着手時に sources 変更 + 再 sign を避けるため。
-      - path: Shared
-    info:
-      path: ReportedRulesExtension/Info.plist
-      properties:
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.Safari.content-blocker
-          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ReportedContentBlockerRequestHandler
-          NSExtensionAttributes:
-            ContentBlockerExtensionType: "general"
-        CFBundleDisplayName: 自己学習フィルタ
-        CFBundleShortVersionString: $(MARKETING_VERSION)
-        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.kureho.adblockkeshi.reportedblocker
-        CODE_SIGN_ENTITLEMENTS: ReportedRulesExtension/Extension.entitlements
-        PRODUCT_NAME: ReportedRulesExtension
+  # 2026-06-23 4→3 統合: ReportedRulesExtension(自己学習フィルタ・reportedblocker)を削除。
+  # 自己学習は標準 ContentBlocker の combined-<state> に統合（CombinedRuleListBuilder）。
 
   PopunderBlockerExtension:
     type: app-extension

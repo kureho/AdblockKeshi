@@ -1,5 +1,4 @@
 import SwiftUI
-import SafariServices
 
 @main
 struct AdblockKeshiApp: App {
@@ -73,7 +72,7 @@ extension AdblockKeshiApp {
     /// 表示は起動直後を避けてひと呼吸（2.5秒）置く（起動時即表示は離脱+50%の実証データあり）。
     private func bumpDailyUsageIfNeeded() {
         let snapshot = appState.currentSnapshot
-        guard snapshot?.baseEnabled == true || snapshot?.reportedEnabled == true else { return }
+        guard snapshot?.baseEnabled == true else { return }
         let defaults = UserDefaults.standard
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd"
@@ -90,15 +89,14 @@ extension AdblockKeshiApp {
 }
 
 extension AdblockKeshiApp {
-    /// 既存端末治癒（2026-06-23）: 旧版で生成された「document を遮断し得る自己報告ルール」を
-    /// 起動時に purge する。ネットワーク非依存・idempotent。除去が発生したときだけ報告
-    /// Content Blocker を reload して即座に反映する（被害端末がアップデートしただけで治る）。
+    /// 起動時: ①既存端末治癒（旧版の document 遮断 self-rule を purge）②統合 ContentBlocker の
+    /// combined-<state> を必要時のみ再生成して標準 ContentBlocker を reload。
+    /// 4→3 統合後、自己学習は標準 ContentBlocker に統合されたため reportedID の reload は廃止。
+    /// 重い処理は coordinator が off-main で行う（起動フリーズ回避）。
+    /// 初回アップデート起動時はここで初めて combined が生成される（それまでは標準のみ配信）。
     private func migrateReportedRulesIfNeeded() {
-        guard let store = SelfReportedRulesStore() else { return }
-        guard (try? store.sanitizeStoredSelfRules()) == true else { return }
-        SFContentBlockerManager.reloadContentBlocker(
-            withIdentifier: SFContentBlockerStateChecker.reportedID
-        ) { _ in }
+        if let store = SelfReportedRulesStore() { _ = try? store.sanitizeStoredSelfRules() }
+        CombinedRuleListCoordinator.scheduleRegenerate()
     }
 }
 
