@@ -43,9 +43,9 @@ final class BlockerControlViewModel: ObservableObject {
             updatedAt: Date()
         )
         try? store.write(state)
-        reloader(blockerIdentifier)
-        // 新 state の combined-<variant> を再生成（off-main）して標準 ContentBlocker を再 reload。
-        // 4→3 統合: トグルで variant が変わるため新 state 用の combined を作り直す。
+        reloader(blockerIdentifier)   // 基本保護(.blocker)を新 state で reload（bundle variant を読む）
+        // 報告反映(popunder)の combined を必要時のみ再生成（off-main・change-guard）。
+        // トグル自体は基本保護の variant 切替なので reloader が担い、coordinator は報告反映側を保つ。
         CombinedRuleListCoordinator.scheduleRegenerate()
     }
 }

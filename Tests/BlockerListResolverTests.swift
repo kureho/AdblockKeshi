@@ -82,4 +82,33 @@ final class BlockerListResolverTests: XCTestCase {
         try Data("[]".utf8).write(to: variantURL)   // combined は無し
         XCTAssertEqual(resolver.resolve(for: state), variantURL)
     }
+
+    // MARK: - 報告反映(popunder): resolve()（非state）の combined 優先
+
+    func test_resolve_prefers_combined_popunder() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fm = MockContainerFileManager(container: dir)
+        let resolver = BlockerListResolver(appGroupIdentifier: "group.test",
+                                           filterFilename: "popunder-rules.json",
+                                           bundle: Bundle(for: type(of: self)), fileManager: fm)
+        let combined = dir.appendingPathComponent("combined-popunder-rules.json")
+        try Data("[]".utf8).write(to: combined)
+        try Data("[]".utf8).write(to: dir.appendingPathComponent("popunder-rules.json"))
+        XCTAssertEqual(resolver.resolve(), combined)
+    }
+
+    func test_resolve_falls_back_to_direct_when_no_combined_popunder() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fm = MockContainerFileManager(container: dir)
+        let resolver = BlockerListResolver(appGroupIdentifier: "group.test",
+                                           filterFilename: "popunder-rules.json",
+                                           bundle: Bundle(for: type(of: self)), fileManager: fm)
+        let direct = dir.appendingPathComponent("popunder-rules.json")
+        try Data("[]".utf8).write(to: direct)   // combined 無し → 直 App Group ファイル
+        XCTAssertEqual(resolver.resolve(), direct)
+    }
 }

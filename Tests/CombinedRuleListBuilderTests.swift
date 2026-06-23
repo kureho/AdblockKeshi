@@ -115,6 +115,21 @@ final class CombinedRuleListBuilderTests: XCTestCase {
         XCTAssertEqual(try combinedRules("merged-rules.json"), good)
     }
 
+    /// base 内容が変わったら（CDN で popunder base が更新された等）combined を再生成する。
+    /// change-key に base 内容ハッシュを含めるため検知できる（CDN 更新が stale combined にマスクされない）。
+    func test_change_guard_rebuilds_when_base_content_changes() throws {
+        let std = try writeStandard([block("a.test")], "popunder-rules.json")
+        let b = CombinedRuleListBuilder(directory: dir, appBuildVersion: "100")
+        _ = try b.rebuildIfNeeded(variantFilename: "popunder-rules.json", standardRulesURL: std,
+                                  mayTruncate: false, reportedSafe: [block("c.test")])
+        // base を更新（CDN 更新相当）
+        _ = try writeStandard([block("a.test"), block("b.test")], "popunder-rules.json")
+        let out = try b.rebuildIfNeeded(variantFilename: "popunder-rules.json", standardRulesURL: std,
+                                        mayTruncate: false, reportedSafe: [block("c.test")])
+        XCTAssertTrue(out.rebuilt, "base 内容変更で再生成されるべき")
+        XCTAssertEqual(try combinedRules("popunder-rules.json").count, 3)
+    }
+
     /// 非アクティブ variant の combined は cleanup で削除（disk 肥大回避）。
     func test_cleanup_removes_non_active_variant_combined() throws {
         let b = CombinedRuleListBuilder(directory: dir, appBuildVersion: "100")

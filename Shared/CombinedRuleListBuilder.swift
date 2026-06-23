@@ -37,6 +37,24 @@ struct CombinedRuleListBuilder {
     /// 全 state の標準 variant ファイル名（BlockerListResolver.filename(for:) と対応）。
     static let allVariants = ["merged-rules.json", "ad-rules.json", "security-rules.json", "empty-rules.json"]
 
+    /// basic（標準 variant）の combined-* と .meta を全て削除し、何か消したら true を返す。
+    /// 報告ルールを報告反映(popunder)へ移したので basic は bundle variant に戻す（combined を持たない）。
+    /// popunder の combined（combined-popunder-rules.json）は allVariants に含まれないので消さない。
+    @discardableResult
+    func removeBasicCombined() -> Bool {
+        var removedAny = false
+        for variant in Self.allVariants {
+            let name = Self.combinedFilename(forVariant: variant)
+            let combined = directory.appendingPathComponent(name)
+            if fileManager.fileExists(atPath: combined.path) {
+                try? fileManager.removeItem(at: combined)
+                removedAny = true
+            }
+            try? fileManager.removeItem(at: directory.appendingPathComponent(name + ".meta"))
+        }
+        return removedAny
+    }
+
     /// アクティブ variant 以外の combined-* と .meta を削除する（非アクティブ state の孤児を一掃）。
     /// 当該 state に切り替わった際は change-guard が miss して再生成されるので安全。
     func cleanupCombined(except activeVariant: String) {
@@ -89,22 +107,26 @@ struct CombinedRuleListBuilder {
             return Outcome(rebuilt: true, droppedStandard: 0, droppedReported: 0)
         }
 
+        // base（popunder L1+L2 等）を先に読む。base は CDN(PopunderGlobalSync)で runtime 更新され得るため、
+        // change-key に base の内容ハッシュを含めて CDN 更新を検知する（base=static の前提は popunder に不成立）。
+        // popunder base は ~8KB なので guard 前に読んでも軽い（基本保護の 22MB combined はもう生成しない）。
+        let standardJSON = try Data(contentsOf: standardRulesURL)
+
         // change-key 用は .sortedKeys で決定的にエンコードする。
         // 既定の JSONEncoder は keyed container のキー順が非決定的で、hash がブレて change-guard が
         // 毎回再生成してしまう（起動フリーズ回避の目的が無効化される）ため。
         let keyEncoder = JSONEncoder()
         keyEncoder.outputFormatting = [.sortedKeys]
         let reportedData = try keyEncoder.encode(reportedSafe)
-        let key = changeKey(variant: variantFilename, reportedData: reportedData)
+        let key = changeKey(variant: variantFilename, baseData: standardJSON, reportedData: reportedData)
 
-        // change-guard: 入力が変わっておらず combined が既にあれば再生成しない（起動フリーズ回避）。
+        // change-guard: 入力（base 内容 + reported）が変わっておらず combined が既にあれば再生成しない。
         if fileManager.fileExists(atPath: combinedURL.path),
            let existing = try? String(contentsOf: metaURL, encoding: .utf8),
            existing == key {
             return Outcome(rebuilt: false, droppedStandard: 0, droppedReported: 0)
         }
 
-        let standardJSON = try Data(contentsOf: standardRulesURL)
         let combined: Data
         let droppedStandard: Int
         let droppedReported: Int
@@ -134,11 +156,12 @@ struct CombinedRuleListBuilder {
         return Outcome(rebuilt: true, droppedStandard: droppedStandard, droppedReported: droppedReported)
     }
 
-    private func changeKey(variant: String, reportedData: Data) -> String {
+    private func changeKey(variant: String, baseData: Data, reportedData: Data) -> String {
         // SHA256 は launch を跨いで安定（Swift の Hasher は per-run seed のため使わない）。
-        // 標準 variant（ad/security/merged/empty-rules.json）は bundle 同梱で app version 毎に static
-        // のため、appBuildVersion を鍵に含めれば標準の更新（= 新バージョン配布）も検知できる。
-        let hex = SHA256.hash(data: reportedData).map { String(format: "%02x", $0) }.joined()
-        return "\(appBuildVersion)|\(variant)|rep:\(reportedData.count):\(hex)"
+        // base 内容ハッシュを含めるので CDN(PopunderGlobalSync)で base が更新されたら鍵が変わり再生成する。
+        // reported もハッシュで含める。appBuildVersion も含め新バージョン配布も検知。
+        let baseHex = SHA256.hash(data: baseData).map { String(format: "%02x", $0) }.joined()
+        let repHex = SHA256.hash(data: reportedData).map { String(format: "%02x", $0) }.joined()
+        return "\(appBuildVersion)|\(variant)|base:\(baseData.count):\(baseHex)|rep:\(reportedData.count):\(repHex)"
     }
 }

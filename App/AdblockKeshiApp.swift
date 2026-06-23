@@ -89,11 +89,11 @@ extension AdblockKeshiApp {
 }
 
 extension AdblockKeshiApp {
-    /// 起動時: ①既存端末治癒（旧版の document 遮断 self-rule を purge）②統合 ContentBlocker の
-    /// combined-<state> を必要時のみ再生成して標準 ContentBlocker を reload。
-    /// 4→3 統合後、自己学習は標準 ContentBlocker に統合されたため reportedID の reload は廃止。
+    /// 起動時: ①既存端末治癒（旧版の document 遮断 self-rule を purge）②報告反映(popunder)の
+    /// combined を必要時のみ再生成して報告反映 ContentBlocker を reload（基本保護は bundle variant へ戻す）。
+    /// 自己学習は「報告反映」拡張に統合（旧 reportedblocker 廃止・名称整合で popunder へ再配置）。
     /// 重い処理は coordinator が off-main で行う（起動フリーズ回避）。
-    /// 初回アップデート起動時はここで初めて combined が生成される（それまでは標準のみ配信）。
+    /// 初回アップデート起動時はここで初めて combined-popunder が生成される。
     private func migrateReportedRulesIfNeeded() {
         if let store = SelfReportedRulesStore() { _ = try? store.sanitizeStoredSelfRules() }
         CombinedRuleListCoordinator.scheduleRegenerate()

@@ -20,6 +20,11 @@ targets:
     sources:
       - path: App
       - path: Shared
+      # 報告反映(popunder)の combined を App の coordinator が生成するため、8KB の base を App にも同梱。
+      # （標準 variant 22MB と違い小さい。App Group コピー頼みは fresh install で nil になり PR#30 と同じ
+      #  「app が rule base を読めない」regression を再発させるため、bundle 同梱が必須。）
+      - path: PopunderBlockerExtension/Resources/popunder-rules.json
+        buildPhase: resources
     info:
       path: App/Info.plist
       properties:
