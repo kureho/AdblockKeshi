@@ -37,10 +37,32 @@
 強力モードはデータを外部送信しないため、App Privacy の宣言に追加項目は生じない見込み。
 （提出時に Web UI で再確認すること。）
 
+## Safari 拡張の利用手順（サポートページ用・日本語）
+
+1. アプリを開き、案内に沿って Safari の機能拡張を有効化します。
+2. iOS の「設定」→「Safari」→「機能拡張」→「強力ポップアップ対策」をオンにします。
+3. 対象サイトへのアクセスを「許可」します（権限は対象サイトに限定されます）。
+4. 拡張のポップアップで「強力モード」をオンにします（初期状態はオフ）。
+5. 対象ページを再読み込みすると、ポップアップに「有効・動作確認済み」と表示されます。
+   - サイトごとに「一時停止」できます。
+   - 「この端末では利用できません」と出る場合、その iOS では強力モードに非対応です（標準フィルタ等は引き続き動作）。
+
+## プライバシー（App Privacy 回答との差分）
+
+- 強力モードはデータを外部送信しません。host_permissions は **streamtape.com に限定**。
+- URL・ページ内容・閲覧履歴を保存も送信もしません。端末内に記録するのはブロック件数と分類のみ。
+- → App Privacy の宣言に追加項目は生じない見込み（提出時に Web UI で再確認）。
+
 ## 提出前 kureho 確認事項（必須）
 
-1. iOS 17 実機 Safari で `scripting.registerContentScripts({world:"MAIN"})` が override を実際に実行するか目視
-   （Apple は 16.4+ サポート言明だが実機確認必須）。
-2. 強力モードをオンにして実機 streamtape で 3 回×操作の目視（タブ乗っ取り 0・プレーヤー再生 OK）。
-3. PopupShieldExtension のアイコン未設定 → 提出前に追加（manifest からは省略済み・現状はシステム既定）。
-4. App Privacy 再確認・価格表記 NG 語チェック・4 点監査。
+1. **実機 Safari で強力モードを有効化し、streamtape で 3 回×操作の目視**（タブ乗っ取り 0・再生 OK）。
+   拡張 popup が「有効・動作確認済み(active)」になること＝world:MAIN 実動作の証跡（`device-verification.md`）。
+2. iOS 17 実機での `registerContentScripts({world:"MAIN"})` 実動作（この検証端末は現行 iOS のため iOS17 は別途）。
+3. App Privacy 再確認・価格表記 NG 語チェック（¥/円/無料/Free/iPhone/iPad/iOS/Safari/Siri）・4 点監査。
+4. （任意）強力モード専用アイコン（shield+bolt 等）への差し替え。現状は流用シールド（文字なし・ブランド整合）。
+
+## Review Notes での注意
+
+特定の成人向け動画 URL を Apple へ提示しない。再現は**ローカル fixture**
+（`PopupShieldExtension/Tests/fixtures/`）または一般化した説明（「一部の動画ホスト系サイトで、サイト自身の
+first-party スクリプトが window.open でタブ乗っ取り広告を開く挙動」）を用いる。
