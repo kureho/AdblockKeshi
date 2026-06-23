@@ -46,17 +46,37 @@ struct SelfReportedRulesStore {
         return true
     }
 
-    /// self + global を union（url-filter で dedup）して merged を書く。
-    func rebuildMerged() throws {
-        var seen = Set<String>()
+    /// self + global を union して merged を書く。
+    /// 防御多層: 経路を問わず document ブロック(旧形式)は merged から除外する
+    /// （CDN/global 経由で混入しても無効化）。dedup はルール内容で行う
+    /// （cosmetic は url-filter `.*` を共有するため url-filter dedup では取りこぼす）。
+    /// 戻り値: merged ファイルの中身が以前と変わったら true（呼び出し側の reload 判断用）。
+    @discardableResult
+    func rebuildMerged() throws -> Bool {
+        var seen = Set<ContentBlockerRule>()
         var union: [ContentBlockerRule] = []
         for rule in loadSelfRules() + loadGlobalRules() {
-            let key = rule.trigger.urlFilter
-            if seen.insert(key).inserted {
+            guard !ReportedRuleSafety.isDocumentBlockingRisk(rule) else { continue }
+            if seen.insert(rule).inserted {
                 union.append(rule)
             }
         }
+        let previous = loadMergedRules()
         try write(union, to: Self.mergedFilename)
+        return union != previous
+    }
+
+    /// 既存端末治癒: 保存済み self ルールから document ブロック(旧形式)を除去し merged を作り直す。
+    /// ネットワーク非依存・idempotent。self の除去 or merged 内容の変化が起きたら true
+    /// （global 由来の危険ルールが merged から strip される場合も reload を促すため）。
+    @discardableResult
+    func sanitizeStoredSelfRules() throws -> Bool {
+        let current = loadSelfRules()
+        let safe = current.filter { !ReportedRuleSafety.isDocumentBlockingRisk($0) }
+        let selfChanged = safe.count != current.count
+        if selfChanged { try write(safe, to: Self.selfFilename) }
+        let mergedChanged = try rebuildMerged()
+        return selfChanged || mergedChanged
     }
 
     func loadSelfRules() -> [ContentBlockerRule] { load(Self.selfFilename) }
