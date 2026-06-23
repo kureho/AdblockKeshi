@@ -50,6 +50,11 @@ jobs:
         run: node --test PopupShieldExtension/Tests/popup-shield-core.test.js PopupShieldExtension/Tests/popup-shield-bridge.test.js PopupShieldExtension/Tests/background-plan.test.js PopupShieldExtension/Tests/background-health.test.js
       - name: Static check (MAIN world has no Extension API)
         run: node --test PopupShieldExtension/Tests/popup-shield-static.test.js
+      - name: Deterministic fixture (MAIN/ISOLATED runtime path, headless chromium)
+        run: |
+          npm install --no-save playwright@1
+          npx playwright install --with-deps chromium
+          node PopupShieldExtension/Tests/fixtures/run-fixture.js
       - name: Generated artifact consistency (regenerate, bundle==cdn)
         run: |
           python3 scripts/build_popunder_rules.py \
@@ -64,7 +69,7 @@ jobs:
       - name: Web Extension resource structure
         run: |
           for f in manifest.json background.js popup.html popup.js \
-                   popup-shield-core.js popup-shield-main.js popup-shield-bridge.js \
+                   popup-shield-core.js popup-shield-main.js popup-shield-bridge.js popup-shield-status.js \
                    _locales/ja/messages.json images/icon-128.png; do
             test -f "PopupShieldExtension/Resources/$f" || { echo "missing $f"; exit 1; }
           done
