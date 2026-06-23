@@ -61,17 +61,18 @@ struct OnboardingView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("2 つのフィルタを ON")
+                            Text("3 つの保護を ON（すべて推奨）")
                                 .font(.system(.callout, weight: .semibold))
 
-                            // フィルタ inline 列挙 (アイコン + 名前)
+                            // 3 つの保護 inline 列挙 (アイコン + 名前)
                             VStack(alignment: .leading, spacing: 6) {
-                                FilterInlineRow(iconName: "shield.fill", name: "標準フィルタ")
-                                FilterInlineRow(iconName: "hand.raised.fill", name: "ポップアップ広告対策")
+                                FilterInlineRow(iconName: "shield.fill", name: "基本保護")
+                                FilterInlineRow(iconName: "exclamationmark.bubble.fill", name: "報告反映")
+                                FilterInlineRow(iconName: "hand.raised.fill", name: "遷移保護")
                             }
 
                             // グレー補足文
-                            Text("標準フィルタで広告ブロックと自己学習が有効に。ポップアップ広告対策も ON にすると、タップ時に広告サイトへ飛ばされる誘導も防げます")
+                            Text("基本保護で一般的な広告・トラッカーを防ぎ、報告反映で検証済みの追加対策を反映、遷移保護で勝手に開くタブや広告ページへの移動を防ぎます")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -200,25 +201,25 @@ struct FilterInfoSheet: View {
                 VStack(alignment: .leading, spacing: 16) {
                     FilterDescriptionCard(
                         iconName: "shield.fill",
-                        title: "標準フィルタ",
-                        detail: "15 万件の広告・詐欺サイトを基本ブロック（EasyList・AdGuard 等の公式リスト採用）。さらに、他のブロッカーで消えない広告をユーザー報告で自動で取り込み進化する自己学習も内蔵しています。"
+                        title: "基本保護",
+                        detail: "一般的な広告やトラッカーを、安定したルールでブロックします（EasyList・AdGuard 等の公式リスト採用）。他のブロッカーで消えない広告をユーザー報告で取り込む自己学習も内蔵しています。"
+                    )
+
+                    FilterDescriptionCard(
+                        iconName: "exclamationmark.bubble.fill",
+                        title: "報告反映",
+                        detail: "利用者から届いた広告報告をもとに、安全性を確認した追加対策を反映します。動画・まとめサイト等でサムネをタップすると広告サイトに飛ばされる「タップ乗っ取り」も、既知の広告ネットワークのスクリプトをブロックして抑えます。"
                     )
 
                     FilterDescriptionCard(
                         iconName: "hand.raised.fill",
-                        title: "ポップアップ広告対策",
-                        detail: "動画・まとめサイト等でサムネをタップすると広告サイトに飛ばされる「タップ乗っ取り」を、既知のポップアップ広告ネットワークのスクリプトをブロックして抑えます。"
-                    )
-
-                    FilterDescriptionCard(
-                        iconName: "bolt.shield.fill",
-                        title: "強力ポップアップ対策（任意・上級者向け）",
-                        detail: "上の対策でも消えない「サイト自身のスクリプトが開くタブ乗っ取り」を、対象サイトに限って止めます。Safari の機能拡張として、ご自身でオンにしたときだけ動きます。"
+                        title: "遷移保護",
+                        detail: "勝手に開くタブや、広告ページへの意図しない移動を防ぎます。サイト自身のスクリプトが開くタブ乗っ取りを、対象サイトに限って止めます。"
                     )
 
                     StrongModePermissionNote()
 
-                    Text("標準フィルタ（自己学習込み）で広告を消し、ポップアップ広告対策で不要な誘導も防ぐと、より強力です。")
+                    Text("基本保護・報告反映・遷移保護の3つすべてを ON にすると、もっとも広告を防げます。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .padding(.top, 4)
