@@ -13,11 +13,15 @@ spec: `~/claude/docs/superpowers/specs/2026-06-27-adblock-privacy-redaction-desi
   - [ ] **remote D1 適用（kureho 承認必須・本番 D1 変更）**: 承認時にまず `cd workers && npx wrangler d1 migrations list --remote`（read-only）で prod が 0009 までと確認（0010 衝突回避）→ `npm run db:migrate:prod`
   - 注: l4_check は L6 が selector-scope 判定を吸収したため dead column 化（意図的・今回触らない）
 - [ ] **【validation reliability・別問題】validating 永久滞留**: validatePage が tpead.net 等の動画/開けないリンクで throw → `playwright-validate.ts:50-54` の `catch{continue}` で skip、validation_score=null のまま次回も同じ URL を再試行し滞留（現 stuck: 0ad49530 tpead.net）。l6_check 修正後も**この候補は昇格しない**（validatePage 段で詰まるため）。L6 とも Sub-2 とも別。要検討: N回失敗で rejected_unreachable に落とす / 開けないドメイン種別の事前除外。
-- [ ] Chunk 1: `normalizeURL`(tldts・冪等) + redactPII 冪等性テスト
-- [ ] Chunk 2: 層A retention backstop（status非依存14日・reason分岐）+ workflow配線（`if: always()`）
-- [ ] Chunk 3: 層B aggregation per-group redact + L6 per-row redact
-- [ ] Chunk 1-3 本番反映（外部反映・kureho 承認）
-- [ ] Chunk 4: backfill（snapshot→sign-off→実行・不可逆D1変更・kureho 承認）
+- [x] Chunk 1: `normalizeURL`(tldts・冪等) + redactPII 冪等性テスト（6e0f2ff / 5ba4e0b）
+  - 注: tldts は plan の `^6.x` に対し **`^7.4.4` が install された**（getDomain API 互換・全テスト pass）。本番反映前に kureho 確認。
+- [x] Chunk 2: 層A retention backstop（status非依存14日・reason分岐）+ workflow配線（`if: always()`）（dc7a656）
+- [x] Chunk 3: 層B aggregation per-group redact + L6 per-row redact（946f211 / ffbb59d）
+- [x] **【最終統合レビュー指摘・修正完了】層A floor starvation（523bc93）**: reports/rule_candidates の SELECT に `url LIKE '%/%'` を追加し既縮約行を LIMIT 対象外に。これが無いと aged 行 10000 超で未縮約 long-tail が永久 starve され 14日 floor が非自己修復で崩れる。**plan line-361 の paging=YAGNI 判断を意図的に覆す**（throughput でなく correctness 問題）。floor self-heal 回帰テスト追加・全 208 pass。
+- [ ] **【kureho 設計判断待ち】abuse_log の floor self-heal**: broken_site 自由文は slash ヒューリスティック不可（redactPII 済みでも '/' を含み得る）。選択肢=(a) marker 列 / (b) 時間窓処理 / (c) 低ボリューム前提で現状維持+監視。**「低ボリューム」は未実測**（prod 行数未確認）。本番反映前に決定要。
+- [ ] **【申し送り】rule_candidates の first_reported_at 起点 over-redaction**: 層B L6 redact は status 遷移時に full URL を eTLD+1 化するが、first_reported_at が 14日超の候補は層A でも縮約され得る。spec 準拠・privacy 安全側だが L6 selector 抽出の yield をわずかに下げる可能性（reviewer nit）。本番反映後にモニタ。
+- [ ] Chunk 1-3 本番反映（外部反映・kureho 承認）※abuse_log 設計判断・tldts ^7 確認を本番前に解消
+- [ ] Chunk 4: backfill（snapshot→sign-off→実行・不可逆D1変更・kureho 承認）※**floor fix の slash-vs-marker 方針確定後**に着手（backfill は同 redact approach を再利用するため）
 
 ## Plan C Chunk 4 残り (PR #17 後追い)
 
