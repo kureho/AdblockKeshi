@@ -77,7 +77,7 @@ describe('runAggregation', () => {
     })
     expect(result.candidates_created).toBe(1)
     expect(result.reports_aggregated).toBe(3)
-    // 3 calls: SELECT, INSERT, UPDATE
+    // 3 calls: SELECT, INSERT, UPDATE（per-group）
     expect(calls).toHaveLength(3)
     expect(calls[1].body.sql).toMatch(/INSERT INTO rule_candidates/i)
     expect(calls[1].body.params).toContain('rc-1')
@@ -85,12 +85,16 @@ describe('runAggregation', () => {
     // L6 (playwright-validate) navigates rule_candidates.url, so the URL must
     // round-trip into the INSERT — regressions break the whole L6 path silently.
     expect(calls[1].body.params).toContain('https://ex.com/a')
-    expect(calls[2].body.sql).toMatch(/UPDATE reports/i)
-    expect(calls[2].body.sql).toMatch(/aggregated/)
-    expect(calls[2].body.params.sort()).toEqual(['r1', 'r2', 'r3'])
+    // 層B: per-group UPDATE で reports.url を eTLD+1 に縮約しつつ status='aggregated'
+    const upd = calls.find((c) => /UPDATE reports/i.test(c.body.sql))!
+    expect(upd.body.sql).toMatch(/aggregated/)
+    expect(upd.body.sql).toMatch(/url\s*=\s*\?/i)
+    // params[0] = 縮約 URL（normalizeURL('https://ex.com/a') === 'ex.com'）、以降が ids
+    expect(upd.body.params[0]).toBe('ex.com')
+    expect(upd.body.params.slice(1).sort()).toEqual(['r1', 'r2', 'r3'])
   })
 
-  test('two domains above threshold → two INSERTs + one batched UPDATE', async () => {
+  test('two domains above threshold → two INSERTs + two per-group UPDATEs', async () => {
     const rows = [
       // domain A
       { id: 'a1', uuid_hash: 'u1', ip_hash: 'i1', domain: 'a.com', url: 'https://a.com/x', url_path_hash: 'pa', memo: null, created_at: NOW - 300 },
@@ -101,7 +105,14 @@ describe('runAggregation', () => {
       { id: 'b2', uuid_hash: 'v2', ip_hash: 'j2', domain: 'b.com', url: 'https://b.com/y', url_path_hash: 'pb', memo: null, created_at: NOW - 150 },
       { id: 'b3', uuid_hash: 'v3', ip_hash: 'j1', domain: 'b.com', url: 'https://b.com/y', url_path_hash: 'pb', memo: null, created_at: NOW - 50 },
     ]
-    const { fetch, calls } = makeFetchMock([{ rows }, { rows: [] }, { rows: [] }, { rows: [] }])
+    // 層B: SELECT + 2 INSERT + 2 per-group UPDATE = 5 calls
+    const { fetch, calls } = makeFetchMock([
+      { rows },
+      { rows: [] },
+      { rows: [] },
+      { rows: [] },
+      { rows: [] },
+    ])
     let i = 0
     const result = await runAggregation(ENV, {
       fetch,
@@ -110,9 +121,21 @@ describe('runAggregation', () => {
     })
     expect(result.candidates_created).toBe(2)
     expect(result.reports_aggregated).toBe(6)
-    // SELECT + 2 INSERT + 1 UPDATE = 4 calls
-    expect(calls).toHaveLength(4)
-    expect(calls[3].body.params.sort()).toEqual(['a1', 'a2', 'a3', 'b1', 'b2', 'b3'])
+    expect(calls).toHaveLength(5)
+    // グループ A の per-group UPDATE を id で特定
+    const updA = calls.find(
+      (c) => /UPDATE reports/i.test(c.body.sql) && c.body.params.includes('a1')
+    )!
+    // グループ B の per-group UPDATE を id で特定
+    const updB = calls.find(
+      (c) => /UPDATE reports/i.test(c.body.sql) && c.body.params.includes('b1')
+    )!
+    // params[0] = 縮約 URL（normalizeURL('https://a.com/x') === 'a.com'）
+    expect(updA.body.params[0]).toBe('a.com')
+    expect(updA.body.params.slice(1).sort()).toEqual(['a1', 'a2', 'a3'])
+    // params[0] = 縮約 URL（normalizeURL('https://b.com/y') === 'b.com'）
+    expect(updB.body.params[0]).toBe('b.com')
+    expect(updB.body.params.slice(1).sort()).toEqual(['b1', 'b2', 'b3'])
   })
 
   test('D1 returns error → throws with diagnostic', async () => {

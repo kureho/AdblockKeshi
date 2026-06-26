@@ -12,6 +12,8 @@ import {
   type PendingReport,
 } from '../../workers/src/lib/aggregation-threshold'
 import { chunked, d1Query, D1_MAX_IN_PARAMS, type D1Env } from '../lib/d1-rest'
+// 層B: 集約時点で reports.url を eTLD+1 に縮約するために使用
+import { normalizeURL } from '../../workers/src/lib/url-redact'
 
 export type AggregationEnv = D1Env
 
@@ -60,7 +62,7 @@ export async function runAggregation(
     return { candidates_created: 0, reports_aggregated: 0 }
   }
 
-  const consumedIds: string[] = []
+  let reports_aggregated = 0
   for (const a of aggregations) {
     const id = deps.uuidv4()
     // rule_text is intentionally empty here. L6 (playwright-validate) detects
@@ -78,28 +80,30 @@ export async function runAggregation(
       [
         id,
         a.domain,
-        a.url,
+        a.url, // 完全 URL のまま（L6 が開くため縮約しない）
         a.unique_uuid_count,
         a.unique_ip_count,
         a.first_reported_at,
         a.last_reported_at,
       ]
     )
-    consumedIds.push(...a.report_ids)
+    // 層B: このグループの reports.url を eTLD+1 に縮約しつつ status='aggregated'（chunked）
+    // 1 グループの report_ids が D1_MAX_IN_PARAMS(=90) を超え得るため chunk 分割必須
+    const redacted = normalizeURL(a.url)
+    await chunked(a.report_ids, D1_MAX_IN_PARAMS, async (chunk) => {
+      const placeholders = chunk.map(() => '?').join(',')
+      await d1Query(
+        env,
+        deps.fetch,
+        `UPDATE reports SET status = 'aggregated', url = ? WHERE id IN (${placeholders})`,
+        [redacted, ...chunk]
+      )
+    })
+    reports_aggregated += a.report_ids.length
   }
-
-  await chunked(consumedIds, D1_MAX_IN_PARAMS, async (chunk) => {
-    const placeholders = chunk.map(() => '?').join(',')
-    await d1Query(
-      env,
-      deps.fetch,
-      `UPDATE reports SET status = 'aggregated' WHERE id IN (${placeholders})`,
-      chunk
-    )
-  })
 
   return {
     candidates_created: aggregations.length,
-    reports_aggregated: consumedIds.length,
+    reports_aggregated,
   }
 }
