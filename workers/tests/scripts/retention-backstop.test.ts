@@ -40,6 +40,27 @@ describe('runRetentionBackstop', () => {
     expect(upd.body.params).toEqual(['evil.com', 'r1'])
   })
 
+  test('url 列の SELECT は既縮約行を除外し LIMIT を未縮約行のみに当てる（floor self-heal）', async () => {
+    // 既縮約行（eTLD+1 = '/' を含まない）が LIMIT 10000 予算を食い潰すと、
+    // aged 行が 10000 超になった瞬間に未縮約 long-tail が永久 starve され、
+    // 14日 floor が構造上崩れる（非自己修復）。SELECT 段で既縮約行を除外し
+    // LIMIT を「実作業のみ」に当てると、後続 run がバックログを drain し
+    // 自己修復する。reviewer 指摘(CHANGES_REQUIRED)に対する回帰ガード。
+    const { fetch, calls } = makeD1FetchMock([
+      { rows: [] }, // [0] SELECT reports
+      { rows: [] }, // [1] SELECT rule_candidates
+      { rows: [] }, // [2] SELECT abuse_log
+    ])
+    await runRetentionBackstop(ENV, { fetch, now: () => NOW })
+    const reportsSelect = calls.find((c) => /SELECT\s+id,\s*url\s+FROM\s+reports/i.test(c.body.sql))!
+    const candidatesSelect = calls.find((c) =>
+      /SELECT\s+id,\s*url\s+FROM\s+rule_candidates/i.test(c.body.sql)
+    )!
+    // 完全 URL は必ず '/'（少なくとも '://'）を含み、eTLD+1 縮約後は '/' を含まない。
+    expect(reportsSelect.body.sql).toMatch(/url\s+LIKE\s+'%\/%'/i)
+    expect(candidatesSelect.body.sql).toMatch(/url\s+LIKE\s+'%\/%'/i)
+  })
+
   test('abuse_log: broken_site → redactPII, others → normalizeURL', async () => {
     const { fetch, calls } = makeD1FetchMock([
       { rows: [] }, // reports
