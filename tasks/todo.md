@@ -1,5 +1,24 @@
 # AdblockKeshi v3 - 永続 TODO
 
+## Issue #36 Sub-2: Privacy Redaction (2026-06-27・spec/plan とも reviewer Approved)
+
+実装計画: `~/claude/docs/superpowers/plans/2026-06-27-adblock-privacy-redaction.md`
+spec: `~/claude/docs/superpowers/specs/2026-06-27-adblock-privacy-redaction-design.md`
+方針: 2層 redaction（層A=14日 status非依存 backstop=correctness floor / 層B=既存ジョブの status遷移に畳み込む optimization）。tldts で eTLD+1・url_path_hash 維持・abuse_log は reason分岐。
+
+- [x] **【実装前ゲート】l6_check カラム不在バグ — ローカル修正完了（remote 適用のみ kureho 承認待ち）** (2026-06-27 systematic-debugging)
+  - 根本原因（実ログで確定）: `scripts/validation/playwright-validate.ts:62` が `SET l6_check=?` するが migration(0001-0009) に `l6_check` 不在（`l3/l4/l5_check` のみ）。daily-validation 直近8 run は全 success・L6出力 `{promoted:0,rejected_score:0,rejected_scope:0}` = **UPDATE は一度も到達していない**（到達すれば `no such column: l6_check` で exit(1)→run赤）。よって**潜在バグ（時限爆弾）**: validatePage が成功する広告ページが1件来た瞬間に daily-validation 全体 crash。
+  - ✅ migration `0010_rule_candidates_l6_check.sql`（`ALTER TABLE rule_candidates ADD COLUMN l6_check TEXT`）作成
+  - ✅ 回帰テスト `workers/tests/scripts/playwright-validate-l6-schema.test.ts`（PRAGMA ガード + 実 UPDATE）RED(`no such column: l6_check`)→GREEN。全 197 テスト pass
+  - [ ] **remote D1 適用（kureho 承認必須・本番 D1 変更）**: 承認時にまず `cd workers && npx wrangler d1 migrations list --remote`（read-only）で prod が 0009 までと確認（0010 衝突回避）→ `npm run db:migrate:prod`
+  - 注: l4_check は L6 が selector-scope 判定を吸収したため dead column 化（意図的・今回触らない）
+- [ ] **【validation reliability・別問題】validating 永久滞留**: validatePage が tpead.net 等の動画/開けないリンクで throw → `playwright-validate.ts:50-54` の `catch{continue}` で skip、validation_score=null のまま次回も同じ URL を再試行し滞留（現 stuck: 0ad49530 tpead.net）。l6_check 修正後も**この候補は昇格しない**（validatePage 段で詰まるため）。L6 とも Sub-2 とも別。要検討: N回失敗で rejected_unreachable に落とす / 開けないドメイン種別の事前除外。
+- [ ] Chunk 1: `normalizeURL`(tldts・冪等) + redactPII 冪等性テスト
+- [ ] Chunk 2: 層A retention backstop（status非依存14日・reason分岐）+ workflow配線（`if: always()`）
+- [ ] Chunk 3: 層B aggregation per-group redact + L6 per-row redact
+- [ ] Chunk 1-3 本番反映（外部反映・kureho 承認）
+- [ ] Chunk 4: backfill（snapshot→sign-off→実行・不可逆D1変更・kureho 承認）
+
 ## Plan C Chunk 4 残り (PR #17 後追い)
 
 - [ ] **Task 4.4**: 実 `/v1/reports/history` 接続。現在 `StubReportAPIClient` がまだ
