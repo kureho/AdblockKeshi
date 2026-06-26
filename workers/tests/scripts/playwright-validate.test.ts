@@ -59,6 +59,8 @@ describe('runPlaywrightValidate', () => {
     expect(params).toContain('.banner-ad-123')
     expect(params).toContain(7777) // beta_started_at
     expect(params.some((p: string) => typeof p === 'string' && p.includes('css-display-none'))).toBe(true)
+    // 層B: url = normalizeURL('https://example.com/page') === 'example.com'
+    expect(params).toContain('example.com')
   })
 
   test('low score → rejected_score_low (no beta_started_at)', async () => {

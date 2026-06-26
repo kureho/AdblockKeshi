@@ -7,6 +7,7 @@
 
 import { d1Query, type D1Env } from '../lib/d1-rest'
 import { decideL6, type PageValidation } from '../../workers/src/lib/l6-decision'
+import { normalizeURL } from '../../workers/src/lib/url-redact'
 
 export interface PlaywrightValidateDeps {
   fetch: typeof globalThis.fetch
@@ -63,7 +64,8 @@ export async function runPlaywrightValidate(
               validation_score = ?,
               selector = ?,
               rule_text = ?,
-              beta_started_at = COALESCE(?, beta_started_at)
+              beta_started_at = COALESCE(?, beta_started_at),
+              url = ?
         WHERE id = ?`,
       [
         decision.next_status,
@@ -72,6 +74,7 @@ export async function runPlaywrightValidate(
         decision.selector,
         decision.rule_text,
         betaStartedAt,
+        normalizeURL(c.url), // 層B: 検証後は eTLD+1 に縮約してパス/クエリを破棄
         c.id,
       ]
     )

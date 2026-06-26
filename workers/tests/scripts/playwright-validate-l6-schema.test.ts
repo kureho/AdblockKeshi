@@ -48,7 +48,8 @@ describe('rule_candidates l6_check column (migration 0010 regression)', () => {
       .first<{ status: string }>()
     expect(before?.status).toBe('validating')
 
-    // Exact UPDATE shape from scripts/validation/playwright-validate.ts:60-67.
+    // Exact UPDATE shape from scripts/validation/playwright-validate.ts:60-69.
+    // url は normalizeURL で eTLD+1 に縮約済みの値を渡す（層B）。
     await env.DB.prepare(
       `UPDATE rule_candidates
           SET status = ?,
@@ -56,10 +57,11 @@ describe('rule_candidates l6_check column (migration 0010 regression)', () => {
               validation_score = ?,
               selector = ?,
               rule_text = ?,
-              beta_started_at = COALESCE(?, beta_started_at)
+              beta_started_at = COALESCE(?, beta_started_at),
+              url = ?
         WHERE id = ?`
     )
-      .bind('beta', 'pass', 1.0, '.banner-ad-123', '[{"action":"x"}]', 7777, 'test-l6-1')
+      .bind('beta', 'pass', 1.0, '.banner-ad-123', '[{"action":"x"}]', 7777, 'ads.example', 'test-l6-1')
       .run()
 
     const row = await env.DB.prepare(
