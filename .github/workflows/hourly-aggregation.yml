@@ -34,3 +34,10 @@ jobs:
           # 信頼レポーター(kureho 自身の uuid_hash 等・カンマ区切り)。未設定なら通常閾値のまま(no-op)。
           # 有効化: Settings→Secrets に TRUSTED_UUID_HASHES を設定するだけ（コード変更不要）。
           TRUSTED_UUID_HASHES: ${{ secrets.TRUSTED_UUID_HASHES }}
+      - name: Retention backstop (14d URL redaction floor)
+        if: always()  # 層A=correctness floor は層B(aggregation step)の成否から独立して必ず回す（spec §3）
+        run: cd workers && npx tsx ../scripts/redaction/run-retention-backstop.ts
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: 91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4
