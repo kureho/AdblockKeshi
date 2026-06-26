@@ -58,3 +58,19 @@ describe('redactPII', () => {
     expect(didRedact).toBe(false)
   })
 })
+
+// 層Aは 14 日超の broken_site 行に redactPII を毎回再適用するため、
+// 冪等性を回帰ロックとして保証する。
+describe('redactPII idempotency', () => {
+  it('re-applying redactPII does not change already-masked text', () => {
+    const input = '電話 0120-123-4567 メール user@example.com カード 1234-5678-9012-3456'
+    const once = redactPII(input).redacted
+    const twice = redactPII(once).redacted
+    expect(twice).toBe(once)
+  })
+
+  it('masked output contains no digit/@ that re-matches a pattern', () => {
+    const once = redactPII('+81-90-1234-5678').redacted
+    expect(redactPII(once).redacted).toBe(once)
+  })
+})
