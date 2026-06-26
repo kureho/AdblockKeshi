@@ -2,7 +2,7 @@ import Foundation
 import SafariServices
 
 /// CDN の popunder-rules.json を取得して App Group に保存し、popunder Extension を reload する。
-/// 標準フィルタ更新と同じタイミング（前面復帰時・BGTask）で呼ぶ。best-effort（失敗は無視）。
+/// 基本保護の更新と同じタイミング（前面復帰時・BGTask）で呼ぶ。best-effort（失敗は無視）。
 ///
 /// `PopunderRulesResolver` は App Group の `popunder-rules.json` を優先し、無ければ bundle 同梱版に
 /// フォールバックするため、ここで App Group に最新版を落とすと審査なしで反映できる（living list）。

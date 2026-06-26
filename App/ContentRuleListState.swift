@@ -24,7 +24,7 @@ enum BannerType: Equatable {
 
 struct ContentRuleListSnapshot: Equatable {
     let baseEnabled: Bool
-    /// 「ポップアップ広告対策」拡張（任意の追加保護）の ON/OFF。core(標準+学習)の判定には影響しない。
+    /// 「報告反映」拡張（任意の追加保護）の ON/OFF。core(基本+学習)の判定には影響しない。
     let popunderEnabled: Bool
     let mode: ContentRuleListMode
 
