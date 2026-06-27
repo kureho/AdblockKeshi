@@ -22,7 +22,10 @@ spec: `~/claude/docs/superpowers/specs/2026-06-27-adblock-privacy-redaction-desi
 - [ ] **【申し送り】rule_candidates の first_reported_at 起点 over-redaction**: 層B L6 redact は status 遷移時に full URL を eTLD+1 化するが、first_reported_at が 14日超の候補は層A でも縮約され得る。spec 準拠・privacy 安全側だが L6 selector 抽出の yield をわずかに下げる可能性（reviewer nit）。本番反映後にモニタ。
 - [x] **Chunk 1-3 本番反映 完了（2026-06-27 kureho「反映して」承認）**: migration 0010 適用 → main へ ff push(10 commit `cde14ae..3a82aa1`) → hourly-aggregation を workflow_dispatch で smoke test = **success**（Retention backstop step ✓）→ backlog 実測 reports 3→0 / candidates 1→0 で**設計通り縮約を実証**。Workers deploy は src ロジック不変のため不要。全11 workflow を push 前監査（macos/push トリガー課金リスク無し）。
   - 申し送り(軽微): GitHub Actions の Node20 deprecation 警告（actions/setup-node@v4→v5 へ将来更新・緊急性なし・run は success）。
-- [ ] Chunk 4: backfill（snapshot→sign-off→実行・不可逆D1変更・kureho 承認）※**floor fix の slash-vs-marker 方針確定後**に着手（backfill は同 redact approach を再利用するため）
+- [x] **Chunk 4: backfill 完了（2026-06-27 kureho sign-off → 実行 → 検証 green）**: whitelist 方式（terminal status のみ redact・in-flight は構造的に非対象・advisor 承認）でスクリプト2本実装（`scripts/migration/redact-existing-urls.ts` + `run-redact-existing-urls.ts`）+ TDD 4テスト（commit `fae515b`・全212 pass）。dry-run 実測 = reports **2** / candidates **0** / abuse_log **0**（層A floor + smoke-test で aged backlog 既 drain 済のため near-zero・予想通り）。snapshot（9.95MB・100,026行）取得 → AskUserQuestion で per-table 件数 + 縮約後ドメイン提示 → GO 取得 → 実行。
+  - 実行方式: CF_API_TOKEN が手元に無いため tsx 直実行はせず、テスト済み `normalizeURL` で eTLD+1 を計算 → wrangler(OAuth) 経由で `UPDATE reports SET url=? WHERE id=?` ×2（縮約対象・redact ロジックは tsx 経路と同一・transport だけ差異）。reports 2件を tokyomotion.net / tpead.net へ縮約（changes:1 ×2）。
+  - 検証: dry-run COUNT 再実行で reports/candidates/abuse_log すべて **0**（成功基準=post-COUNT=0 達成）+ 該当2行が eTLD+1（slash 無し）であることを目視。snapshot は PII（完全URL）を含むため検証パス後に削除。
+  - 注: line-15 の validating 滞留候補（0ad49530 tpead.net）は **rule_candidates の in-flight = 設計通り非対象**（candidates count=0 と整合）。floor fix の slash 述語方針は Chunk 1-3 で確定済（line-20）。
 
 ## Plan C Chunk 4 残り (PR #17 後追い)
 
