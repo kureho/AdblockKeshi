@@ -44,8 +44,12 @@ spec: `~/claude/docs/superpowers/specs/2026-06-27-adblock-privacy-redaction-desi
 
 ## Plan C 残 Chunk
 
-- [ ] **Chunk 1**: `hourly-aggregation.yml` に ban-engine 実行ステップを追加
-      (lib は Plan B で実装済、workflow 連携が未)。
+- [x] **Chunk 1**: ban-engine 配線 — **既に稼働中（2026-06-27 検証で stale todo と判明）**。
+      `scripts/aggregation/run.ts:33` が aggregation 直後に `runBanEngineViaRest` を
+      同 step で実行（hourly-aggregation.yml の Aggregate step が run.ts を起動）。
+      runner はテスト済（ban-engine-runner.test.ts 8 tests）、`bans` テーブル(0004)も
+      remote 実在を PRAGMA で確認（identifier_hash/ban_level/abuse_count/expires_at 等）。
+      latent schema drift 無し。実装不要だった。
 - [ ] **Chunk 2**: ContentView (Tab A) + ReportTabView (Tab B) に
       `StatusBannerView` を統合。
 - [ ] **Chunk 3**: `RemoteConfigStore.swift` + `docs/cdn/feature-flags.json` +
