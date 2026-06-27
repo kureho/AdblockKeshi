@@ -1,0 +1,16 @@
+-- Plan B Task 2.2 (L6) validation reliability fix: bound validation retries.
+--
+-- scripts/validation/playwright-validate.ts treated every validatePage()
+-- exception as transient (catch{continue}), so a permanently-unreachable URL
+-- (e.g. a video CDN page Playwright cannot open) stayed in status='validating'
+-- forever: it never promotes, never gets rejected, occupies the LIMIT 200
+-- validation pool (starvation, same class as the layer-A floor bug), and retains
+-- its full URL (PII) until the 14-day layer-A backstop redacts it.
+--
+-- Fix: count consecutive validation failures. After MAX_VALIDATION_ATTEMPTS the
+-- candidate is moved to terminal status='rejected_unreachable' (url redacted),
+-- leaving the validating pool. This column carries the attempt counter.
+--
+-- Additive with DEFAULT 0: existing rows get 0 (the fresh/never-attempted state),
+-- so no backfill or separate NOT NULL step is needed.
+ALTER TABLE rule_candidates ADD COLUMN validation_attempts INTEGER NOT NULL DEFAULT 0;

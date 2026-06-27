@@ -76,3 +76,63 @@ describe('rule_candidates l6_check column (migration 0010 regression)', () => {
     expect(row?.beta_started_at).toBe(7777)
   })
 })
+
+describe('rule_candidates validation_attempts column (migration 0011 regression)', () => {
+  beforeEach(async () => {
+    await env.DB.prepare('DELETE FROM rule_candidates').run()
+  })
+
+  it('schema exposes validation_attempts as INTEGER NOT NULL DEFAULT 0', async () => {
+    const { results } = await env.DB.prepare('PRAGMA table_info(rule_candidates)').all<{
+      name: string
+      type: string
+      notnull: number
+      dflt_value: unknown
+    }>()
+    const col = results.find((r) => r.name === 'validation_attempts')
+    expect(col).toBeDefined()
+    expect(col!.type).toBe('INTEGER')
+    expect(Number(col!.notnull)).toBe(1) // NOT NULL
+    expect(String(col!.dflt_value)).toBe('0') // DEFAULT 0
+    // additive DEFAULT 0: an insert that omits the column gets 0, not NULL.
+    await insertValidatingCandidate('test-va-default')
+    const row = await env.DB.prepare('SELECT validation_attempts FROM rule_candidates WHERE id = ?')
+      .bind('test-va-default')
+      .first<{ validation_attempts: number }>()
+    expect(row?.validation_attempts).toBe(0)
+  })
+
+  it('transient-failure UPDATE bumps validation_attempts and keeps validating (matches playwright-validate.ts)', async () => {
+    await insertValidatingCandidate('test-va-transient')
+    await env.DB.prepare(
+      `UPDATE rule_candidates SET validation_attempts = ? WHERE id = ? AND status = 'validating'`
+    )
+      .bind(1, 'test-va-transient')
+      .run()
+    const row = await env.DB.prepare(
+      'SELECT status, validation_attempts FROM rule_candidates WHERE id = ?'
+    )
+      .bind('test-va-transient')
+      .first<{ status: string; validation_attempts: number }>()
+    expect(row?.status).toBe('validating')
+    expect(row?.validation_attempts).toBe(1)
+  })
+
+  it('terminal-escape UPDATE persists rejected_unreachable + redacted url (matches playwright-validate.ts)', async () => {
+    await insertValidatingCandidate('test-va-terminal')
+    // Exact UPDATE shape from the bounded-retry handler.
+    await env.DB.prepare(
+      `UPDATE rule_candidates SET status = 'rejected_unreachable', validation_attempts = ?, url = ? WHERE id = ? AND status = 'validating'`
+    )
+      .bind(3, 'tpead.net', 'test-va-terminal')
+      .run()
+    const row = await env.DB.prepare(
+      'SELECT status, validation_attempts, url FROM rule_candidates WHERE id = ?'
+    )
+      .bind('test-va-terminal')
+      .first<{ status: string; validation_attempts: number; url: string }>()
+    expect(row?.status).toBe('rejected_unreachable')
+    expect(row?.validation_attempts).toBe(3)
+    expect(row?.url).toBe('tpead.net')
+  })
+})
