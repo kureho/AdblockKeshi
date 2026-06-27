@@ -12,7 +12,10 @@ spec: `~/claude/docs/superpowers/specs/2026-06-27-adblock-privacy-redaction-desi
   - ✅ 回帰テスト `workers/tests/scripts/playwright-validate-l6-schema.test.ts`（PRAGMA ガード + 実 UPDATE）RED(`no such column: l6_check`)→GREEN。全 197 テスト pass
   - [x] **remote D1 適用完了（2026-06-27 kureho 承認）**: list --remote で 0001-0009 applied / 0010 pending を確認(tracking 同期)→ `db:migrate:prod` で適用 → `No migrations to apply!` + PRAGMA `has_l6_check:1` で検証。爆弾解除完了。
   - 注: l4_check は L6 が selector-scope 判定を吸収したため dead column 化（意図的・今回触らない）
-- [ ] **【validation reliability・別問題】validating 永久滞留**: validatePage が tpead.net 等の動画/開けないリンクで throw → `playwright-validate.ts:50-54` の `catch{continue}` で skip、validation_score=null のまま次回も同じ URL を再試行し滞留（現 stuck: 0ad49530 tpead.net）。l6_check 修正後も**この候補は昇格しない**（validatePage 段で詰まるため）。L6 とも Sub-2 とも別。要検討: N回失敗で rejected_unreachable に落とす / 開けないドメイン種別の事前除外。
+- [x] **【validation reliability】validating 永久滞留 — 修正完了（2026-06-27 kureho GO・本番反映済 main `4d2ed28`）**: 根本原因＝`runPlaywrightValidate` が validatePage の全例外を transient 扱い（`catch{continue}`）で**試行上限も terminal 脱出も無し** → 構造的に開けない URL（tpead.net 等の動画 CDN）が status='validating' に永久滞留（昇格も reject もされず LIMIT 200 プール占有 starvation + <14日は full-URL PII 保持）。修正＝試行カウンタ `validation_attempts`（migration **0011** additive INTEGER NOT NULL DEFAULT 0）を追加し、連続失敗が MAX(3) に達したら terminal `status='rejected_unreachable'`（url を eTLD+1 縮約）に落としてプールから外す。NULL-url も同経路。両 UPDATE に `AND status='validating'` guard（再実行安全）。TDD（unit 10 + schema guard 3）+ Codex review 反映で全220 pass。
+  - 本番手順: remote に 0011 適用（`validation_attempts` 列 INTEGER NOT NULL DEFAULT 0 を PRAGMA で検証・既存行は 0）→ main へ ff push（DB先・コード後）。
+  - 滞留 0ad49530（tpead.net・age 3日）は kureho 判断で**自然 drain**: deploy 後の daily-validation（cron 03:00 UTC・1日1回）3回で自動的に rejected_unreachable + url 縮約（age 3日 ≪ 14日層A なので層A より先に終端化）。
+  - 残（軽微・別バグ class ではない）: cdn-check / tranco-check も status='validating' を読むが、それらは即 status を遷移させるため滞留しない（playwright 段のみが skip ループだった）。
 - [x] Chunk 1: `normalizeURL`(tldts・冪等) + redactPII 冪等性テスト（6e0f2ff / 5ba4e0b）
   - 注: tldts は plan の `^6.x` に対し **`^7.4.4` が install された**（getDomain API 互換・全テスト pass・**2026-06-27 本番 workflow run success で実環境動作も実証済み**）。事後確認のみで可。
 - [x] Chunk 2: 層A retention backstop（status非依存14日・reason分岐）+ workflow配線（`if: always()`）（dc7a656）
