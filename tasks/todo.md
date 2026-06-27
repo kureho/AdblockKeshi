@@ -51,7 +51,9 @@ spec: `~/claude/docs/superpowers/specs/2026-06-27-adblock-privacy-redaction-desi
 - **運用 compatibility_date `2024-09-09`**: 本番 wrangler が deploy 時 override。Workers 稼働中＝実害なし。
 - **運用 Tranco Top 100k 制限**: weekly sync 稼働中。Top 1M 復帰は D1 batch API 移行が前提（将来）。
 
-### 🧹 任意クリーンアップ（live コードのため未実施・要 kureho 判断）
-- デッドコード除去候補: `App/Views/StatusBannerView.swift` / `App/RemoteConfig/`(Store+Flags+tests) / `App/Networking/StubReportAPIClient.swift`。出荷に不要だが live アプリのコード削除のため独立 PR + ビルド検証推奨。
+### 🧹 デッドコード除去 — 完了（2026-06-27 kureho 承認・main `38b30f1`）
+- 削除6ファイル: `App/Views/StatusBannerView.swift` / `App/RemoteConfig/`(RemoteConfigStore+FeatureFlags+tests) / `App/Networking/StubReportAPIClient.swift`。
+- 全リポ grep で参照ゼロ確認 → 削除 → xcodegen 再生成 → `xcodebuild build`/`test`(iPhone 17) 共に exit 0（全テスト pass・回帰なし）。
+- `docs/cdn/feature-flags.json` は公開 CDN アーティファクトのため残置（孤立だが無害）。
 
 （2026-06-08 generated、2026-06-27 stale 究明監査で live 3.4.0 と照合し全項目を再分類）
