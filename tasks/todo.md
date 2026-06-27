@@ -18,7 +18,7 @@ spec: `~/claude/docs/superpowers/specs/2026-06-27-adblock-privacy-redaction-desi
 - [x] Chunk 2: 層A retention backstop（status非依存14日・reason分岐）+ workflow配線（`if: always()`）（dc7a656）
 - [x] Chunk 3: 層B aggregation per-group redact + L6 per-row redact（946f211 / ffbb59d）
 - [x] **【最終統合レビュー指摘・修正完了】層A floor starvation（523bc93）**: reports/rule_candidates の SELECT に `url LIKE '%/%'` を追加し既縮約行を LIMIT 対象外に。これが無いと aged 行 10000 超で未縮約 long-tail が永久 starve され 14日 floor が非自己修復で崩れる。**plan line-361 の paging=YAGNI 判断を意図的に覆す**（throughput でなく correctness 問題）。floor self-heal 回帰テスト追加・全 208 pass。
-- [ ] **【kureho 設計判断待ち】abuse_log の floor self-heal**: broken_site 自由文は slash ヒューリスティック不可（redactPII 済みでも '/' を含み得る）。選択肢=(a) marker 列 / (b) 時間窓処理 / (c) 低ボリューム前提で現状維持+監視。**「低ボリューム」は未実測**（prod 行数未確認）。本番反映前に決定要。
+- [x] **【実測で解決】abuse_log の floor self-heal = 選択肢(c) 現状維持＋監視**: 2026-06-27 prod 実測で 14日超・url非NULL の abuse_log 行 = **0件**（reports backlog=3 / candidates backlog=1 も LIMIT 10000 を遥か下回り初回1パスで drain）。starvation は現時点で実在しないため marker 列/時間窓は過剰。slash 述語非適用は妥当。**将来 abuse_log が育った場合に備え hourly run の abuse_log_redacted 件数を監視**（恒常的に増えるなら marker 列を再検討）。
 - [ ] **【申し送り】rule_candidates の first_reported_at 起点 over-redaction**: 層B L6 redact は status 遷移時に full URL を eTLD+1 化するが、first_reported_at が 14日超の候補は層A でも縮約され得る。spec 準拠・privacy 安全側だが L6 selector 抽出の yield をわずかに下げる可能性（reviewer nit）。本番反映後にモニタ。
 - [ ] Chunk 1-3 本番反映（外部反映・kureho 承認）※abuse_log 設計判断・tldts ^7 確認を本番前に解消
 - [ ] Chunk 4: backfill（snapshot→sign-off→実行・不可逆D1変更・kureho 承認）※**floor fix の slash-vs-marker 方針確定後**に着手（backfill は同 redact approach を再利用するため）
