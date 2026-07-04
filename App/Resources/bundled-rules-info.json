@@ -1,0 +1,4 @@
+{
+  "_comment": "Extension/Resources の同梱 variant (ad/merged/security/empty) の生成日時。commit 8e001a2d (2026-06-02) で同梱。同梱ルールを差し替えたら必ずこの generated_at も更新すること（フィルタ最終更新の bundle フォールバック表示に使われる）。",
+  "generated_at": "2026-06-02T11:37:20Z"
+}

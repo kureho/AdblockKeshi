@@ -86,34 +86,53 @@ struct ContentView: View {
         }
     }
 
+    /// CDN manifest の sha 差分がある variant のみ DL → 検証 → App Group 適用 → reload。
+    /// 旧実装の「毎起動 22MB blockerList.json DL（読む者がいない）」は RuleUpdater が廃止・掃除する。
     private func downloadAndReload() async {
         do {
-            let downloader = FilterDownloader()
-            let bytes = try await downloader.downloadAndStore()
-            print("[FilterDownloader] downloaded \(bytes) bytes")
-            SFContentBlockerManager.reloadContentBlocker(
-                withIdentifier: extensionIdentifier
-            ) { error in
-                if let error = error {
-                    print("[reload] error: \(error.localizedDescription)")
-                } else {
-                    print("[reload] success")
+            let identifier = extensionIdentifier
+            if let updater = RuleUpdater(reload: { await reloadBasicBlocker(identifier: identifier) }) {
+                let outcome = try await updater.updateIfNeeded()
+                print("[RuleUpdater] applied=\(outcome.applied) recorded=\(outcome.recordedWithoutDownload) skipped=\(outcome.skipped) failed=\(outcome.failed)")
+                if outcome.reloaded {
                     refreshState()
                 }
+            } else {
+                print("[RuleUpdater] App Group container unavailable. Bundle fallback active.")
             }
-            // 報告から配信されたグローバル学習フィルタも取得して自己報告とマージ・reload
-            await ReportedGlobalSync.sync()
-            // popunder 対策フィルタ(CDN living list)も取得して App Group へ反映・reload（best-effort）
-            await PopunderGlobalSync.sync()
         } catch {
-            print("[FilterDownloader] failed: \(error.localizedDescription). Bundle fallback active.")
+            print("[RuleUpdater] failed: \(error.localizedDescription). 既存ルールを維持（App Group → bundle fallback）")
+        }
+        // 報告反映・popunder は独立した CDN ファイルなので、manifest 取得失敗時も best-effort で同期する
+        // 報告から配信されたグローバル学習フィルタを取得して自己報告とマージ・reload
+        await ReportedGlobalSync.sync()
+        // popunder 対策フィルタ(CDN living list)も取得して App Group へ反映・reload（best-effort）
+        await PopunderGlobalSync.sync()
+    }
+}
+
+/// 基本保護 ContentBlocker の reload（完了待ち版）。RuleUpdater の reload closure から使う。
+private func reloadBasicBlocker(identifier: String) async {
+    await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+        SFContentBlockerManager.reloadContentBlocker(withIdentifier: identifier) { error in
+            if let error = error {
+                print("[reload] error: \(error.localizedDescription)")
+            } else {
+                print("[reload] success")
+            }
+            cont.resume()
         }
     }
 }
 
 struct CompletedView: View {
     @State private var pulse = false
+    /// moat（報告で追加 N 件）表示用。「フィルタ最終更新」の日付には使わない（虚偽表示解消）。
     @State private var versionInfo: VersionInfo? = nil
+    /// 実際に端末へ適用された variant の記録（RuleUpdater が適用成功時に書く）。
+    @State private var appliedRecords: [String: AppliedRulesRecord] = [:]
+    /// CDN 未取得端末のフォールバック: bundle 同梱ルールの生成日。
+    @State private var bundledGeneratedAt: Date? = nil
     @StateObject private var controlVM: BlockerControlViewModel
     private let versionStore: VersionInfoStore
 
@@ -237,19 +256,30 @@ struct CompletedView: View {
         .toolbar(.hidden, for: .navigationBar)
         .onAppear {
             versionInfo = versionStore.read()
+            appliedRecords = AppliedRulesStore()?.read() ?? [:]
+            bundledGeneratedAt = BundledRulesInfo.generatedAt()
         }
     }
 
-    /// フィルタ更新状況の表示テキスト。version.json が読めれば日付を出し、無ければ既存文言。
+    /// フィルタ更新状況の表示テキスト。
+    /// 表示日付 = 現在の state で拡張が実際に読む variant の適用記録（generated_at）。
+    /// 適用記録が無い端末（CDN 未取得）は bundle 同梱ルールの生成日（虚偽表示の解消）。
     private var filterUpdateText: String {
-        guard let info = versionInfo else {
+        let state = BlockerTogglesState(
+            adEnabled: controlVM.adEnabled,
+            securityEnabled: controlVM.securityEnabled
+        )
+        guard let date = FilterUpdateDisplay.displayDate(
+            state: state,
+            applied: appliedRecords,
+            bundledGeneratedAt: bundledGeneratedAt
+        ) else {
             return "フィルタは自動で最新の状態に保たれます"
         }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "ja_JP")
         formatter.dateFormat = "yyyy/MM/dd"
-        let dateString = formatter.string(from: info.generatedAt)
-        return "フィルタ最終更新: \(dateString)"
+        return "フィルタ最終更新: \(formatter.string(from: date))"
     }
 }
 

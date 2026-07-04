@@ -38,22 +38,28 @@ enum BackgroundTaskManager {
 
         let work = Task {
             do {
-                let downloader = FilterDownloader()
-                let bytes = try await downloader.downloadAndStore()
-                print("[BGTask] downloaded \(bytes) bytes")
-
-                await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-                    SFContentBlockerManager.reloadContentBlocker(
-                        withIdentifier: extensionIdentifier
-                    ) { _ in
-                        cont.resume()
+                // CDN manifest の sha 差分がある variant のみ DL → 検証 → App Group 適用 → reload。
+                // 旧実装の「週次 22MB blockerList.json DL（読む者がいない）」は RuleUpdater が廃止・掃除する。
+                guard let updater = RuleUpdater(reload: {
+                    await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                        SFContentBlockerManager.reloadContentBlocker(
+                            withIdentifier: extensionIdentifier
+                        ) { _ in
+                            cont.resume()
+                        }
                     }
+                }) else {
+                    print("[BGTask] App Group container unavailable")
+                    task.setTaskCompleted(success: false)
+                    return
                 }
+                let outcome = try await updater.updateIfNeeded()
+                print("[BGTask] rule update applied=\(outcome.applied) skipped=\(outcome.skipped.count) failed=\(outcome.failed)")
                 // 報告から配信されたグローバル学習フィルタも取得して自己報告とマージ・reload
                 await ReportedGlobalSync.sync()
                 // popunder 対策フィルタ(CDN living list)も取得して App Group へ反映・reload（best-effort）
                 await PopunderGlobalSync.sync()
-                task.setTaskCompleted(success: true)
+                task.setTaskCompleted(success: outcome.failed.isEmpty)
             } catch {
                 print("[BGTask] failed: \(error.localizedDescription)")
                 task.setTaskCompleted(success: false)
