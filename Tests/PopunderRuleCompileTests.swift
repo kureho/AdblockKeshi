@@ -39,6 +39,31 @@ final class PopunderRuleCompileTests: XCTestCase {
         XCTAssertNotNil(list, "WebKit が L2 アグレッシブルールのコンパイルに失敗した")
     }
 
+    /// P2 回帰防止（両トグルOFF が効かない）: empty-rules の no-op は WebKit コンパイル成功、
+    /// 旧 "[]" は失敗することを検証する。空配列は content blocker で不正なため、OFF 時に "[]" を
+    /// 渡すと reload compile が失敗して旧ルールが残る＝OFF が効かなかった。
+    func test_empty_noOp_rule_compiles_but_empty_array_fails() async throws {
+        let store = try XCTUnwrap(WKContentRuleListStore.default())
+        // 新 empty-rules 相当の no-op（有効・何もブロックしない）
+        let noOp = #"[{"action":{"type":"ignore-previous-rules"},"trigger":{"url-filter":".*"}}]"#
+        let list = try await store.compileContentRuleList(
+            forIdentifier: "empty-noop-compile-test",
+            encodedContentRuleList: noOp
+        )
+        XCTAssertNotNil(list, "no-op empty-rules は WebKit コンパイルに成功すべき（OFF が効く）")
+
+        // 旧 "[]" はコンパイル失敗すべき（OFF が効かなかった原因）
+        do {
+            _ = try await store.compileContentRuleList(
+                forIdentifier: "empty-array-compile-test",
+                encodedContentRuleList: "[]"
+            )
+            XCTFail("空配列 [] は content blocker で不正なのでコンパイル失敗すべき")
+        } catch {
+            // 期待通り throw（[] は不正）
+        }
+    }
+
     /// 出荷する popunder-rules.json「全体」（L1 + streamtape/tokyomotion の L2 含む）が
     /// WebKit Content Blocker コンパイラに丸ごと受理されることを検証する（Phase 4-B）。
     /// 1 ルールでも不正だと全体 load 失敗（all-or-nothing）になるため、提出前の要となる検証。

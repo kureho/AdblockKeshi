@@ -66,6 +66,11 @@ struct BlockerListResolver {
     /// 無ければ標準のみ（App Group `<variant>` → bundle → empty）にフォールバックする（fail-safe）。
     func resolve(for state: BlockerTogglesState) -> URL? {
         let variant = self.filename(for: state)
+        // 両トグルOFF（empty）は静的 no-op。App Group の stale/CDN "[]" を使うと Safari が空配列の
+        // compile を拒否し OFF が効かない（deep-audit P2）。combined/App Group を見ず常に bundle no-op。
+        if variant == Self.emptyRulesFilename {
+            return resolveStateFile(filename: variant)
+        }
         if let container = fileManager
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
             let combined = container.appendingPathComponent(
@@ -93,8 +98,15 @@ struct BlockerListResolver {
         }
     }
 
+    /// bundle 同梱 empty-rules のファイル名（両トグルOFF の静的 no-op）。
+    static let emptyRulesFilename = "empty-rules.json"
+
     /// 任意 filename について App Group → bundle → empty-rules の chain で URL 解決。
     private func resolveStateFile(filename: String) -> URL? {
+        // empty variant は App Group（stale/CDN "[]"）を見ず常に bundle の有効 no-op を返す（OFF を確実化）。
+        if filename == Self.emptyRulesFilename {
+            return bundle.url(forResource: "empty-rules", withExtension: "json")
+        }
         if let container = fileManager
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
             let candidate = container.appendingPathComponent(filename)

@@ -111,4 +111,22 @@ final class BlockerListResolverTests: XCTestCase {
         try Data("[]".utf8).write(to: direct)   // combined 無し → 直 App Group ファイル
         XCTAssertEqual(resolver.resolve(), direct)
     }
+
+    /// P2 回帰防止（両トグルOFF が効かない）: empty variant は App Group の stale/CDN "[]" を返さず
+    /// bundle の有効 no-op へ解決する。App Group "[]" を返すと Safari が空配列 compile を拒否し OFF が効かない。
+    func test_resolve_for_empty_state_ignores_stale_appgroup_empty_array() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fm = MockContainerFileManager(container: dir)
+        let resolver = BlockerListResolver(appGroupIdentifier: "group.test",
+                                           bundle: Bundle(for: type(of: self)), fileManager: fm)
+        let emptyState = BlockerTogglesState(adEnabled: false, securityEnabled: false)
+        XCTAssertEqual(resolver.filename(for: emptyState), "empty-rules.json")
+        // 旧 CDN/RuleUpdater が App Group に書いた stale "[]"
+        let stale = dir.appendingPathComponent("empty-rules.json")
+        try Data("[]".utf8).write(to: stale)
+        // resolve は stale "[]" を返さない（bundle no-op or nil）＝OFF が確実に効く
+        XCTAssertNotEqual(resolver.resolve(for: emptyState), stale)
+    }
 }
