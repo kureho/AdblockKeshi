@@ -247,6 +247,14 @@ Check current ASC state (versions / localizations / metadata)
 
 territories check via v1
 
+### ios finalize
+
+```sh
+[bundle exec] fastlane ios finalize
+```
+
+Create version + attach build + push metadata (no submit)
+
 ----
 
 This README.md is auto-generated and will be re-generated every time [_fastlane_](https://fastlane.tools) is run.
