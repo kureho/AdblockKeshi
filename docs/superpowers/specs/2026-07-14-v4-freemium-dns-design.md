@@ -15,7 +15,7 @@
 2. **Pro = DNS 型アプリ内広告ブロックのみ**（ローカル VPN 方式・端末内判定）
    - r2 変更: 報告反映・遷移保護は**無料のまま維持**（旧案の「Pro に含める」は撤回。理由: 既存2拡張のゲート改修は Safari 拡張のアーキテクチャ（storage.local 保持・native stub・popunder 基礎ルール同梱）と衝突し工数とリスクが大きい／Pro の対価の主柱は調査上 DNS／無料層が厚いほど DL・評価の複利が強い）
 3. grandfather: 既存購入者（¥500/¥700 世代）へ恒久 Pro 自動付与
-4. metadata 刷新（無人キーワード「アプリ 広告」系の刈り取り・訴求規律遵守・description に規約/ポリシーリンク追加・「買い切り（サブスクなし）」文言を「本体無料 + Pro 買い切り」へ再フレーミング）+ LP のプライバシーポリシーに DNS/VPN 処理の記述追加 + 「¥500 買い切り」表記の全更新（2.3.1 false price）
+4. metadata 刷新（無人キーワード「アプリ 広告」系の刈り取り・訴求規律遵守・description に規約/ポリシーリンク追加・「買い切り（サブスクなし）」文言を「本体無料 + Pro 買い切り」へ再フレーミング）+ LP のプライバシーポリシーに DNS/VPN 処理の記述追加 + **価格・課金体系表記全般の全スイープ**（「¥500」に加え products.ts の「アプリ内課金もなし」「Plus は無し」「price: ¥500（構造化データ）」等、Pro IAP 導入で虚偽になる断定文言を全部更新・2.3.1 false price）
 
 **前提（完了済み・v4.0 の作業対象外）**
 - 基本保護/詐欺サイトブロックの CDN 実行時更新は **v3.5.0（commit 68ad6f9・RuleUpdater）で配線済み・現行 live v3.6.0 に同梱**。担い手は RuleUpdater（起動時 + 週次 BGTask・manifest sha256 差分・App Group 適用・reload）。FilterDownloader は ReportedGlobalSync/PopunderGlobalSync 専用のレガシー。v4.0 では **BGTask の実機発火確認（動作検証）のみ**行う
@@ -55,27 +55,31 @@
 │  │   DNSMessage parse → domain 抽出 → 照合 →         │
 │  │   block 時 qtype 別応答合成 / 非 block 時 上流転送 │
 │  ├ 上流 = 固定 public DNS（Cloudflare 1.1.1.1/1.0.0.1 │
-│  │   + IPv6）へ plain UDP 転送。TCP:53 は上流へ最小  │
-│  │   フォワード（自前でハングさせない）              │
+│  │   + IPv6）へ plain UDP 転送。TCP:53 は RST 即応答  │
+│  │   （fail-fast・設計判断参照）                      │
 │  └ BlocklistStore: App Group 読込 + tunnel 内         │
 │     日次 self-fetch + sendProviderMessage reload      │
 └────────────────────────────────────┘
 外部（すべて既存インフラ・無料）:
 - GitHub Pages CDN: DNS リスト配信（RuleUpdater の manifest + sha256 パターンを流用した
-  新 variant として配信。FilterDownloader は使わない = JSON validity check が txt を弾くため）
+  新 variant として配信。形式 = JSON array of domains + 専用 manifest（version-dns.json）。
+  FilterDownloader は使わない = JSON validity check 前提の別系統のため）
+- App Group リストの書き手は app 側更新 + tunnel 内 self-fetch の2箇所 → AppliedRulesRecord 相当の適用記録を共有し二重 DL・競合書込みを回避
 ```
 
 ### 設計判断（固定）
 
 - **fail-open が最優先の不変条件（3層で保証）**:
   1. エンジン層: パース失敗・リスト未ロード・照合エラーは素通し（上流転送）
-  2. transport 層: TCP:53 は上流へ最小フォワード（truncation retry をハングさせない）。UDP 上流タイムアウト時は応答なしを維持（偽装しない）
+  2. transport 層（案A・r3 確定）: **TCP:53 には RST を即時応答**して fail-fast（タイムアウト待ちでハングさせない。userspace TCP shim は工数破裂リスクで不採用）。合成応答は小さいので TC ビットは立てない。上流の TC 付き UDP 応答はそのまま返し、稀な大型応答の失敗は**限界事項として説明画面に含める**。UDP 上流タイムアウト時は応答なしを維持（偽装しない）。PacketCodec には TCP ヘッダの**最小 parse + RST 合成のみ**追加
   3. リスト層: **CriticalDomainGuard を DNS 側にも移植**（push.apple.com 等の Apple インフラ・決済・主要 CDN ドメインはリストに何が来ても絶対にブロックしない）
-- **応答合成は qtype 別**: A → 0.0.0.0 / AAAA → `::` / HTTPS・SVCB(type 65) → NODATA / その他 → NODATA。TTL は短め固定（実装時に定数化）
+- **応答合成は qtype 別**: A → 0.0.0.0 / AAAA → `::` / HTTPS(type 65)・SVCB(type 64) → NODATA / その他 → NODATA。TTL は短め固定（実装時に定数化）
+- **sentinel IP は RFC 2544 予約レンジ（198.18.0.0/15）から選定**（実ホスト衝突の回避）
 - **上流 = 固定 public DNS（Cloudflare 1.1.1.1）**: 「システム既定へ転送」は tunnel 確立後に自分自身を指すループになるため不採用。訴求整合: **ブロック判定とクエリログは端末内**（280blocker との差別化はここ）、名前解決先が ISP → Cloudflare に変わることはプライバシーポリシーと説明画面に明記
 - **DNSEngine / PacketCodec は NetworkExtension 非依存の純関数群**（ユニットテストの主戦場）
 - Pro 判定は ProStore 単一真実源 → App Group へ atomic 書出（既存 StateStore パターン踏襲）。tunnel は起動時に Pro を検証し、非 Pro なら起動拒否。**返金 edge**: tunnel 起動時再検証のみ（v4.0）— 走行中の失効は次回起動で反映
 - リストはドメイン完全一致 + サフィックス一致の Set 構造。Network Extension のメモリ上限（既知の目安 ≈50MB・一次未確認 → 実装時に実測）内に収まるようリスト上限を設けて縮退
+- **self-fetch の自己生存保証**: tunnel 有効中は extension 自身の名前解決も DNSEngine を通る（async のためデッドロックなし）。**DNS 版 CriticalDomainGuard に `github.io`（self-fetch 先）を必ず含め、自己更新経路をブロック不能にする**
 - **DNS リストの供給源**: 独自 curated（既存 popunder 研究の広告配信網ドメイン + 主要広告 SDK ドメインの自前調査）。外部リスト取り込み時は `docs/license-audit` の運用に従いライセンス確認（AdGuard 由来 GPL は不可）
 
 ### grandfather（実装チェックリストは v4-freemium-dns-plan.md §grandfather を正とする — 転記しない）
@@ -91,7 +95,7 @@
 | 障害 | 挙動 |
 |---|---|
 | DNS パース失敗 / リスト未ロード / 照合エラー | 素通し（fail-open 層1） |
-| TCP:53（truncation retry） | 上流へ最小フォワード（fail-open 層2） |
+| TCP:53（truncation retry） | RST 即時応答 = fail-fast（fail-open 層2・案A） |
 | 上流 DNS 無応答 | タイムアウト後そのまま無応答（偽装しない） |
 | リストに critical ドメイン混入 | CriticalDomainGuard が遮断を拒否（fail-open 層3） |
 | tunnel 起動失敗 / 設定アプリ側 OFF / 再起動後未接続 | NEVPNStatusDidChange で UI に正直反映 + 再試行導線。Safari CB は独立動作継続 |
