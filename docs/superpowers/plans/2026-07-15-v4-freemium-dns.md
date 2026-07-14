@@ -60,22 +60,6 @@
 
 ---
 
-## Chunk 0: フェーズ0 診断リリース（最優先・実装前に審査待ちを並行化 / plan レビュー I-1）
-
-grandfather の最大の不確実性（再インストール時の originalAppVersion 挙動）は本番 receipt でしか観測できない。この確認を**全実装より先に**現行 main（v3.6.0）へ乗せて提出し、審査・実機実測を Chunk 1-4 と並行させる。診断画面は v4.0 にも残す。
-
-### Task 0: AppTransaction 診断画面 → v3.6.1 提出
-
-**Files:** Create `App/Pro/DiagnosticsView.swift` / Modify 設定画面（`App/AboutView.swift` 等）/ `project.yml`（build +1）
-
-- [ ] **Step 1**: バージョン行の連打（7回）で `AppTransaction.shared` の `originalAppVersion` / `originalPurchaseDate` / `environment` を表示する隠し画面（**本番リリースに仕込む**=本番 receipt でしか観測できないため・目立たない導線）
-- [ ] **Step 2**: `xcodegen generate` → ビルド → シミュレータで画面到達を目視（値は sandbox="1.0" になる=実機でのみ本物）
-- [ ] **Step 3: commit** — `git commit -m "feat(diag): AppTransaction 診断画面（フェーズ0 本番実測用）"`
-- [ ] **Step 4**: v3.6.1（build 現行+1）を submitting-ios-build skill 経由で提出（通常アップデート・無料化はしない）
-- [ ] **Step 5（承認後・kureho 実機）**: 購入済み実機で「削除→再インストール→診断値確認」。**purchaseDate 保持なら date 補助で救済可 / originalBuild が再インストール版になるなら追加対応**を Chunk 4 前に判断
-
----
-
 ## Chunk 1: DNS コア純関数（PacketCodec + DNSMessage）
 
 このチャンクは NetworkExtension に一切依存しない。全て `AdblockKeshiTests` でユニットテストする。
@@ -489,6 +473,8 @@ func test_isLegacy_intComparison_notString_andEnvironmentGated() {
 
 **M-3 注記**: `originalBuild: nil` の定義は「AppTransaction が欠落 or originalAppVersion が Int にパースできない（"1.0" 形式等）」。`cutoffDate` は**転換当日（無料化実行日時）に確定**させる運用（早すぎる定数だと窓の購入者を date 補助が拾えない。ただし build<10000 の主判定が拾うため実害は限定的）。
 
+**取りこぼしケースのフォールバック（Chunk 0 廃止の代償・許容範囲）**: 「v4.0 を一度も起動せず旧版削除→v4.0 新規インストール」した既存購入者は、もし Apple が再インストールで originalAppVersion を書き換える仕様なら救えない（頻度極小）。この端末には (a) 復元ボタン（過去購入の有無を Transaction で確認）、(b) Paywall/設定に「以前ご購入の方でうまく反映されない場合はお問い合わせ」導線、で対応。実害は本体無料+基本保護は使えて Pro(¥800)のみ。実挙動はリリース後に自然に判明する（困る人が出たら個別救済）。
+
 ### Task 15.5: ローカル `.storekit` に Pro 非消耗型を定義（I-2・Task 17 の前提）
 
 **Files:** Create `AdblockKeshi.storekit`（リポジトリに現存しない・新規）/ Modify `project.yml`（test target resources に追加）
@@ -502,8 +488,10 @@ func test_isLegacy_intComparison_notString_andEnvironmentGated() {
 
 **Files:** Create `App/Pro/ProEntitlementCache.swift` / Test `Tests/ProEntitlementCacheTests.swift`
 
-- [ ] **Step 1: 失敗するテスト**（一度 grandfather=true を書いたら、以後 read が false/失敗でも true を返す＝剥奪しない。UserDefaults + Keychain 冗長化。既存 `App/Storage/KeychainHelper.swift` を使う）
-- [ ] **Step 2〜5**: 失敗確認 → 実装 → パス → commit `git commit -m "feat(pro): ProEntitlementCache 恒久化（一度 Pro なら剥奪しない）"`
+★Chunk 0 廃止に伴う中核（2026-07-15 kureho 承認）: **iCloud KVS を恒久レールに加える**ことで「再インストール時の originalAppVersion 挙動」の不確実性を実測なしで吸収する。v4.0 に一度でもアップデートした端末は originalAppVersion で判定 → iCloud KVS へ書込 → 以後の削除・機種変でも Apple ID 経由で復元（iCloud 有効端末）。
+
+- [ ] **Step 1: 失敗するテスト**（一度 grandfather=true を書いたら、以後 read が false/失敗でも true を返す＝剥奪しない。**UserDefaults + Keychain + NSUbiquitousKeyValueStore(iCloud KVS) の3冗長**。read は「どれか1つでも true なら true」）
+- [ ] **Step 2〜5**: 失敗確認 → 実装（既存 `App/Storage/KeychainHelper.swift` + iCloud KVS の DI 可能なラッパ。iCloud OFF 端末では KVS 不在＝UserDefaults/Keychain にフォールバック）→ パス → commit `git commit -m "feat(pro): ProEntitlementCache を3冗長で恒久化（iCloud KVS で再インストール耐性）"`
 
 ### Task 17: ProStore — StoreKit 2 購入/復元 + Pro 判定の統合
 
@@ -583,8 +571,8 @@ func test_isLegacy_intComparison_notString_andEnvironmentGated() {
 
 ## 実装順序と依存
 
-**Chunk 0（フェーズ0 診断リリース）を最優先**（v3.6.0 に乗るだけ・他依存ゼロ・審査 1週間を並行化）→ Chunk 1-2（DNS 純関数・完全 TDD）→ Chunk 4（Pro・純関数 TDD 中心・Chunk 1-2 と並行可・**フェーズ0 の実測結果を待って grandfather を確定**）→ Chunk 3（tunnel・実機必須・Chunk 1-2/4 の純関数と Pro 状態に依存）→ Chunk 5（UI・Chunk 3,4 に依存）→ Chunk 6（転換リリース・全部が揃ってから）。
+Chunk 1-2（DNS 純関数・完全 TDD・依存なし）→ Chunk 4（Pro・純関数 TDD 中心・Chunk 1-2 と並行可・**grandfather は iCloud KVS 恒久化で実測不要**）→ Chunk 3（tunnel・実機必須・Chunk 1-2/4 の純関数と Pro 状態に依存）→ Chunk 5（UI・Chunk 3,4 に依存）→ Chunk 6（転換リリース・全部が揃ってから）。
 
-**クリティカルパス**: Chunk 0 の審査（数日〜1週間）と実機実測が最初に走る。純関数（Chunk 1-2, 4 の大半・Task 9.5/12/12.7/15/16）はその裏で並行して片付く。実機ゲート（Chunk 3 の tunnel・Chunk 0 の再インストール実測・E2E）が kureho 依存の律速。
+**クリティカルパス**: 純関数（Chunk 1-2, 4 の大半）は今すぐ並行で片付く。**kureho 依存の律速は Chunk 3 の tunnel 実機検証と Chunk 6 の審査/転換のみ**（Chunk 0 廃止で診断リリースの審査待ちが消えた）。
 
 各チャンク末に Codex レビュー（codex-default-review）。提出前に E2E ゲート（spec §5）全項目。
