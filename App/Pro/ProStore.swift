@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import StoreKit
 
 /// Pro 買い切り（Non-Consumable ¥800）の状態管理 + 既存購入者の grandfather 統合（StoreKit 2）。

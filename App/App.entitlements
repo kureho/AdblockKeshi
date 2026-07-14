@@ -10,5 +10,9 @@
     <array>
         <string>$(AppIdentifierPrefix)group.com.kureho.adblockkeshi.shared</string>
     </array>
+    <!-- iCloud KVS: grandfather 権利の再インストール/機種変耐性（ProEntitlementCache の3冗長目）。
+         ★kureho 操作要★ Apple Developer で App ID に iCloud capability(Key-Value storage) を有効化 + プロビジョニング再生成が必要。 -->
+    <key>com.apple.developer.ubiquity-kvstore-identifier</key>
+    <string>$(TeamIdentifierPrefix)$(CFBundleIdentifier)</string>
 </dict>
 </plist>
