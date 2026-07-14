@@ -11,6 +11,13 @@
 **Spec:** `AdblockKeshi/docs/superpowers/specs/2026-07-14-v4-freemium-dns-design.md`（r3）
 **調査正典（grandfather・転換手順の詳細はこちらを参照）:** `AdblockKeshi/tasks/v4-freemium-dns-plan.md`
 
+## 全タスク共通の注記（着手前に必読・plan レビュー r1 反映）
+
+- **ファイルを新規作成/削除したら必ず `xcodegen generate` を実行してからテスト**。`.xcodeproj` は git ignore の生成物で sources はディレクトリ指定のため、再生成しないと新規ファイルがターゲットに入らず「テストが見つからない」別種エラーになる（Task 1 実装時に実証済み）。
+- **NEPacketTunnelProvider（Network Extension provider）は iOS シミュレータで動作しない = 実機必須**（Apple 公式既知制約）。tunnel の「起動する/connected になる」完了条件は**すべて実機**。シミュレータで確認できるのは「ビルド通過」「UI 画面遷移」「純関数のユニットテスト」まで。
+- **テスト可能性の鉄則**: ユニットテストする型は `Shared/`（特に `Shared/DNS/`）に置く。`AdblockKeshiTests` は本体アプリを TEST_HOST にするため、`PacketTunnelExtension/` 配下の型は `@testable import AdblockKeshi` から見えずコンパイルエラーになる。extension ターゲット固有ファイルはグルーのみに留める。
+- **DEBUG 限定 Pro オーバーライド**（起動引数 or UserDefaults）を Task 17 で用意する。シミュレータは AppTransaction 不可のため、これが無いと Chunk 5 の UI 開発で Pro ゲートの先に入れない。
+
 ---
 
 ## ファイル構造（新規/変更）
@@ -22,9 +29,18 @@
 - `Shared/DNS/DNSBlocklist.swift` — ドメイン Set（完全一致 + サフィックス一致）・上限縮退
 - `Shared/DNS/PacketCodec.swift` — IPv4/IPv6 + UDP（+ TCP 最小 parse/RST 合成）decode/encode・checksum
 
-**新規: tunnel extension（薄いグルー・純関数を呼ぶだけ）**
-- `PacketTunnelExtension/PacketTunnelProvider.swift` — NEPacketTunnelProvider 本体（sentinel 設定・packetFlow ループ・上流転送）
-- `PacketTunnelExtension/BlocklistStore.swift` — App Group 読込 + 日次 self-fetch + reload
+**新規: DNS リスト・転送・記録（Shared/DNS・テスト可能に集約 / plan レビュー C-3・I-5）**
+- `Shared/DNS/BlocklistStore.swift` — App Group 読込 + フォールバック（**Shared に置く=テスト可能**）
+- `Shared/DNS/DNSForwardingTable.swift` — 上流転送の対応表（キー=srcPort+DNS ID → 元パケット・insert/resolve/expireAll・純関数）
+- `Shared/DNS/DNSUpdatePlanner.swift` — self-fetch の更新要否判定（既存 RuleUpdatePlanner 同型・純関数）
+
+**新規: DNS ブロックリスト本体（プロダクトの価値・plan レビュー C-2）**
+- `PacketTunnelExtension/Resources/dns-rules.json` — bundle 同梱の初期 curated リスト
+- `scripts/build_dns_rules.py`（or 既存 scripts 拡張）— curated ドメイン → dns-rules payload + `version-dns.json` manifest 生成
+- CDN 配信（既存 GitHub Pages `cdn/`）に version-dns.json + payload を追加
+
+**新規: tunnel extension（薄いグルー・I/O のみ）**
+- `PacketTunnelExtension/PacketTunnelProvider.swift` — NEPacketTunnelProvider 本体（sentinel 設定・packetFlow ループ・上流 I/O・純関数を呼ぶだけ）
 
 **新規: Pro / 課金（本体アプリ）**
 - `App/Pro/ProStore.swift` — grandfather 判定 + StoreKit 2 購入/復元 + Pro 状態の単一真実源
@@ -44,17 +60,35 @@
 
 ---
 
+## Chunk 0: フェーズ0 診断リリース（最優先・実装前に審査待ちを並行化 / plan レビュー I-1）
+
+grandfather の最大の不確実性（再インストール時の originalAppVersion 挙動）は本番 receipt でしか観測できない。この確認を**全実装より先に**現行 main（v3.6.0）へ乗せて提出し、審査・実機実測を Chunk 1-4 と並行させる。診断画面は v4.0 にも残す。
+
+### Task 0: AppTransaction 診断画面 → v3.6.1 提出
+
+**Files:** Create `App/Pro/DiagnosticsView.swift` / Modify 設定画面（`App/AboutView.swift` 等）/ `project.yml`（build +1）
+
+- [ ] **Step 1**: バージョン行の連打（7回）で `AppTransaction.shared` の `originalAppVersion` / `originalPurchaseDate` / `environment` を表示する隠し画面（**本番リリースに仕込む**=本番 receipt でしか観測できないため・目立たない導線）
+- [ ] **Step 2**: `xcodegen generate` → ビルド → シミュレータで画面到達を目視（値は sandbox="1.0" になる=実機でのみ本物）
+- [ ] **Step 3: commit** — `git commit -m "feat(diag): AppTransaction 診断画面（フェーズ0 本番実測用）"`
+- [ ] **Step 4**: v3.6.1（build 現行+1）を submitting-ios-build skill 経由で提出（通常アップデート・無料化はしない）
+- [ ] **Step 5（承認後・kureho 実機）**: 購入済み実機で「削除→再インストール→診断値確認」。**purchaseDate 保持なら date 補助で救済可 / originalBuild が再インストール版になるなら追加対応**を Chunk 4 前に判断
+
+---
+
 ## Chunk 1: DNS コア純関数（PacketCodec + DNSMessage）
 
 このチャンクは NetworkExtension に一切依存しない。全て `AdblockKeshiTests` でユニットテストする。
 
-### Task 1: PacketCodec — IPv4/UDP のパース
+### Task 1: PacketCodec — IPv4/UDP のパース ✅ 完了（commit fcd8d6d）
 
 **Files:**
 - Create: `Shared/DNS/PacketCodec.swift`
 - Test: `Tests/PacketCodecTests.swift`
 
-- [ ] **Step 1: 失敗するテストを書く**
+実装済み（RED→GREEN 2テスト PASS）。makeIPv4UDP ヘルパは Step 1 でテストファイルに同梱済み（M-1 反映）。以下は記録:
+
+- [x] **Step 1: 失敗するテストを書く**
 
 ```swift
 import XCTest
@@ -271,11 +305,32 @@ func test_decide_blocksListed_forwardsOthers_protectsCritical_failsOpen() throws
 
 - [ ] **Step 2〜5**: 失敗確認 → 実装（decide: critical 判定 → blocklist 判定 → respond/forward。decideRaw: DNSMessage.parseQuery 失敗時は forward）→ パス → commit `git commit -m "feat(dns): DNSEngine で判定を集約（block/forward・fail-open 3層）"`
 
+### Task 9.5: DNSForwardingTable — 上流転送の対応表（純関数・plan レビュー I-5）
+
+**Files:** Create `Shared/DNS/DNSForwardingTable.swift` / Test `Tests/DNSForwardingTableTests.swift`
+
+上流(1.1.1.1)へ転送したクエリの応答を、正しい元クライアントに配送するための対応表。**キーは srcPort + DNS transaction ID の複合**（ID 単独だと別アプリの同一 ID と衝突し誤配送する）。tunnel の I/O から切り離せる純ロジック。
+
+- [ ] **Step 1: 失敗するテスト**（insert(key: srcPort+id, packet) → resolve(key) で元パケット取得・1回で消費 / expireAll(olderThan:) で古いエントリ掃除 / 同 ID 異 srcPort が衝突しないこと）
+- [ ] **Step 2〜5**: 失敗確認 → 実装（Dictionary + タイムスタンプ・resolve は remove して返す）→ パス → commit `git commit -m "feat(dns): DNSForwardingTable で上流応答の突合（srcPort+ID キー・TDD）"`
+
 ### Task 10: Chunk 1-2 の全ユニットテスト green 確認
 
-- [ ] **Step 1**: Run: `xcodebuild test -scheme AdblockKeshi -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:AdblockKeshiTests -quiet`
+- [ ] **Step 1**: Run: `xcodegen generate && xcodebuild test -scheme AdblockKeshi -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:AdblockKeshiTests -quiet`
       Expected: 既存 121+ テスト + 新規 DNS テストすべて PASS（回帰ゼロ）
 - [ ] **Step 2**: Codex レビュー — `codex review --commit HEAD`（DNS コアの純関数群を対象）。指摘は次チャンク前に解消
+
+### Task 10.5: DNS curated ブロックリスト初版 + CDN 生成 + bundle 同梱（plan レビュー C-2）
+
+**Files:** Create `PacketTunnelExtension/Resources/dns-rules.json` / `scripts/build_dns_rules.py` / CDN 生成物 / Modify `project.yml`（bundle 同梱）
+
+DNS リストはプロダクトの価値そのもの。ここが無いと E2E（AdMob 搭載アプリでバナー消滅確認）に進めない。
+
+- [ ] **Step 1**: curated ドメイン初版を作る（既存 popunder 研究の広告配信網ドメイン + 主要広告 SDK ドメイン = AdMob `googleads.g.doubleclick.net`/`pagead2.googlesyndication.com` 等・自作 AdMob アプリで実測しながら）。外部リスト取込時は `docs/license-audit` 運用（GPL 不可）
+- [ ] **Step 2**: `scripts/build_dns_rules.py` = curated → `dns-rules.json`（JSON array of domains）+ `version-dns.json`（manifest・sha256）。RuleUpdater の manifest パターン踏襲
+- [ ] **Step 3**: `dns-rules.json` を PacketTunnelExtension の bundle resources に同梱（project.yml・fresh install で App Group 空でも初期リストが読める＝Content Blocker bundle 同梱教訓と同型）
+- [ ] **Step 4**: CDN（既存 GitHub Pages `cdn/`）に version-dns.json + payload 配置
+- [ ] **Step 5: commit** — `git commit -m "feat(dns): curated DNS リスト初版 + 生成 script + bundle 同梱 + CDN 配信"`
 
 ---
 
@@ -286,10 +341,10 @@ func test_decide_blocksListed_forwardsOthers_protectsCritical_failsOpen() throws
 ### Task 11: project.yml に PacketTunnelExtension ターゲットを追加
 
 **Files:**
-- Modify: `project.yml`
+- Modify: `project.yml`（tunnel ターゲット + **bundle 同梱 `PacketTunnelExtension/Resources/dns-rules.json`**・Shared を CB 拡張から excludes: [DNS] 検討=M-2）
 - Create: `PacketTunnelExtension/Info.plist`
 - Create: `PacketTunnelExtension/PacketTunnelExtension.entitlements`
-- Create: `App/App.entitlements`（変更・packet-tunnel 用に App 側にも VPN 管理 entitlement 追加）
+- Modify: `App/App.entitlements`（**既存ファイル**・M-4。packet-tunnel array を追記。App Group/keychain は既存）
 
 - [ ] **Step 1: ターゲット定義を追加**
 
@@ -347,41 +402,58 @@ git commit -m "feat(tunnel): PacketTunnelExtension ターゲット追加 + entit
 
 ### Task 12: BlocklistStore — App Group からリスト読込（+ フォールバック）
 
-**Files:** Create `PacketTunnelExtension/BlocklistStore.swift` / Test `Tests/BlocklistStoreTests.swift`
+**Files:** Create `Shared/DNS/BlocklistStore.swift`（**Shared に置く=テスト可能・C-3**）/ Test `Tests/BlocklistStoreTests.swift`
 
-- [ ] **Step 1: 失敗するテスト**（App Group の dns-rules.json → 無ければ bundle 同梱初期リスト → 無ければ空、の順でロード。空でも DNSEngine は fail-open で forward するので安全）
-- [ ] **Step 2〜5**: 失敗確認 → 実装（StateStore と同じ App Group container パターン・JSON array of domains を DNSBlocklist に）→ パス → commit `git commit -m "feat(tunnel): BlocklistStore の App Group 読込 + フォールバック（TDD）"`
+- [ ] **Step 1: 失敗するテスト**（App Group の dns-rules.json → 無ければ bundle 同梱初期リスト → 無ければ空、の順でロード。空でも DNSEngine は fail-open で forward するので安全。App Group container は DI で差し替えテスト＝StateStore の `init(stateFileURL:)` パターン踏襲）
+- [ ] **Step 2〜5**: 失敗確認 → 実装（StateStore と同じ atomic 読込・JSON array of domains を DNSBlocklist に。bundle フォールバックは Bundle 注入で test 可能に）→ パス → commit `git commit -m "feat(dns): BlocklistStore の App Group 読込 + フォールバック（Shared・TDD）"`
 
-### Task 13: PacketTunnelProvider — sentinel 設定 + packetFlow ループ
+### Task 12.7: DNSUpdatePlanner — self-fetch の更新要否判定（純関数・I-5）
 
-**Files:** Modify `PacketTunnelExtension/PacketTunnelProvider.swift`（NetworkExtension 依存のため実機/手動検証。ユニット対象外）
+**Files:** Create `Shared/DNS/DNSUpdatePlanner.swift` / Test `Tests/DNSUpdatePlannerTests.swift`
 
-- [ ] **Step 1: startTunnel 実装**
+既存 `RuleUpdatePlanner`（`Tests/RuleUpdatePlannerTests.swift` あり）と同型。「手元 version-dns の sha256 と CDN manifest を比較 → 更新要否」を純関数で。tunnel の I/O から分離。
+
+- [ ] **Step 1〜5**: RED（同 sha なら skip・差分なら fetch 対象を返す）→ 実装 → GREEN → commit `git commit -m "feat(dns): DNSUpdatePlanner で self-fetch 更新要否を判定（純関数・TDD）"`
+
+### Task 13: PacketTunnelProvider — sentinel 設定 + packetFlow ループ（実機検証）
+
+**Files:** Modify `PacketTunnelExtension/PacketTunnelProvider.swift`（NetworkExtension 依存 = **シミュレータ不可・実機必須**。純関数は Task 1-9.5 で TDD 済みなので、ここは I/O 配線のみ）
+
+- [ ] **Step 1: 非 Pro なら起動拒否（I-3）**: startTunnel 冒頭で App Group の Pro 状態（ProStateStore）を読み、**非 Pro なら `completionHandler(NEVPNError(...))` で起動拒否**（設定アプリ VPN 画面からの直接 ON も塞ぐ・返金 edge も起動時再検証で反映）
+- [ ] **Step 2: startTunnel の network settings**:
   - `NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")`
-  - `dnsSettings = NEDNSSettings(servers: [sentinelV4, sentinelV6])`・`dnsSettings.matchDomains = [""]`（全 DNS を tunnel へ）
-  - `ipv4.includedRoutes = [NEIPv4Route(destinationAddress: sentinelV4, subnetMask: "255.255.255.255")]`（sentinel /32 のみ）・IPv6 も sentinel /128
-  - sentinel は 198.18.0.0/15 レンジから（例 198.18.0.1 / fdxx 系）
-  - `setTunnelNetworkSettings` 完了後に `readPackets` ループ開始
-- [ ] **Step 2: パケット処理ループ**
+  - **tunnel 自身のアドレス割当（必須・I-4）**: `let v4 = NEIPv4Settings(addresses: ["198.18.0.2"], subnetMasks: ["255.255.255.0"])` / `let v6 = NEIPv6Settings(addresses: ["fd00::2"], networkPrefixLengths: [64])`
+  - `v4.includedRoutes = [NEIPv4Route(destinationAddress: "198.18.0.1", subnetMask: "255.255.255.255")]`（sentinel /32 のみ）/ v6 も sentinel /128
+  - `dnsSettings = NEDNSSettings(servers: ["198.18.0.1", "fd00::1"])`・`dnsSettings.matchDomains = [""]`（全 DNS を tunnel へ）
+  - sentinel は 198.18.0.0/15（RFC 2544 予約）から
+  - `setTunnelNetworkSettings` 完了後に readPackets ループ開始
+- [ ] **Step 3: パケット処理ループ**
   - `packetFlow.readPackets { packets, protocols in ... }`
-  - 各パケット: `PacketCodec.parse` → dstPort==53 か判定
-    - UDP:53 → `DNSEngine.decideRaw(payload)` → `.respond(data)` なら `PacketCodec.buildResponse` を `writePackets` / `.forward` なら上流 1.1.1.1:53 へ `NWConnection`(UDP) 送信し、応答を `buildResponse` で書き戻す
+  - `PacketCodec.parse` → dstPort==53 判定
+    - UDP:53 → `DNSEngine.decideRaw(payload)` → `.respond` なら `PacketCodec.buildResponse` を writePackets / `.forward` なら **DNSForwardingTable に登録**して上流へ送信
     - TCP:53 → `PacketCodec.buildTCPRST` を writePackets（fail-fast）
-    - それ以外 → 到達しない想定（includedRoutes が sentinel のみ）だが来たら drop
-  - ループ再帰で継続
-- [ ] **Step 3: 上流転送のコネクション管理**
-  - `NWConnection(host: "1.1.1.1", port: 53, using: .udp)` プールを最小実装。タイムアウト（例 5s）で応答なしは黙って捨てる（fail-open: 偽装しない）
-- [ ] **Step 4: 実機で疎通確認**（Task 20 の E2E ゲートで実施。この Task は「ビルド通過 + シミュレータで tunnel が起動状態になる」まで）
-- [ ] **Step 5: commit** — `git commit -m "feat(tunnel): sentinel DNS tunnel + packetFlow ループ + 上流転送"`
+  - ループ再帰
+- [ ] **Step 4: 上流転送 I/O**
+  - 上流 = **1.1.1.1 と 2606:4700:4700::1111 の両方（IPv6-only/NAT64 網対応・I-5）**。`NWConnection`(UDP) で送信、応答受信時に `DNSForwardingTable.resolve` で元クライアントを引いて `buildResponse` で書き戻す。5s タイムアウトで `expireAll`（応答なしは偽装せず捨てる）
+- [ ] **Step 5: 実機スモーク（明示ゲート・C-1/M-5）**: 実機で tunnel が connected になり、通常ブラウジングが壊れず、既知広告ドメインが 0.0.0.0 で返ることを確認（Safari で `nslookup` 相当・Charles 不要な範囲で）。E2E フルは spec §5（Task 20 ではない）
+- [ ] **Step 6: commit** — `git commit -m "feat(tunnel): sentinel DNS tunnel + packetFlow + 上流 v4/v6 + 非Pro起動拒否"`
 
 ### Task 14: self-fetch + sendProviderMessage reload
 
-**Files:** Modify `PacketTunnelExtension/BlocklistStore.swift` / `PacketTunnelProvider.swift`
+**Files:** Modify `PacketTunnelExtension/PacketTunnelProvider.swift` / 使用: `Shared/DNS/DNSUpdatePlanner.swift`（Task 12.7・純関数は済）
 
-- [ ] **Step 1: tunnel 内日次 self-fetch**（RuleUpdater の manifest+sha256 パターンで version-dns.json を取得 → dns-rules.json 更新 → BlocklistStore reload。github.io は DNSCriticalGuard で保護済みなので自己更新経路は死なない）
-- [ ] **Step 2: AppliedRulesRecord 共有**（app 側更新 と tunnel self-fetch の二重 DL 回避・spec §書き手2箇所）
+- [ ] **Step 1: tunnel 内日次 self-fetch**（DNSUpdatePlanner で要否判定 → version-dns.json 取得 → dns-rules.json 更新 → BlocklistStore reload。github.io は DNSCriticalGuard 保護済みで自己更新経路は死なない）
+- [ ] **Step 2: 二重 DL 回避**: app 側 RuleUpdater(dns variant・Task 14.5) と tunnel self-fetch が同じ version-dns を見るので、適用記録（applied-dns.json・DNSUpdatePlanner が参照）を App Group で共有
 - [ ] **Step 3: `handleAppMessage`（sendProviderMessage）で app からの即時 reload を受ける**
 - [ ] **Step 4: commit** — `git commit -m "feat(tunnel): DNS リストの日次 self-fetch + app 即時 reload"`
+
+### Task 14.5: app 側の DNS リスト更新（RuleUpdater dns variant・C-2 の書き手2箇所）
+
+**Files:** Modify `Shared/RuleUpdater.swift` / Test `Tests/RuleUpdaterTests.swift`
+
+spec「書き手2箇所」の app 側。既存 RuleUpdater（基本保護の CDN 更新）に dns variant を追加し、アプリ起動時/BGTask でも DNS リストを更新（tunnel が起動していない間の鮮度維持）。
+
+- [ ] **Step 1〜5**: RED（既存 RuleUpdaterTests パターンで dns variant の manifest 比較・適用）→ 実装 → GREEN → commit `git commit -m "feat(dns): RuleUpdater に dns variant を追加（app 側の DNS リスト更新）"`
 
 ---
 
@@ -412,6 +484,17 @@ func test_isLegacy_intComparison_notString_andEnvironmentGated() {
 
 - [ ] **Step 2〜5**: 失敗確認 → 実装（Int 変換比較・environment==.production 限定・build 欠落時 purchaseDate < cutoff 補助）→ パス → commit `git commit -m "feat(pro): GrandfatherPolicy 閾値判定（Int比較・env gate・date補助・TDD）"`
 
+**M-3 注記**: `originalBuild: nil` の定義は「AppTransaction が欠落 or originalAppVersion が Int にパースできない（"1.0" 形式等）」。`cutoffDate` は**転換当日（無料化実行日時）に確定**させる運用（早すぎる定数だと窓の購入者を date 補助が拾えない。ただし build<10000 の主判定が拾うため実害は限定的）。
+
+### Task 15.5: ローカル `.storekit` に Pro 非消耗型を定義（I-2・Task 17 の前提）
+
+**Files:** Create `AdblockKeshi.storekit`（リポジトリに現存しない・新規）/ Modify `project.yml`（test target resources に追加）
+
+- [ ] **Step 1**: `.storekit` に非消耗型 `com.kureho.adblockkeshi.pro`（¥800）を定義
+- [ ] **Step 2**: `project.yml` の `AdblockKeshiTests` に `.storekit` を resources 追加 + scheme の test config に storeKitConfiguration 指定（`SKTestSession(configurationFileNamed:)` 用）。iOS 18.3 sim 実 PASS 手法 = reference_storekittest_cli_workaround
+- [ ] **Step 3: commit** — `git commit -m "feat(pro): ローカル .storekit に Pro 非消耗型を定義（StoreKitTest 用）"`
+- **注**: ASC 上の IAP 作成は Chunk 6 の提出フェーズ（初回 IAP はバージョン同時提出が必須）
+
 ### Task 16: ProEntitlementCache — 恒久キャッシュ（剥奪しない）
 
 **Files:** Create `App/Pro/ProEntitlementCache.swift` / Test `Tests/ProEntitlementCacheTests.swift`
@@ -427,15 +510,8 @@ func test_isLegacy_intComparison_notString_andEnvironmentGated() {
 - [ ] **Step 2〜5**: 失敗確認 → 実装:
   - `ProStore`: 起動時 `AppTransaction.shared`（タイムアウト付き）→ GrandfatherPolicy 判定 → cache 反映。`refresh()` は復元ボタン起点のみ。Pro = grandfather OR currentEntitlements。
   - `ProStateStore`: Pro 状態を App Group state に atomic 書出（StateStore パターン）→ tunnel が起動時に読む
-  → パス → commit `git commit -m "feat(pro): ProStore で購入/復元/grandfather を統合し App Group へ共有"`
-
-### Task 18: 非消耗型 IAP「Pro」を ASC に作成 + .storekit 更新
-
-**Files:** `AdblockKeshi.storekit`（新規 or 既存更新）/ ASC 操作（kureho 協調・提出前）
-
-- [ ] **Step 1**: `.storekit` に非消耗型 `com.kureho.adblockkeshi.pro`（¥800）を定義（ローカルテスト用）
-- [ ] **Step 2**: ASC 上の IAP 作成は**提出フェーズ（Chunk 6）で実施**（初回 IAP はバージョン同時提出が必須のため。ここでは .storekit のみ）
-- [ ] **Step 3: commit** — `git commit -m "feat(pro): ローカル .storekit に Pro 非消耗型を定義"`
+  - **DEBUG 限定 Pro オーバーライド（I-7）**: 起動引数 `-FORCE_PRO` or UserDefaults で Pro=true を強制（`#if DEBUG` のみ）。シミュレータは AppTransaction 不可なので、これが無いと Chunk 5 の UI（Pro ゲート先）を開発できない
+  → パス → commit `git commit -m "feat(pro): ProStore で購入/復元/grandfather を統合 + DEBUG Pro override"`
 
 ---
 
@@ -449,17 +525,10 @@ func test_isLegacy_intComparison_notString_andEnvironmentGated() {
 - [ ] **Step 2: DNSSettingsView**（Pro ゲート: 非 Pro は PaywallView へ / Pro はワンタップ ON-OFF トグル + status 表示 + 説明画面（他 VPN 排他・再起動後は手動 ON・YouTube 等は消えない・上流 Cloudflare の明記））
 - [ ] **Step 3: PaywallView**（購入ボタン + **復元ボタン（Pro 状態でも常に到達可能）** + 商品ロード中/失敗の明示 UI + リトライ。2026-01 reject 対策）
 - [ ] **Step 4: 既存導線に接続**（`App/ContentView.swift` or `AboutView.swift` に「アプリ内広告ブロック」セクション追加）
-- [ ] **Step 5: シミュレータ目視**（StoreKitTest config で購入→トグル出現→説明画面表示を確認・スクショ）
+- [ ] **Step 5: シミュレータ目視（購入フロー + 画面遷移まで）**（StoreKitTest config で購入→トグル出現→説明画面表示を確認・スクショ。**tunnel の実起動は実機のみ = Task 13 Step 5 の実機スモークでカバー・C-1**）
 - [ ] **Step 6: commit** — `git commit -m "feat(ui): DNS 設定 UI + Paywall（復元常設・限界明記・Pro ゲート）"`
 
-### Task 20: DEBUG 診断画面（フェーズ0 の乗り物 = v3.6.1 先行リリース用）
-
-**Files:** Modify 設定画面 / Create `App/Pro/DiagnosticsView.swift`
-
-- [ ] **Step 1**: バージョン行の連打（7回等）で AppTransaction の `originalAppVersion` / `originalPurchaseDate` / `environment` を表示する隠し画面（DEBUG だけでなく **本番リリースにも仕込む** = フェーズ0 は本番 receipt でしか観測できないため。ただし目立たない導線）
-- [ ] **Step 2**: この画面だけを先に **v3.6.1（build を現行+1）で提出・配信**し、kureho の購入済み実機で「削除→再インストール→診断値確認」を実施（spec §フェーズ0）。**結果が「purchaseDate は保持される」なら grandfather の補助判定で救済可能・「originalBuild が再インストール版になる」なら追加対応を検討**
-- [ ] **Step 3: commit** — `git commit -m "feat(diag): AppTransaction 診断画面（フェーズ0 本番実測用）"`
-- [ ] **Step 4**: v3.6.1 の提出は submitting-ios-build skill 経由（本体は無料化しない・診断のみの通常アップデート）
+（診断画面は Chunk 0 の Task 0 で先行実装・提出済み。ここでは重複させない）
 
 ---
 
@@ -489,8 +558,9 @@ func test_isLegacy_intComparison_notString_andEnvironmentGated() {
 
 **Files:** `project.yml`（CURRENT_PROJECT_VERSION を 10000 へジャンプ・MARKETING_VERSION 4.0.0）
 
-- [ ] CFBundleVersion 履歴一覧化（過去リリースの build 番号確認）→ 転換ビルドを 10000 へ
+- [ ] CFBundleVersion 履歴一覧化（過去リリースの build 番号確認）→ 転換ビルドを 10000 へ（cutoffDate = 提出時に確定・M-3）
 - [ ] ASC で非消耗型 IAP「Pro」¥800 作成（初回 IAP・バージョン同時提出）
+- [ ] **ASC Web UI で IAP を 4.0.0 バージョンに紐付け + IAP 審査用スクショ添付（I-8・MosaicBlur 教訓: first IAP は API では版に attach されず Web UI 必須）**
 - [ ] submitting-ios-build skill で Phase 1-5 → **手動リリース**・Phased Release オフ・評価リセット禁止・審査ノート（転換説明の実績文例）
 - [ ] 4点監査
 
@@ -505,6 +575,8 @@ func test_isLegacy_intComparison_notString_andEnvironmentGated() {
 
 ## 実装順序と依存
 
-Chunk 1-2（DNS 純関数・完全 TDD・依存なし）→ Chunk 4（Pro・純関数 TDD 中心・Chunk 1-2 と並行可）→ Chunk 3（tunnel・Chunk 1-2 の純関数に依存）→ Chunk 5（UI・Chunk 3,4 に依存）→ **フェーズ0 診断リリース（Task 20・実装の途中で先行提出）** → Chunk 6（転換リリース・全部が揃ってから）。
+**Chunk 0（フェーズ0 診断リリース）を最優先**（v3.6.0 に乗るだけ・他依存ゼロ・審査 1週間を並行化）→ Chunk 1-2（DNS 純関数・完全 TDD）→ Chunk 4（Pro・純関数 TDD 中心・Chunk 1-2 と並行可・**フェーズ0 の実測結果を待って grandfather を確定**）→ Chunk 3（tunnel・実機必須・Chunk 1-2/4 の純関数と Pro 状態に依存）→ Chunk 5（UI・Chunk 3,4 に依存）→ Chunk 6（転換リリース・全部が揃ってから）。
+
+**クリティカルパス**: Chunk 0 の審査（数日〜1週間）と実機実測が最初に走る。純関数（Chunk 1-2, 4 の大半・Task 9.5/12/12.7/15/16）はその裏で並行して片付く。実機ゲート（Chunk 3 の tunnel・Chunk 0 の再インストール実測・E2E）が kureho 依存の律速。
 
 各チャンク末に Codex レビュー（codex-default-review）。提出前に E2E ゲート（spec §5）全項目。
