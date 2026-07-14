@@ -100,6 +100,36 @@ final class PacketCodecTests: XCTestCase {
         XCTAssertNotEqual(ck, 0, "IPv6 では UDP checksum は 0 にできない")
     }
 
+    // MARK: - Task 4: TCP:53 の最小 parse + RST 応答合成（fail-open 層2・案A）
+
+    /// TCP SYN(dst 53) を parse できること + それに対する RST 応答を合成できること。
+    func test_tcpSyn_parseAndBuildRST() throws {
+        let syn = Self.makeIPv4TCPSyn(
+            src: (10, 0, 0, 1), srcPort: 40000,
+            dst: (198, 18, 0, 1), dstPort: 53, seq: 1000)
+        let parsed = try XCTUnwrap(PacketCodec.parse(syn))
+        XCTAssertEqual(parsed.proto, .tcp)
+        XCTAssertEqual(parsed.dstPort, 53)
+        XCTAssertTrue(parsed.tcpFlags.contains(.syn))
+        let rst = try XCTUnwrap(PacketCodec.buildTCPRST(to: parsed))
+        let prst = try XCTUnwrap(PacketCodec.parse(rst))
+        XCTAssertEqual(prst.proto, .tcp)
+        XCTAssertTrue(prst.tcpFlags.contains(.rst))
+        XCTAssertTrue(prst.tcpFlags.contains(.ack))
+        XCTAssertEqual(prst.srcPort, 53)      // RST の src は元 dst
+        XCTAssertEqual(prst.dstPort, 40000)   // RST の dst は元 src
+        XCTAssertEqual(prst.tcpAck, 1001)     // ack = SYN.seq + 1
+        XCTAssertTrue(Self.ipv4HeaderChecksumValid(rst))
+    }
+
+    /// buildTCPRST は IPv4/TCP 以外には nil（fail-open）。
+    func test_buildTCPRST_returnsNil_forNonTCP() throws {
+        let udp = try XCTUnwrap(PacketCodec.parse(Self.makeIPv4UDP(
+            src: (10, 0, 0, 1), srcPort: 5353,
+            dst: (198, 18, 0, 1), dstPort: 53, payload: Data([0x01]))))
+        XCTAssertNil(PacketCodec.buildTCPRST(to: udp))
+    }
+
     /// 最小の IPv6 + UDP パケット（UDP checksum は擬似ヘッダで正しく計算）。
     static func makeIPv6UDP(
         src: [UInt8], srcPort: UInt16, dst: [UInt8], dstPort: UInt16, payload: Data
@@ -174,6 +204,39 @@ final class PacketCodecTests: XCTestCase {
         p.append(UInt8(udpLen >> 8)); p.append(UInt8(udpLen & 0xff))
         p.append(contentsOf: [0x00, 0x00])       // UDP checksum (0 = 未使用)
         p.append(payload)
+        return p
+    }
+
+    /// 最小の IPv4 + TCP SYN パケット（payload 無し・IHL=5・checksum は 0 で可＝parse は検証しない）。
+    static func makeIPv4TCPSyn(
+        src: (UInt8, UInt8, UInt8, UInt8), srcPort: UInt16,
+        dst: (UInt8, UInt8, UInt8, UInt8), dstPort: UInt16,
+        seq: UInt32
+    ) -> Data {
+        let totalLen = UInt16(20 + 20)   // IPv4(20) + TCP(20)
+        var p = Data()
+        // IPv4 header (20 bytes)
+        p.append(0x45)
+        p.append(0x00)
+        p.append(UInt8(totalLen >> 8)); p.append(UInt8(totalLen & 0xff))
+        p.append(contentsOf: [0x00, 0x00])       // identification
+        p.append(contentsOf: [0x00, 0x00])       // flags/fragment
+        p.append(64)                      // TTL
+        p.append(6)                       // protocol = TCP
+        p.append(contentsOf: [0x00, 0x00])       // header checksum (0 = 計算省略)
+        p.append(contentsOf: [src.0, src.1, src.2, src.3])
+        p.append(contentsOf: [dst.0, dst.1, dst.2, dst.3])
+        // TCP header (20 bytes)
+        p.append(UInt8(srcPort >> 8)); p.append(UInt8(srcPort & 0xff))
+        p.append(UInt8(dstPort >> 8)); p.append(UInt8(dstPort & 0xff))
+        p.append(UInt8(seq >> 24 & 0xff)); p.append(UInt8(seq >> 16 & 0xff))
+        p.append(UInt8(seq >> 8 & 0xff)); p.append(UInt8(seq & 0xff))
+        p.append(contentsOf: [0x00, 0x00, 0x00, 0x00])   // ack = 0（SYN）
+        p.append(0x50)                    // data offset 5, reserved
+        p.append(0x02)                    // flags = SYN
+        p.append(contentsOf: [0xff, 0xff])       // window
+        p.append(contentsOf: [0x00, 0x00])       // checksum (0 = 未計算)
+        p.append(contentsOf: [0x00, 0x00])       // urgent pointer
         return p
     }
 }
