@@ -11,6 +11,16 @@
 **Spec:** `AdblockKeshi/docs/superpowers/specs/2026-07-14-v4-freemium-dns-design.md`（r3）
 **調査正典（grandfather・転換手順の詳細はこちらを参照）:** `AdblockKeshi/tasks/v4-freemium-dns-plan.md`
 
+## 実装進捗（2026-07-15 更新・durable マーカー）
+
+- ✅ **Chunk 1（PacketCodec）完了** Tasks 1-4。IPv4/IPv6 UDP parse+応答合成+checksum・TCP:53 最小 parse+RST 合成。
+- ✅ **Chunk 2（判定コア）完了** Tasks 5-9.5。DNSMessage(qname/qtype 抽出・block 応答合成)・DNSBlocklist(完全/サフィックス/上限縮退)・DNSCriticalGuard(github.io 追加)・DNSEngine(fail-open 3層)・DNSForwardingTable(リライト後 ID キー)。
+- ✅ **Task 10（回帰+Codex）完了** 全 229 テスト PASS（DNS 新規 28 + 既存 201）。Codex レビュー2件対応済（P2 forwarding key を rewritten-ID 単独へ・P3 multi-question を qdcount==1 で fail-open）。
+- ✅ **Task 10.5（curated リスト）1/2/4 完了** 41 ドメイン・build_dns_rules.py・CDN 配信物。critical 死票/巻き込みゼロ検証済。**Step 3（project.yml bundle 同梱）は Chunk 3 で PacketTunnelExtension target 作成時に実施（未了）**。
+- ⏸ **Chunk 3（tunnel）未着手＝実機必須**（NEPacketTunnelProvider は sim 不可）。Apple Dev Portal で NE capability 有効化 + 署名 = kureho 操作要。
+- ⏭ **次の自律作業 = Chunk 4 純ロジック**（Task 15 GrandfatherPolicy / Task 16 ProEntitlementCache 3冗長 / Task 15.5 .storekit / Task 17 の DEBUG override 部）。AppTransaction 実挙動と本番購入検証は実機ゲート。
+- ⏭ Chunk 5（UI）は Task 17 DEBUG override 後。Chunk 6（metadata/転換）は kureho/審査ゲート。
+
 ## 全タスク共通の注記（着手前に必読・plan レビュー r1 反映）
 
 - **ファイルを新規作成/削除したら必ず `xcodegen generate` を実行してからテスト**。`.xcodeproj` は git ignore の生成物で sources はディレクトリ指定のため、再生成しないと新規ファイルがターゲットに入らず「テストが見つからない」別種エラーになる（Task 1 実装時に実証済み）。
