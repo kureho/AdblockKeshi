@@ -24,7 +24,8 @@
 - ✅ **Chunk 5 UI（Task 19）完了** PaywallView（名称「アプリ内広告ブロック」・kureho 承認・「報告で増える」ヒーロー・4機能・購入CTA状態別・復元常設・限界明記）+ DNSSettingsView（Pro ゲート・限界明記5項目・Pro でも復元到達可）。**sim 目視検証済**（非Pro/Pro 両状態・iPhone 17 Pro Max）。
 - ⏸ **Chunk 3（tunnel）＝実機必須（残る主要実装）**。DNSBlocklistLoader で curated ∪ dns-self を読む・ProStateStore で Pro 確認・PacketCodec/DNSEngine 使用。トグル→tunnel 配線と**本番導線（CompletedView リンク）は Chunk 3 で追加**（tunnel 未実装のうちは死んだ機能を露出しない）。
 - ⏸ Chunk 6（metadata/転換）は kureho/審査ゲート。
-- ★kureho 操作（Apple Developer）: ①Network Extension capability ②iCloud(KVS) capability の有効化 + プロビジョニング再生成。
+- ✅ **kureho 操作（Apple Developer）完了 2026-07-15**: bundle ID `com.kureho.adblockkeshi`（65YY9ZYP8A）に **NETWORK_EXTENSIONS + ICLOUD(XCODE_6/KVS)** を有効化済（`scripts/enable_bundle_capabilities.py` を `!` 実行）。現 capabilities = APP_GROUPS/ICLOUD/IN_APP_PURCHASE/NETWORK_EXTENSIONS。次の実機ビルドで自動署名がプロビジョニング再生成。
+- **Chunk 3 開始条件 = 実機接続のみ**（capability・純関数・UI すべて準備済）。
 
 ## 全タスク共通の注記（着手前に必読・plan レビュー r1 反映）
 
