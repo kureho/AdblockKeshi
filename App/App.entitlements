@@ -14,5 +14,10 @@
          ★kureho 操作要★ Apple Developer で App ID に iCloud capability(Key-Value storage) を有効化 + プロビジョニング再生成が必要。 -->
     <key>com.apple.developer.ubiquity-kvstore-identifier</key>
     <string>$(TeamIdentifierPrefix)$(CFBundleIdentifier)</string>
+    <!-- 本体が NETunnelProviderManager で DNS トンネルを構成/起動するため（Chunk 3）。 -->
+    <key>com.apple.developer.networking.networkextension</key>
+    <array>
+        <string>packet-tunnel-provider</string>
+    </array>
 </dict>
 </plist>

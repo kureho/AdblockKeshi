@@ -60,6 +60,8 @@ targets:
         embed: true
       - target: PopupShieldExtension
         embed: true
+      - target: PacketTunnelExtension
+        embed: true
 
   ContentBlockerExtension:
     type: app-extension
@@ -67,6 +69,8 @@ targets:
     sources:
       - path: Extension
       - path: Shared
+        excludes:
+          - "DNS/**"   # DNS トンネル専用コアは Safari CB に不要（メモリ制約 M-2）
     info:
       path: Extension/Info.plist
       properties:
@@ -96,6 +100,8 @@ targets:
     sources:
       - path: PopunderBlockerExtension
       - path: Shared
+        excludes:
+          - "DNS/**"   # DNS トンネル専用コアは Safari CB に不要（メモリ制約 M-2）
     info:
       path: PopunderBlockerExtension/Info.plist
       properties:
@@ -149,6 +155,33 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.kureho.adblockkeshi.popupshield
         CODE_SIGN_ENTITLEMENTS: PopupShieldExtension/Extension.entitlements
         PRODUCT_NAME: PopupShieldExtension
+
+  # DNS トンネル（ローカル VPN・v4.0）。NE 依存＝実機のみ動作（sim はビルドのみ）。
+  PacketTunnelExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: PacketTunnelExtension
+      - path: Shared/DNS                       # DNS 純関数コア
+      - path: Shared/CriticalDomainGuard.swift # DNSCriticalGuard が継承する保護リスト
+      - path: Shared/ProStateStore.swift       # 起動時の Pro 判定（非Pro は起動拒否）
+      # bundle 同梱の初期 DNS リスト（fresh install で App Group 空でも読める・Task 10.5 Step 3）
+      - path: PacketTunnelExtension/Resources/dns-rules.json
+        buildPhase: resources
+    info:
+      path: PacketTunnelExtension/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+        CFBundleDisplayName: アプリ内広告ブロック
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kureho.adblockkeshi.tunnel
+        CODE_SIGN_ENTITLEMENTS: PacketTunnelExtension/PacketTunnelExtension.entitlements
+        PRODUCT_NAME: PacketTunnelExtension
 
   AdblockKeshiTests:
     type: bundle.unit-test
