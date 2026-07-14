@@ -32,6 +32,56 @@ final class DNSMessageTests: XCTestCase {
         XCTAssertNil(DNSMessage.parseQuery(d))
     }
 
+    // MARK: - Task 6: block 応答の合成（qtype 別）
+
+    func test_buildBlockResponse_A_returnsZeroIP() throws {
+        let q = try XCTUnwrap(DNSMessage.parseQuery(Self.makeQuery(qname: "ads.example.com", qtype: 1)))
+        let resp = DNSMessage.buildBlockResponse(for: q)
+        let b = [UInt8](resp)
+        XCTAssertEqual(UInt16(b[0]) << 8 | UInt16(b[1]), Self.expectedID)   // id コピー
+        XCTAssertEqual(b[2] & 0x80, 0x80)                                   // QR=1
+        XCTAssertEqual(b[3] & 0x0f, 0)                                      // RCODE=NOERROR
+        XCTAssertEqual(UInt16(b[4]) << 8 | UInt16(b[5]), 1)                 // QDCOUNT=1
+        XCTAssertEqual(UInt16(b[6]) << 8 | UInt16(b[7]), 1)                 // ANCOUNT=1
+        XCTAssertTrue(Self.answerRDATAIsAllZero(resp, expectedRDLen: 4))    // 0.0.0.0
+    }
+
+    func test_buildBlockResponse_AAAA_returnsZeroIPv6() throws {
+        let q = try XCTUnwrap(DNSMessage.parseQuery(Self.makeQuery(qname: "ads.example.com", qtype: 28)))
+        let resp = DNSMessage.buildBlockResponse(for: q)
+        let b = [UInt8](resp)
+        XCTAssertEqual(UInt16(b[6]) << 8 | UInt16(b[7]), 1)                 // ANCOUNT=1
+        XCTAssertTrue(Self.answerRDATAIsAllZero(resp, expectedRDLen: 16))   // ::
+    }
+
+    func test_buildBlockResponse_HTTPS_returnsNODATA() throws {
+        let q = try XCTUnwrap(DNSMessage.parseQuery(Self.makeQuery(qname: "ads.example.com", qtype: 65)))
+        let resp = DNSMessage.buildBlockResponse(for: q)
+        let b = [UInt8](resp)
+        XCTAssertEqual(b[2] & 0x80, 0x80)                                   // QR=1
+        XCTAssertEqual(b[3] & 0x0f, 0)                                      // RCODE=NOERROR（NXDOMAIN ではない）
+        XCTAssertEqual(UInt16(b[4]) << 8 | UInt16(b[5]), 1)                 // QDCOUNT=1（qd 保持）
+        XCTAssertEqual(UInt16(b[6]) << 8 | UInt16(b[7]), 0)                 // ANCOUNT=0（NODATA）
+    }
+
+    /// answer セクションの RDATA が全ゼロ（0.0.0.0 / ::）で長さが期待通りかを検証。
+    static func answerRDATAIsAllZero(_ resp: Data, expectedRDLen: Int) -> Bool {
+        let b = [UInt8](resp)
+        let ans = questionEndOffset(b)              // answer セクション先頭
+        // NAME(2) + TYPE(2) + CLASS(2) + TTL(4) + RDLENGTH(2) = 12 バイト後に RDATA
+        guard b.count >= ans + 12 else { return false }
+        let rdlen = Int(UInt16(b[ans + 10]) << 8 | UInt16(b[ans + 11]))
+        guard rdlen == expectedRDLen, b.count >= ans + 12 + rdlen else { return false }
+        return b[(ans + 12)..<(ans + 12 + rdlen)].allSatisfy { $0 == 0 }
+    }
+
+    /// question セクション末尾（= answer 先頭）のオフセットを求める。
+    static func questionEndOffset(_ b: [UInt8]) -> Int {
+        var i = 12
+        while i < b.count { let len = Int(b[i]); i += 1; if len == 0 { break }; i += len }
+        return i + 4   // + QTYPE + QCLASS
+    }
+
     // MARK: - Helpers（手組み DNS クエリ）
 
     /// DNS ヘッダ 12 バイト（ID=expectedID・標準クエリ・RD）。

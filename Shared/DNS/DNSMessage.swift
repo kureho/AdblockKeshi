@@ -48,4 +48,39 @@ enum DNSMessage {
         return Query(id: id, qname: labels.joined(separator: "."),
                      qtype: qtype, qclass: qclass, questionBytes: questionBytes)
     }
+
+    /// ブロック応答を合成する（qtype 別）。
+    /// A(1)→0.0.0.0 / AAAA(28)→:: / HTTPS(65)・SVCB(64)・その他→NODATA（RCODE=NOERROR・ANCOUNT=0）。
+    /// 応答は元 id を保持・QR=1・question をそのままコピー。
+    static func buildBlockResponse(for query: Query) -> Data {
+        let hasAnswer = (query.qtype == 1 || query.qtype == 28)   // A / AAAA のみ address を返す
+        var d = Data()
+        // ヘッダ 12 バイト
+        d.append(UInt8(query.id >> 8)); d.append(UInt8(query.id & 0xff))
+        d.append(0x81); d.append(0x80)                     // QR=1・RD=1・RA=1・RCODE=NOERROR
+        d.append(0x00); d.append(0x01)                     // QDCOUNT=1
+        d.append(0x00); d.append(hasAnswer ? 0x01 : 0x00)  // ANCOUNT
+        d.append(0x00); d.append(0x00)                     // NSCOUNT
+        d.append(0x00); d.append(0x00)                     // ARCOUNT
+        // question（qd をコピー）
+        d.append(query.questionBytes)
+        // answer（A/AAAA のみ・それ以外は NODATA で answer なし）
+        if hasAnswer {
+            d.append(contentsOf: [0xC0, 0x0C])             // NAME = 圧縮ポインタ→question の QNAME（offset 12）
+            d.append(UInt8(query.qtype >> 8)); d.append(UInt8(query.qtype & 0xff))   // TYPE
+            d.append(0x00); d.append(0x01)                 // CLASS=IN
+            d.append(contentsOf: blockTTL)                 // TTL
+            if query.qtype == 1 {
+                d.append(0x00); d.append(0x04)             // RDLENGTH=4
+                d.append(contentsOf: [UInt8](repeating: 0, count: 4))   // 0.0.0.0
+            } else {
+                d.append(0x00); d.append(0x10)             // RDLENGTH=16
+                d.append(contentsOf: [UInt8](repeating: 0, count: 16))  // ::
+            }
+        }
+        return d
+    }
+
+    /// ブロック応答の TTL（秒）。リスト更新後の復帰を早めるため短め（60 秒）。
+    private static let blockTTL: [UInt8] = [0x00, 0x00, 0x00, 0x3C]
 }
