@@ -1,0 +1,53 @@
+{
+  "appPolicies" : {
+    "eula" : "",
+    "policies" : [
+      {
+        "locale" : "ja_JP",
+        "policyText" : "",
+        "policyURL" : ""
+      }
+    ]
+  },
+  "identifier" : "A0B1C2D3",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "800",
+      "familyShareable" : false,
+      "internalID" : "5E3A1F00-1111-4A22-9C33-ADB10C0DE001",
+      "localizations" : [
+        {
+          "description" : "Reduce in-app ads in other apps and Safari via on-device DNS. One-time purchase, no subscription.",
+          "displayName" : "Pro",
+          "locale" : "en_US"
+        },
+        {
+          "description" : "他アプリや Safari のアプリ内広告を端末内の DNS で抑えます。ずっと買い切り（サブスクなし）。",
+          "displayName" : "Pro",
+          "locale" : "ja_JP"
+        }
+      ],
+      "productID" : "com.kureho.adblockkeshi.pro",
+      "referenceName" : "Pro",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_failTransactionsEnabled" : false,
+    "_locale" : "ja_JP",
+    "_storefront" : "JPN",
+    "_storeKitErrors" : [
+
+    ]
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

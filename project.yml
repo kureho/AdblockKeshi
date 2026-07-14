@@ -155,6 +155,9 @@ targets:
     platform: iOS
     sources:
       - path: Tests
+      # SKTestSession(configurationFileNamed:) 用に .storekit を test bundle へ同梱（本番バンドルには入れない）
+      - path: AdblockKeshi.storekit
+        buildPhase: resources
     dependencies:
       - target: AdblockKeshi
     settings:
@@ -182,7 +185,11 @@ schemes:
         AdblockKeshi: all
         AdblockKeshiTests: [test]
         AdblockKeshiUITests: [test]
+    run:
+      # Xcode の Run で購入/復元を実際に試せる（課金は発生しない・ローカル検証専用）
+      storeKitConfiguration: AdblockKeshi.storekit
     test:
+      storeKitConfiguration: AdblockKeshi.storekit
       targets:
         - AdblockKeshiTests
         - AdblockKeshiUITests
