@@ -519,8 +519,6 @@ func test_isLegacy_intComparison_notString_andEnvironmentGated() {
 - [ ] **Step 5: シミュレータ目視（購入フロー + 画面遷移まで）**（StoreKitTest config で購入→トグル出現→説明画面表示を確認・スクショ。**tunnel の実起動は実機のみ = Task 13 Step 5 の実機スモークでカバー・C-1**）
 - [ ] **Step 6: commit** — `git commit -m "feat(ui): DNS 設定 UI + Paywall（復元常設・限界明記・Pro ゲート）"`
 
-（診断画面は Chunk 0 の Task 0 で先行実装・提出済み。ここでは重複させない）
-
 ---
 
 ## Chunk 6: metadata / LP / 転換リリース
@@ -557,7 +555,7 @@ func test_isLegacy_intComparison_notString_andEnvironmentGated() {
 
 ### Task 23.5: E2E ゲート実行（提出前必須・spec §5 の明示タスク）
 
-- [ ] フェーズ0 実測結果の反映確認（grandfather）/ 実機で tunnel connected + 通常ブラウジング無破壊 / 対象3アプリでバナー消滅目視（tunnel OFF→ON スクショ比較）/ YouTube 広告が消えない（ネガティブコントロール・限界明記と整合）/ 主要20サイト + 決済系 無破壊 / 他 VPN 排他・スリープ/機内モード復帰
+- [ ] grandfather の実機確認（アップデート経由で Pro 維持・iCloud 復元）/ 実機で tunnel connected + 通常ブラウジング無破壊 / 対象3アプリでバナー消滅目視（tunnel OFF→ON スクショ比較）/ YouTube 広告が消えない（ネガティブコントロール・限界明記と整合）/ 主要20サイト + 決済系 無破壊 / 他 VPN 排他・スリープ/機内モード復帰
 - [ ] 全項目 PASS を提出可否ゲートにする（1つでも NG なら Chunk 6 提出に進まない）
 
 ### Task 24: 承認後の転換実行（窓管理）
