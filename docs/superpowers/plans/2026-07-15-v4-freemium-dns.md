@@ -22,10 +22,16 @@
 - ✅ **報告→DNS 自己ファストレーン（R1-R4・kureho 決定 A）完了** DNSSelfReportStore / DNSReportedDomain / DNSBlocklistLoader / DNSSelfReportApplier。「あなたの報告で他アプリの広告ブロックも即増える」が honest に成立。命名は Pro 廃止方針を正典に記録。
 - 📊 現在 **269 テスト・0 failure**（DNS 40 + Pro 20 + 報告→DNS 16 + 既存 ≈190・StoreKitTest 3 は iOS18.3 で実PASS/iOS26 で skip）。
 - ✅ **Chunk 5 UI（Task 19）完了** PaywallView（名称「アプリ内広告ブロック」・kureho 承認・「報告で増える」ヒーロー・4機能・購入CTA状態別・復元常設・限界明記）+ DNSSettingsView（Pro ゲート・限界明記5項目・Pro でも復元到達可）。**sim 目視検証済**（非Pro/Pro 両状態・iPhone 17 Pro Max）。
-- ⏸ **Chunk 3（tunnel）＝実機必須（残る主要実装）**。DNSBlocklistLoader で curated ∪ dns-self を読む・ProStateStore で Pro 確認・PacketCodec/DNSEngine 使用。トグル→tunnel 配線と**本番導線（CompletedView リンク）は Chunk 3 で追加**（tunnel 未実装のうちは死んだ機能を露出しない）。
+- ✅ **Chunk 3 コア完了（コンパイル/TDD 検証済・ランタイムのみ実機）**:
+  - Task 11 PacketTunnelExtension ターゲット（sim BUILD SUCCEEDED・entitlements・Safari CB から DNS excludes）
+  - Task 12 BlocklistStore（App Group→bundle→空・TDD 5件）/ Task 12.7 DNSUpdatePlanner（sha 比較・TDD 5件）
+  - Task 13 PacketTunnelProvider 本体（非Pro起動拒否・sentinel split tunnel・packetFlow ループ・上流 v4/v6 ID リライト転送・5s expiry・handleAppMessage reload）＝**sim BUILD SUCCEEDED**
+- ⏸ **Chunk 3 残り = 実機ランタイム + 鮮度 self-fetch**:
+  - Task 13 Step 5: 実機スモーク（tunnel connected・広告ドメイン 0.0.0.0・通常閲覧無事）= **実機のみ**
+  - トグル→TunnelManager(NETunnelProviderManager) 配線 + 本番導線（CompletedView リンク）= 実機で動作確認しながら
+  - Task 14/14.5: DNS リスト self-fetch（tunnel 内 + app 側）= 別 updater で設計 + 実機ネットワーク検証の follow-up（鮮度拡張・コアは bundle+App Group+報告自己ファストレーンで動く）
 - ⏸ Chunk 6（metadata/転換）は kureho/審査ゲート。
-- ✅ **kureho 操作（Apple Developer）完了 2026-07-15**: bundle ID `com.kureho.adblockkeshi`（65YY9ZYP8A）に **NETWORK_EXTENSIONS + ICLOUD(XCODE_6/KVS)** を有効化済（`scripts/enable_bundle_capabilities.py` を `!` 実行）。現 capabilities = APP_GROUPS/ICLOUD/IN_APP_PURCHASE/NETWORK_EXTENSIONS。次の実機ビルドで自動署名がプロビジョニング再生成。
-- **Chunk 3 開始条件 = 実機接続のみ**（capability・純関数・UI すべて準備済）。
+- ✅ **kureho 操作（Apple Developer）完了 2026-07-15**: bundle ID `com.kureho.adblockkeshi`（65YY9ZYP8A）に **NETWORK_EXTENSIONS + ICLOUD(XCODE_6/KVS)** 有効化済。現 capabilities = APP_GROUPS/ICLOUD/IN_APP_PURCHASE/NETWORK_EXTENSIONS。
 
 ## 全タスク共通の注記（着手前に必読・plan レビュー r1 反映）
 
