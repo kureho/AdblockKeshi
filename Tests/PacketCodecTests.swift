@@ -65,6 +65,87 @@ final class PacketCodecTests: XCTestCase {
         return sum == 0xffff
     }
 
+    // MARK: - Task 3: IPv6/UDP パース + 応答（擬似ヘッダ checksum 必須）
+
+    func test_parseIPv6UDP_extractsPortsAndPayload() throws {
+        let src: [UInt8] = [0xfd,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]   // fd00::1
+        let dst: [UInt8] = [0xfd,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2]   // fd00::2
+        let payload = Data([0xDE, 0xAD])
+        let packet = Self.makeIPv6UDP(src: src, srcPort: 5353, dst: dst, dstPort: 53, payload: payload)
+        let parsed = try XCTUnwrap(PacketCodec.parse(packet))
+        XCTAssertEqual(parsed.version, .v6)
+        XCTAssertEqual(parsed.proto, .udp)
+        XCTAssertEqual(parsed.srcPort, 5353)
+        XCTAssertEqual(parsed.dstPort, 53)
+        XCTAssertEqual(parsed.srcIP, Data(src))
+        XCTAssertEqual(parsed.dstIP, Data(dst))
+        XCTAssertEqual(parsed.payload, payload)
+    }
+
+    func test_buildResponse_ipv6_swapsEndpoints_andUDPChecksumNonZero() throws {
+        let src: [UInt8] = [0xfd,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]
+        let dst: [UInt8] = [0xfd,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2]
+        let req = try XCTUnwrap(PacketCodec.parse(
+            Self.makeIPv6UDP(src: src, srcPort: 5353, dst: dst, dstPort: 53, payload: Data([0x01]))))
+        let resp = PacketCodec.buildResponse(to: req, payload: Data([0x09, 0x08]))
+        let parsed = try XCTUnwrap(PacketCodec.parse(resp))
+        XCTAssertEqual(parsed.version, .v6)
+        XCTAssertEqual(parsed.srcPort, 53)
+        XCTAssertEqual(parsed.dstPort, 5353)
+        XCTAssertEqual(parsed.srcIP, Data(dst))   // 入れ替わり
+        XCTAssertEqual(parsed.dstIP, Data(src))
+        // IPv6 は UDP checksum 必須（0 不可）
+        let b = [UInt8](resp)
+        let ck = UInt16(b[40 + 6]) << 8 | UInt16(b[40 + 7])
+        XCTAssertNotEqual(ck, 0, "IPv6 では UDP checksum は 0 にできない")
+    }
+
+    /// 最小の IPv6 + UDP パケット（UDP checksum は擬似ヘッダで正しく計算）。
+    static func makeIPv6UDP(
+        src: [UInt8], srcPort: UInt16, dst: [UInt8], dstPort: UInt16, payload: Data
+    ) -> Data {
+        precondition(src.count == 16 && dst.count == 16)
+        let udpLen = 8 + payload.count
+        var p = [UInt8]()
+        // IPv6 header (40 bytes)
+        p.append(0x60)                          // version 6
+        p.append(contentsOf: [0x00, 0x00, 0x00]) // traffic class / flow label
+        p.append(UInt8(udpLen >> 8)); p.append(UInt8(udpLen & 0xff))  // payload length
+        p.append(17)                            // next header = UDP
+        p.append(64)                            // hop limit
+        p.append(contentsOf: src)
+        p.append(contentsOf: dst)
+        // UDP header
+        var udp = [UInt8]()
+        udp.append(UInt8(srcPort >> 8)); udp.append(UInt8(srcPort & 0xff))
+        udp.append(UInt8(dstPort >> 8)); udp.append(UInt8(dstPort & 0xff))
+        udp.append(UInt8(udpLen >> 8)); udp.append(UInt8(udpLen & 0xff))
+        udp.append(0); udp.append(0)            // checksum placeholder
+        udp.append(contentsOf: payload)
+        let ck = udpChecksumIPv6(src: src, dst: dst, udp: udp)
+        udp[6] = UInt8(ck >> 8); udp[7] = UInt8(ck & 0xff)
+        p.append(contentsOf: udp)
+        return Data(p)
+    }
+
+    /// IPv6 UDP checksum（擬似ヘッダ = src16 + dst16 + length(4) + next-header(17)）。
+    static func udpChecksumIPv6(src: [UInt8], dst: [UInt8], udp: [UInt8]) -> UInt16 {
+        var sum: UInt32 = 0
+        func add(_ bytes: [UInt8]) {
+            var i = 0
+            while i + 1 < bytes.count { sum += UInt32(bytes[i]) << 8 | UInt32(bytes[i + 1]); i += 2 }
+            if i < bytes.count { sum += UInt32(bytes[i]) << 8 }
+        }
+        add(src); add(dst)
+        let len = udp.count
+        add([UInt8(len >> 24 & 0xff), UInt8(len >> 16 & 0xff), UInt8(len >> 8 & 0xff), UInt8(len & 0xff)])
+        add([0, 0, 0, 17])
+        add(udp)
+        while sum >> 16 != 0 { sum = (sum & 0xffff) + (sum >> 16) }
+        let ck = UInt16(~sum & 0xffff)
+        return ck == 0 ? 0xffff : ck   // UDP checksum 0 は「未計算」を意味するので 0xffff に
+    }
+
     // MARK: - Helpers（手組みパケット）
 
     /// 最小の IPv4 + UDP パケットを手組みする（IHL=5・checksum は 0 で可＝受信側は検証しない）。

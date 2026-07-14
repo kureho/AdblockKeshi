@@ -35,15 +35,42 @@ enum PacketCodec {
         switch version {
         case 4:
             return parseIPv4(bytes)
+        case 6:
+            return parseIPv6(bytes)
         default:
             return nil
         }
     }
 
+    private static func parseIPv6(_ b: [UInt8]) -> ParsedPacket? {
+        guard b.count >= 40 + 8 else { return nil }
+        let nextHeader = b[6]
+        guard nextHeader == 17 else { return nil }   // 17 = UDP（拡張ヘッダは非対応・来たら nil=fail-open）
+        let srcIP = Data(b[8..<24])
+        let dstIP = Data(b[24..<40])
+        let u = 40
+        let srcPort = UInt16(b[u]) << 8 | UInt16(b[u + 1])
+        let dstPort = UInt16(b[u + 2]) << 8 | UInt16(b[u + 3])
+        let udpLen = Int(UInt16(b[u + 4]) << 8 | UInt16(b[u + 5]))
+        guard udpLen >= 8, b.count >= u + udpLen else { return nil }
+        let payload = Data(b[(u + 8)..<(u + udpLen)])
+        return ParsedPacket(
+            version: .v6, proto: .udp,
+            srcIP: srcIP, dstIP: dstIP,
+            srcPort: srcPort, dstPort: dstPort, payload: payload)
+    }
+
     /// 受信 UDP パケットへの応答を組み立てる（src/dst を入れ替え、payload を差し替え）。
-    /// IPv4/UDP のみ（IPv6 は後続 Task）。header checksum は正しく計算する。
+    /// checksum は正しく計算する（IPv4 header checksum / IPv6 UDP 擬似ヘッダ checksum）。
     static func buildResponse(to req: ParsedPacket, payload: Data) -> Data {
-        precondition(req.version == .v4 && req.proto == .udp, "buildResponse: v1 は IPv4/UDP のみ")
+        precondition(req.proto == .udp, "buildResponse: UDP のみ")
+        switch req.version {
+        case .v4: return buildResponseIPv4(to: req, payload: payload)
+        case .v6: return buildResponseIPv6(to: req, payload: payload)
+        }
+    }
+
+    private static func buildResponseIPv4(to req: ParsedPacket, payload: Data) -> Data {
         let udpLen = 8 + payload.count
         let totalLen = 20 + udpLen
         var p = [UInt8](repeating: 0, count: totalLen)
@@ -71,6 +98,32 @@ enum PacketCodec {
         return Data(p)
     }
 
+    private static func buildResponseIPv6(to req: ParsedPacket, payload: Data) -> Data {
+        let udpLen = 8 + payload.count
+        let src = [UInt8](req.dstIP)   // 入れ替え
+        let dst = [UInt8](req.srcIP)
+        var p = [UInt8]()
+        // IPv6 header (40 bytes)
+        p.append(0x60)
+        p.append(contentsOf: [0x00, 0x00, 0x00])
+        p.append(UInt8(udpLen >> 8)); p.append(UInt8(udpLen & 0xff))
+        p.append(17)                             // next header = UDP
+        p.append(64)                             // hop limit
+        p.append(contentsOf: src)
+        p.append(contentsOf: dst)
+        // UDP header（port 入れ替え）
+        var udp = [UInt8]()
+        udp.append(UInt8(req.dstPort >> 8)); udp.append(UInt8(req.dstPort & 0xff))
+        udp.append(UInt8(req.srcPort >> 8)); udp.append(UInt8(req.srcPort & 0xff))
+        udp.append(UInt8(udpLen >> 8)); udp.append(UInt8(udpLen & 0xff))
+        udp.append(0); udp.append(0)             // checksum placeholder
+        udp.append(contentsOf: payload)
+        let ck = udpChecksumIPv6(src: src, dst: dst, udp: udp)
+        udp[6] = UInt8(ck >> 8); udp[7] = UInt8(ck & 0xff)
+        p.append(contentsOf: udp)
+        return Data(p)
+    }
+
     /// IPv4 ヘッダ（20 バイト・checksum フィールドは 0 前提）の 1 の補数和 checksum。
     private static func ipv4HeaderChecksum(_ header: [UInt8]) -> UInt16 {
         var sum: UInt32 = 0
@@ -81,6 +134,24 @@ enum PacketCodec {
         }
         while sum >> 16 != 0 { sum = (sum & 0xffff) + (sum >> 16) }
         return UInt16(~sum & 0xffff)
+    }
+
+    /// IPv6 UDP checksum（擬似ヘッダ = src16 + dst16 + UDP長(4) + next-header(17)）。0 は 0xffff に丸める。
+    static func udpChecksumIPv6(src: [UInt8], dst: [UInt8], udp: [UInt8]) -> UInt16 {
+        var sum: UInt32 = 0
+        func add(_ bytes: [UInt8]) {
+            var i = 0
+            while i + 1 < bytes.count { sum += UInt32(bytes[i]) << 8 | UInt32(bytes[i + 1]); i += 2 }
+            if i < bytes.count { sum += UInt32(bytes[i]) << 8 }
+        }
+        add(src); add(dst)
+        let len = udp.count
+        add([UInt8(len >> 24 & 0xff), UInt8(len >> 16 & 0xff), UInt8(len >> 8 & 0xff), UInt8(len & 0xff)])
+        add([0, 0, 0, 17])
+        add(udp)
+        while sum >> 16 != 0 { sum = (sum & 0xffff) + (sum >> 16) }
+        let ck = UInt16(~sum & 0xffff)
+        return ck == 0 ? 0xffff : ck
     }
 
     private static func parseIPv4(_ b: [UInt8]) -> ParsedPacket? {
