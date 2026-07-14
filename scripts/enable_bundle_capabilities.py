@@ -69,9 +69,11 @@ def main():
     if "ICLOUD" in caps:
         print("  ⏭ ICLOUD は既に有効")
     else:
-        # KVS 目的。settings 無しで通らなければ ASC の Identifiers 画面で iCloud を手動 ON。
-        if not enable("ICLOUD"):
-            print("     → iCloud は API 拒否の可能性。ASC の Identifiers → com.kureho.adblockkeshi →")
+        # iCloud は CloudkitVersion 指定が必須（null 不可・409 ENTITY_ERROR）。
+        # XCODE_6 = 現行 iCloud（KVS + CloudKit）。KVS だけ使う（CloudKit container は作らない）。
+        icloud_settings = [{"key": "ICLOUD_VERSION", "options": [{"key": "XCODE_6"}]}]
+        if not enable("ICLOUD", settings=icloud_settings):
+            print("     → API で通らない場合は ASC の Identifiers → com.kureho.adblockkeshi →")
             print("        『iCloud』にチェック（Key-value storage）→ 保存 で手動有効化してください。")
 
     print("\n最終 capabilities:", current_capabilities())
