@@ -37,7 +37,7 @@
 **新規: DNS ブロックリスト本体（プロダクトの価値・plan レビュー C-2）**
 - `PacketTunnelExtension/Resources/dns-rules.json` — bundle 同梱の初期 curated リスト
 - `scripts/build_dns_rules.py`（or 既存 scripts 拡張）— curated ドメイン → dns-rules payload + `version-dns.json` manifest 生成
-- CDN 配信（既存 GitHub Pages `cdn/`）に version-dns.json + payload を追加
+- CDN 配信（既存 GitHub Pages・実体 `docs/cdn/` = kureho.github.io/AdblockKeshi/cdn/）に version-dns.json + payload を追加
 
 **新規: tunnel extension（薄いグルー・I/O のみ）**
 - `PacketTunnelExtension/PacketTunnelProvider.swift` — NEPacketTunnelProvider 本体（sentinel 設定・packetFlow ループ・上流 I/O・純関数を呼ぶだけ）
@@ -112,7 +112,7 @@ final class PacketCodecTests: XCTestCase {
 }
 ```
 
-（`makeIPv4UDP` ヘルパは Step 3 で PacketCodec を実装後、テストファイル内に手組みで用意する。IHL=5・total length・UDP length を正しく詰める）
+（`makeIPv4UDP` ヘルパは Step 1 でテストファイルに同梱済み。IHL=5・total length・UDP length を正しく詰める）
 
 - [ ] **Step 2: 失敗を確認**
 
@@ -135,7 +135,7 @@ git add Shared/DNS/PacketCodec.swift Tests/PacketCodecTests.swift
 git commit -m "feat(dns): PacketCodec で IPv4/UDP パケットをパース（TDD）"
 ```
 
-### Task 2: PacketCodec — IPv4/UDP の応答パケット組み立て（checksum 含む）
+### Task 2: PacketCodec — IPv4/UDP の応答パケット組み立て（checksum 含む）✅ 完了（commit e2a988e）
 
 **Files:**
 - Modify: `Shared/DNS/PacketCodec.swift`
@@ -341,7 +341,7 @@ DNS リストはプロダクトの価値そのもの。ここが無いと E2E（
 ### Task 11: project.yml に PacketTunnelExtension ターゲットを追加
 
 **Files:**
-- Modify: `project.yml`（tunnel ターゲット + **bundle 同梱 `PacketTunnelExtension/Resources/dns-rules.json`**・Shared を CB 拡張から excludes: [DNS] 検討=M-2）
+- Modify: `project.yml`（tunnel ターゲット + **bundle 同梱 `PacketTunnelExtension/Resources/dns-rules.json`**・**Safari CB 2拡張（ContentBlocker/Popunder）から `excludes: [DNS]` を確定**=メモリ制約対策 M-2）
 - Create: `PacketTunnelExtension/Info.plist`
 - Create: `PacketTunnelExtension/PacketTunnelExtension.entitlements`
 - Modify: `App/App.entitlements`（**既存ファイル**・M-4。packet-tunnel array を追記。App Group/keychain は既存）
@@ -433,8 +433,11 @@ git commit -m "feat(tunnel): PacketTunnelExtension ターゲット追加 + entit
     - UDP:53 → `DNSEngine.decideRaw(payload)` → `.respond` なら `PacketCodec.buildResponse` を writePackets / `.forward` なら **DNSForwardingTable に登録**して上流へ送信
     - TCP:53 → `PacketCodec.buildTCPRST` を writePackets（fail-fast）
   - ループ再帰
-- [ ] **Step 4: 上流転送 I/O**
-  - 上流 = **1.1.1.1 と 2606:4700:4700::1111 の両方（IPv6-only/NAT64 網対応・I-5）**。`NWConnection`(UDP) で送信、応答受信時に `DNSForwardingTable.resolve` で元クライアントを引いて `buildResponse` で書き戻す。5s タイムアウトで `expireAll`（応答なしは偽装せず捨てる）
+- [ ] **Step 4: 上流転送 I/O（I/O モデル確定・plan レビュー r2 Important）**
+  - 上流 = **1.1.1.1 と 2606:4700:4700::1111 の両方（IPv6-only/NAT64 網対応）**。
+  - ★誤配送回避★: 上流応答には DNS ID しか載らず srcPort を復元できないため、**転送前に DNS ID を tunnel 内でユニーク値へリライト**し、DNSForwardingTable のキー（リライト後 ID → 元 srcPort/元 ID/元 IP）で突合 → 応答時に元 ID へ戻して `buildResponse`。別クライアントの同一 ID 衝突を構造的に消す（クライアント単位 NWConnection 分離でも可だが ID リライトの方が接続数を抑えられる）。
+  - 応答受信時に `DNSForwardingTable.resolve(rewrittenID)` で元クライアントを引く。5s タイムアウトで `expireAll`（応答なしは偽装せず捨てる）
+  - **Task 9.5 の DNSForwardingTable のキーは「リライト後 DNS ID」単独**（srcPort はリライトで一意化されるため値に保持）→ Task 9.5 のテストもこの形に合わせる
 - [ ] **Step 5: 実機スモーク（明示ゲート・C-1/M-5）**: 実機で tunnel が connected になり、通常ブラウジングが壊れず、既知広告ドメインが 0.0.0.0 で返ることを確認（Safari で `nslookup` 相当・Charles 不要な範囲で）。E2E フルは spec §5（Task 20 ではない）
 - [ ] **Step 6: commit** — `git commit -m "feat(tunnel): sentinel DNS tunnel + packetFlow + 上流 v4/v6 + 非Pro起動拒否"`
 
@@ -563,6 +566,11 @@ func test_isLegacy_intComparison_notString_andEnvironmentGated() {
 - [ ] **ASC Web UI で IAP を 4.0.0 バージョンに紐付け + IAP 審査用スクショ添付（I-8・MosaicBlur 教訓: first IAP は API では版に attach されず Web UI 必須）**
 - [ ] submitting-ios-build skill で Phase 1-5 → **手動リリース**・Phased Release オフ・評価リセット禁止・審査ノート（転換説明の実績文例）
 - [ ] 4点監査
+
+### Task 23.5: E2E ゲート実行（提出前必須・spec §5 の明示タスク）
+
+- [ ] フェーズ0 実測結果の反映確認（grandfather）/ 実機で tunnel connected + 通常ブラウジング無破壊 / 対象3アプリでバナー消滅目視（tunnel OFF→ON スクショ比較）/ YouTube 広告が消えない（ネガティブコントロール・限界明記と整合）/ 主要20サイト + 決済系 無破壊 / 他 VPN 排他・スリープ/機内モード復帰
+- [ ] 全項目 PASS を提出可否ゲートにする（1つでも NG なら Chunk 6 提出に進まない）
 
 ### Task 24: 承認後の転換実行（窓管理）
 
