@@ -21,9 +21,10 @@
 - ✅ **Chunk 4 + Task 15.5/17 完了** GrandfatherPolicy / ProEntitlementCache(3冗長) / .storekit / ProStore / ProStateStore。**StoreKit 実購入フローを iOS 18.3 sim で実 PASS**（loadProduct/purchase→Pro/entitlement 復元）。Codex 指摘2件（import Observation・iCloud KVS entitlement）対応済。
 - ✅ **報告→DNS 自己ファストレーン（R1-R4・kureho 決定 A）完了** DNSSelfReportStore / DNSReportedDomain / DNSBlocklistLoader / DNSSelfReportApplier。「あなたの報告で他アプリの広告ブロックも即増える」が honest に成立。命名は Pro 廃止方針を正典に記録。
 - 📊 現在 **269 テスト・0 failure**（DNS 40 + Pro 20 + 報告→DNS 16 + 既存 ≈190・StoreKitTest 3 は iOS18.3 で実PASS/iOS26 で skip）。
-- ⏭ **次 = Chunk 5 UI**（PaywallView〈「報告で増える」訴求主役・記述的名称・購入+復元常設〉+ Pro ゲート付き DNS 設定 + 限界明記）。sim 検証可（DEBUG override + .storekit config）。**Paywall コピー/最終名称は kureho の目が要る**。
-- ⏸ **Chunk 3（tunnel）実機必須**（DNSBlocklistLoader で curated ∪ dns-self を読む・ProStateStore で Pro 確認・PacketCodec/DNSEngine 使用）。Apple Dev Portal: NE capability + **iCloud(KVS) capability**（P2 対応）有効化 = kureho 操作。
+- ✅ **Chunk 5 UI（Task 19）完了** PaywallView（名称「アプリ内広告ブロック」・kureho 承認・「報告で増える」ヒーロー・4機能・購入CTA状態別・復元常設・限界明記）+ DNSSettingsView（Pro ゲート・限界明記5項目・Pro でも復元到達可）。**sim 目視検証済**（非Pro/Pro 両状態・iPhone 17 Pro Max）。
+- ⏸ **Chunk 3（tunnel）＝実機必須（残る主要実装）**。DNSBlocklistLoader で curated ∪ dns-self を読む・ProStateStore で Pro 確認・PacketCodec/DNSEngine 使用。トグル→tunnel 配線と**本番導線（CompletedView リンク）は Chunk 3 で追加**（tunnel 未実装のうちは死んだ機能を露出しない）。
 - ⏸ Chunk 6（metadata/転換）は kureho/審査ゲート。
+- ★kureho 操作（Apple Developer）: ①Network Extension capability ②iCloud(KVS) capability の有効化 + プロビジョニング再生成。
 
 ## 全タスク共通の注記（着手前に必読・plan レビュー r1 反映）
 
