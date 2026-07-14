@@ -25,7 +25,9 @@ enum DNSMessage {
         guard b.count >= 12 else { return nil }
         let id = UInt16(b[0]) << 8 | UInt16(b[1])
         let qdcount = UInt16(b[4]) << 8 | UInt16(b[5])
-        guard qdcount >= 1 else { return nil }
+        // question は 1 件のみ対応。0 件も複数件も nil=fail-open（複数を許すと先頭一致で
+        // QDCOUNT=1 の合成応答を返し残り question を黙って落とす＝壊れた応答になるため）。
+        guard qdcount == 1 else { return nil }
 
         // QNAME のラベル列を decode（先頭 = header 直後の 12 バイト目）
         var i = 12

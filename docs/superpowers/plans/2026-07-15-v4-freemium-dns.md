@@ -31,7 +31,7 @@
 
 **新規: DNS リスト・転送・記録（Shared/DNS・テスト可能に集約 / plan レビュー C-3・I-5）**
 - `Shared/DNS/BlocklistStore.swift` — App Group 読込 + フォールバック（**Shared に置く=テスト可能**）
-- `Shared/DNS/DNSForwardingTable.swift` — 上流転送の対応表（キー=srcPort+DNS ID → 元パケット・insert/resolve/expireAll・純関数）
+- `Shared/DNS/DNSForwardingTable.swift` — 上流転送の対応表（キー=リライト後 DNS ID 単独 → 元 request ParsedPacket・insert/resolve/contains/expireAll・純関数）
 - `Shared/DNS/DNSUpdatePlanner.swift` — self-fetch の更新要否判定（既存 RuleUpdatePlanner 同型・純関数）
 
 **新規: DNS ブロックリスト本体（プロダクトの価値・plan レビュー C-2）**
@@ -293,10 +293,10 @@ func test_decide_blocksListed_forwardsOthers_protectsCritical_failsOpen() throws
 
 **Files:** Create `Shared/DNS/DNSForwardingTable.swift` / Test `Tests/DNSForwardingTableTests.swift`
 
-上流(1.1.1.1)へ転送したクエリの応答を、正しい元クライアントに配送するための対応表。**キーは srcPort + DNS transaction ID の複合**（ID 単独だと別アプリの同一 ID と衝突し誤配送する）。tunnel の I/O から切り離せる純ロジック。
+上流(1.1.1.1)へ転送したクエリの応答を、正しい元クライアントに配送するための対応表。**キーはリライト後 DNS transaction ID 単独**（Task 13 で確定した r3 設計。上流は共有 NWConnection で応答に srcPort が載らないため、転送前に DNS ID をユニーク値へリライトし、そのリライト後 ID をキーに元 request を引く。srcPort による衝突回避ではなく ID 一意化で衝突を構造的に消す）。値 = 元 request の ParsedPacket（srcIP/srcPort/元 DNS ID を保持）。tunnel の I/O から切り離せる純ロジック。
 
-- [ ] **Step 1: 失敗するテスト**（insert(key: srcPort+id, packet) → resolve(key) で元パケット取得・1回で消費 / expireAll(olderThan:) で古いエントリ掃除 / 同 ID 異 srcPort が衝突しないこと）
-- [ ] **Step 2〜5**: 失敗確認 → 実装（Dictionary + タイムスタンプ・resolve は remove して返す）→ パス → commit `git commit -m "feat(dns): DNSForwardingTable で上流応答の突合（srcPort+ID キー・TDD）"`
+- [ ] **Step 1: 失敗するテスト**（insert(rewrittenID, request) → resolve(rewrittenID) で元 request 取得・1回で消費 / contains(rewrittenID) で使用中判定（ID 割り当てが未使用値を選ぶため）/ expireAll(olderThan:) で古いエントリ掃除 / 別 rewrittenID が独立）
+- [ ] **Step 2〜5**: 失敗確認 → 実装（[UInt16: Entry] + タイムスタンプ・resolve は remove して返す）→ パス → commit `git commit -m "feat(dns): DNSForwardingTable で上流応答の突合（リライト後 ID キー・TDD）"`
 
 ### Task 10: Chunk 1-2 の全ユニットテスト green 確認
 

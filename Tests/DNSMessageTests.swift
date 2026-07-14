@@ -24,6 +24,20 @@ final class DNSMessageTests: XCTestCase {
         XCTAssertNil(DNSMessage.parseQuery(Data()))               // 空
     }
 
+    func test_parseQuery_returnsNil_forMultiQuestion() {
+        // QDCOUNT=2 は非対応 → nil（fail-open で forward。先頭一致で残りを落とさない）
+        var d = Self.header(qdcount: 2)
+        for _ in 0..<2 {
+            d.append(contentsOf: [0x03, 0x61, 0x64, 0x73, 0x00])  // "ads" root
+            d.append(contentsOf: [0x00, 0x01, 0x00, 0x01])         // QTYPE/QCLASS
+        }
+        XCTAssertNil(DNSMessage.parseQuery(d))
+    }
+
+    func test_parseQuery_returnsNil_forZeroQuestion() {
+        XCTAssertNil(DNSMessage.parseQuery(Self.header(qdcount: 0)))
+    }
+
     func test_parseQuery_returnsNil_forCompressionPointer() {
         // QNAME 先頭が圧縮ポインタ（上位2bit=11）→ クエリでは異常 → nil（fail-open）
         var d = Self.header(qdcount: 1)
