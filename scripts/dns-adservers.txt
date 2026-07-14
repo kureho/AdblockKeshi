@@ -1,0 +1,83 @@
+# DNS 型アプリ内広告ブロックの curated ソースドメイン（v0・2026-07-15）
+#
+# 形式: 1 行 1 ドメイン。`#` 始まりはコメント。空行は無視。
+# DNSBlocklist はラベル境界のサフィックス一致なので、apex を書けばサブドメインも全て一致する。
+# apex が広告専用のものは apex を、他用途と混在する親（unity3d.com 等）は広告サブドメインのみを列挙。
+#
+# ★重要★ critical 保護下（google.com / facebook.com / amazon.com / yahoo.co.jp 等）の
+#   apex は DNSCriticalGuard が forward を強制するため、ここに書いても死票になる。
+#   よって adservice.google.com / an.facebook.com 等は「DNS では抑止不可」= 除外している。
+#
+# ★v0 の位置づけ★ 公知の広告配信エンドポイント知識ベースの初版。
+#   自作 AdMob アプリでの実測（Task 10.5 の本来の方法）で追補・是正する前提。
+#   計測/解析専用（app-measurement.com 等）は「アプリが壊れた」誤解レビュー回避のため v0 では除外。
+
+# ── Google 広告配信（google.com とは別 apex ＝ ブロック可）──
+doubleclick.net
+googlesyndication.com
+googleadservices.com
+
+# ── グローバル モバイル広告 SDK ──
+# Unity Ads（unity3d.com 本体は非広告用途があるため広告サブドメインのみ）
+unityads.unity3d.com
+# AppLovin / MAX
+applovin.com
+applvn.com
+# ironSource（Unity 傘下）
+ironsrc.com
+supersonicads.com
+# Vungle（Liftoff）
+vungle.com
+# Chartboost
+chartboost.com
+# AdColony（DT）
+adcolony.com
+# Tapjoy
+tapjoy.com
+# Fyber / Digital Turbine
+fyber.com
+inner-active.mobi
+# Mintegral
+mintegral.com
+rayjump.com
+# Pangle（ByteDance 広告 SDK）
+pangle.io
+isnssdk.com
+# InMobi
+inmobi.com
+inmobicdn.net
+# Smaato
+smaato.net
+# Amazon 広告配信（amazon.com とは別 apex）
+amazon-adsystem.com
+
+# ── Web プログラマティック（Safari の広告にも効く）──
+criteo.com
+criteo.net
+pubmatic.com
+adnxs.com
+rubiconproject.com
+casalemedia.com
+adsrvr.org
+3lift.com
+openx.net
+
+# ── 日本のモバイル広告ネットワーク（日本語アプリ特化の差別化）──
+# i-mobile
+i-mobile.co.jp
+ad-stir.com
+# nend（ファンコミュニケーションズ）
+nend.net
+# AMoAd（サイバーエージェント）
+amoad.com
+# maio（Fyber Japan / GMO）
+maio.jp
+# fluct（voyage / CARTA）
+adingo.jp
+# Zucks（GMO）
+zucks.net
+# Geniee SSP
+gsspat.jp
+genieesspv.jp
+# Ad Generation（Supership）
+adgeneration.jp
