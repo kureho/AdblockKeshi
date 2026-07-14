@@ -20,8 +20,26 @@ struct AdblockKeshiApp: App {
         #endif
     }
 
+    /// Pro/課金の単一ソース（アプリ全体で共有）。
+    @State private var proStore = ProStore()
+
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            // UI 検証用ハーネス: DNS 設定画面を直接開く（-FORCE_PRO で Pro 状態も確認可）。
+            if ProcessInfo.processInfo.arguments.contains("--show-dns-settings") {
+                NavigationStack { DNSSettingsView(store: proStore) }
+                    .preferredColorScheme(.light)
+            } else {
+                mainTabView
+            }
+            #else
+            mainTabView
+            #endif
+        }
+    }
+
+    private var mainTabView: some View {
             TabView(selection: $selectedTab) {
                 ContentView()
                     .tabItem {
@@ -62,7 +80,6 @@ struct AdblockKeshiApp: App {
             .onAppear {
                 BackgroundTaskManager.schedule()
             }
-        }
     }
 }
 
