@@ -11,6 +11,17 @@ kureho 対案 A =「有料維持 + 報告完全実装 + ASA」vs B = 本計画�
 kureho 確定事項: 収益10倍目標 → プランB（ローカル VPN 型・運用費ゼロ）GO → 価格は「後発は有料の蓋で発見されない」指摘により本体無料化へ。
 調査全文はセッションログ由来（本ファイルが要点の正典）。dl-uplift-plan-2026-07.md D 節から参照。
 
+## ★2026-07-15 kureho 決定 A（報告→DNS を v4.0 に前倒し・命名は Pro 廃止）★
+
+- **決定**: 「報告することでブロック対象が増える」を ¥800 機能の**中核訴求**に据える。そのため plan で v4.x 送りだった「報告→DNSリスト接続」を **v4.0 に前倒し**（未実装を売りにしない訴求規律のため）。
+- **命名**: 買い切りIAP命名規約（[[feedback_plus_upgrade_card_pattern]]・Pro/プレミアム禁止）に従い「Pro」を廃止 → 記述的な呼称（例「アプリ内広告ブロック」）+ カードコピーで「報告で増える」物語を主役に。**内部コード識別子（ProStore 等）は非表示なので据え置き可**。
+- **実装（自己ファストレーン優先・既存 Content Blocker の rules-self と対称）**:
+  - R1 `DNSSelfReportStore`（Shared/・`dns-self.json` App Group・append/read/dedupe/atomic）
+  - R2 `DNSReportedDomain.extract(fromURLString:)`（URLComponents.host 小文字化 + DNSCriticalGuard 除外・ReportedRuleBuilder.host と対称）
+  - R3 `DNSBlocklistLoader`（curated(bundle/CDN) ∪ self を DNSBlocklist に union）
+  - R4 `SelfReportApplier` に「報告 host を DNSSelfReportStore へ追記」フック（既存の rules-self 追記と並置）
+- **サーバ global（次段）**: 検証済み報告 → dns-rules.json を CDN 配信（tunnel の self-fetch が拾う既存経路を再利用）。v4.0 は client 自己ファストレーンで「あなたの報告で即あなたの端末のブロックが増える」を honest に成立させ、global は fast-follow。
+
 ## 確定した設計（kureho 最終承認待ち）
 
 - **本体無料**: Safari CB 3拡張は**全部無料のまま**（r2: Pro ゲート案は撤回・spec 参照）。基本保護の CDN 実行時更新（旧・凍結問題）は **v3.5.0 の RuleUpdater（68ad6f9）で修理済み・配信中** — 本 plan 冒頭の「凍結」記述は 2026-07-04 監査時点の認識で、その後修理済みだった（spec レビュー C-1 で発見・訂正）

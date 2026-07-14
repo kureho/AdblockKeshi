@@ -13,12 +13,18 @@ protocol SelfReportApplying {
 @MainActor
 struct SelfReportApplier: SelfReportApplying {
     func apply(reportedURL: URL) {
-        guard let rule = ReportedRuleBuilder.blockRule(forURL: reportedURL.absoluteString),
-              let store = SelfReportedRulesStore()
-        else { return }
-        // 追記 + merged 再構築。失敗してもサーバ報告自体は成立しているので握り潰す。
-        try? store.appendSelfRule(rule)
-        // combined を再生成（off-main）して標準 ContentBlocker を reload。
-        CombinedRuleListCoordinator.scheduleRegenerate()
+        // ① Content Blocker(Safari) の自己ファストレーン
+        if let rule = ReportedRuleBuilder.blockRule(forURL: reportedURL.absoluteString),
+           let store = SelfReportedRulesStore() {
+            // 追記 + merged 再構築。失敗してもサーバ報告自体は成立しているので握り潰す。
+            try? store.appendSelfRule(rule)
+            // combined を再生成（off-main）して標準 ContentBlocker を reload。
+            CombinedRuleListCoordinator.scheduleRegenerate()
+        }
+        // ② DNS ブロックの自己ファストレーン（あなたの報告で他アプリの広告ブロックも即増える）
+        //    tunnel が dns-rules(curated/CDN) ∪ dns-self を読む（DNSBlocklistLoader）。
+        if let dnsStore = DNSSelfReportStore.sharedAppGroup() {
+            DNSSelfReportApplier(store: dnsStore).apply(reportedURL: reportedURL)
+        }
     }
 }
