@@ -5,11 +5,17 @@
 
 **分担**: 大半を Claude が API/CLI で実行できた（IAP 作成・ビルドアップロードとも分類器が通した）。提出（reviewSubmission）は pre-submission-block hook + Phase1-5 監査 + kureho 最終確認を経て実行。
 
-## 🟢 現在の staging 状態（2026-07-15 時点・提出直前まで完了）
-- ✅ **Pro IAP READY_TO_SUBMIT**（作成/loc/¥800/175地域/審査スクショ全部 API 完結・id=6791059609）
-- ✅ **build 4.0.0/10000 を ASC へアップロード済**（xcodebuild「Upload succeeded」・ASC 処理中→VALID 待ち）
-- ✅ 採番 10000/4.0.0・metadata 反映・LP 下書き（branch）・審査ノート・E2E 合格
-- ⏭ **残り = 次セッション**: build VALID 確認 → 版に build 添付 → reviewSubmission（版 + 初回IAP を items に）→ **手動リリース**で提出（Phased オフ・評価リセット禁止）→ 提出前 Phase1-5 監査 + kureho 最終確認 → 承認後に無料化 + LP deploy
+## ✅ 提出完了（2026-07-15・4点監査 ALL PASS・審査待ち）
+- ✅ version 4.0.0 = **WAITING_FOR_REVIEW** / reviewSubmission **`9527bc53-a7f5-47e2-873b-1f4542593d9c`**（提出 2026-07-15T07:55Z）
+- ✅ 初回 IAP『アプリ内広告ブロック』(id=6791059609・¥800) = **WAITING_FOR_REVIEW**（READY_TO_SUBMIT から flip = **同梱成功の確証**）
+- ✅ 4点監査: ①版+submission WAITING_FOR_REVIEW ②availableInNewTerritories True ③価格200地域(現¥500) ④IAP WAITING_FOR_REVIEW+availability175地域+price schedule
+- ✅ build 10000/4.0.0・metadata・審査ノート・E2E 合格・LP 下書き（branch `v4-freemium-lp-draft`）
+- ⏭ **残り = Apple 承認後**: 価格→¥0 → 手動リリース（Phased オフ・評価リセット禁止）→ LP deploy → 実機 Pro 判定 + レビュー監視
+
+### ⚠️ 提出時のトラブルと是正（記録）
+- **初回 IAP 同梱トラップを踏んだ**: 版のみを API 提出（旧 submission `b9339db2`）→ IAP が API では submission に添付不可（`inAppPurchaseV2` relationship 不在=409）で READY_TO_SUBMIT のまま未同梱だった。
+- **是正**: `b9339db2` を cancel（`PATCH canceled:true`・version→DEVELOPER_REJECTED 編集可）→ **kureho が Web UI でバージョン4.0.0の「App内課金とサブスクリプション」に IAP を紐付け→再提出**（新 submission `9527bc53`）→ IAP state flip で同梱確証。
+- **教訓（既存の再確認）**: 過去に APPROVED IAP が無いアプリの初回 IAP は **必ず Web UI でバージョンに紐付けてから提出**。API の reviewSubmissionItems には IAP を入れられない。検証は **IAP state の READY_TO_SUBMIT→WAITING_FOR_REVIEW flip**で見る（MosaicBlur/petcare と同型）。
 
 ---
 
@@ -21,18 +27,9 @@
 
 ## kureho がやること（残り）
 
-### ③ ビルドのアップロード（`!` 一発）
-Claude が Archive を作成 → kureho が以下を実行:
-```
-! <Claude が渡す upload コマンド>
-```
+### ③ ビルドのアップロード — ✅ 完了（Claude が Archive→Upload 自動実行）
 
-### ④ 提出（`!` 一発・Claude の最終確認後）
-Claude が submitting-ios-build の Phase1-5 監査 + precheck ログを済ませ、Phase4 で「これで提出します」確認 → kureho が:
-```
-! <Claude が渡す submit コマンド>
-```
-※ **手動リリース（Pending Developer Release）** 選択・**Phased Release オフ**・**評価リセット絶対に選ばない**
+### ④ 提出 — ✅ 完了（cancel→Web UI IAP 紐付け→再提出・上記「提出完了」参照）
 
 ### ⑤ 承認後（Apple から approved 通知が来たら）
 Claude が誘導:
@@ -73,9 +70,10 @@ Note: YouTube / X / Instagram / some games' in-app ads cannot be blocked by desi
 
 ---
 
-## Claude 側の残タスク（提出前）
-- [ ] Paywall 審査スクショ生成 → kureho へ
-- [ ] 4.0.0 Archive 作成（ローカル）
-- [ ] upload / submit の `!` スクリプト用意
-- [ ] submitting-ios-build Phase1-5 監査 + precheck ログ
-- [ ] App Privacy 確認（DNS/VPN は端末内処理で新規データ収集なし・NE 追加の申告要否を確認）
+## Claude 側の残タスク（提出前）— 全て ✅ 完了
+- [x] Paywall 審査スクショ生成・IAP に添付（COMPLETE）
+- [x] 4.0.0 Archive 作成・ASC アップロード（VALID）
+- [x] IAP 作成・loc・¥800・175地域・審査スクショ（API 完結）
+- [x] submitting-ios-build Phase1-5 監査 + precheck ログ（build10000 + cancel 是正の iap-recut ログ）
+- [x] 提出 + 4点監査 ALL PASS
+- [ ] App Privacy 確認（DNS/VPN は端末内処理で新規データ収集なし・NE 追加の申告要否）※ 承認前に kureho Web UI で最終確認推奨
