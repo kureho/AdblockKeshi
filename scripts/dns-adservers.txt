@@ -81,3 +81,31 @@ gsspat.jp
 genieesspv.jp
 # Ad Generation（Supership）
 adgeneration.jp
+
+# ── アグレッシブ広告網 / アダルト・cam 系（E2E で javmix.tv の残存広告を発見・2026-07-15 拡充）──
+# ExoClick 系（アダルト最大手）
+exoclick.com
+exosrv.com
+exdynsrv.com
+realsrv.com
+# JuicyAds
+juicyads.com
+# TrafficJunky（Pornhub 系）
+trafficjunky.net
+trafficjunky.com
+# EroAdvertising
+eroadvertising.com
+# TrafficStars
+trafficstars.com
+tsyndicate.com
+# Adsterra（ポップ/プッシュ）
+adsterra.com
+# ポップアンダー / プッシュ通知系（アダルト・海賊サイトで多用）
+popads.net
+popcash.net
+clickadu.com
+hilltopads.net
+plugrush.com
+propellerads.com
+# cam アフィリエイト（LIVE オーバーレイ広告）
+awempire.com
