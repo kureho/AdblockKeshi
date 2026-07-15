@@ -1,0 +1,89 @@
+import Foundation
+import NetworkExtension
+import Observation
+
+/// DNS トンネル（PacketTunnelExtension）を本体アプリから構成・起動・監視する。
+/// NETunnelProviderManager の load/save/start をラップし、VPN 状態を publish する。
+/// ★初回 saveToPreferences 時に iOS の VPN 許可プロンプトが出る（ユーザー手動・回避不可）。
+@MainActor
+@Observable
+final class TunnelManager {
+
+    static let tunnelBundleID = "com.kureho.adblockkeshi.tunnel"
+
+    enum Status: Equatable {
+        case off, connecting, on
+        case unavailable(String)
+    }
+
+    private(set) var status: Status = .off
+
+    @ObservationIgnored private var manager: NETunnelProviderManager?
+    @ObservationIgnored private var statusObserver: NSObjectProtocol?
+
+    /// 既存の VPN 構成を読み込む（画面表示時に呼ぶ）。
+    func load() async {
+        do {
+            let managers = try await NETunnelProviderManager.loadAllFromPreferences()
+            manager = managers.first
+            observeStatus()
+            updateStatus()
+        } catch {
+            status = .unavailable(error.localizedDescription)
+        }
+    }
+
+    /// トグル ON/OFF に対応。ON で構成保存 + 起動、OFF で停止。
+    func setEnabled(_ enabled: Bool) async {
+        if enabled { await start() } else { stop() }
+    }
+
+    // MARK: - start / stop
+
+    private func start() async {
+        do {
+            let m = manager ?? NETunnelProviderManager()
+            let proto = NETunnelProviderProtocol()
+            proto.providerBundleIdentifier = Self.tunnelBundleID
+            proto.serverAddress = "アプリ内広告ブロック"   // 表示用（端末内処理なので実サーバーではない）
+            m.protocolConfiguration = proto
+            m.localizedDescription = "アプリ内広告ブロック"
+            m.isEnabled = true
+            try await m.saveToPreferences()    // ★初回はここで VPN 許可プロンプト
+            try await m.loadFromPreferences()  // 保存後の再読込（Apple 推奨手順）
+            manager = m
+            observeStatus()
+            try m.connection.startVPNTunnel()
+            status = .connecting
+        } catch {
+            status = .unavailable(error.localizedDescription)
+        }
+    }
+
+    private func stop() {
+        manager?.connection.stopVPNTunnel()
+        status = .off
+    }
+
+    // MARK: - status 監視
+
+    private func observeStatus() {
+        guard let connection = manager?.connection else { return }
+        if let statusObserver { NotificationCenter.default.removeObserver(statusObserver) }
+        statusObserver = NotificationCenter.default.addObserver(
+            forName: .NEVPNStatusDidChange, object: connection, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.updateStatus() }
+        }
+    }
+
+    private func updateStatus() {
+        guard let connection = manager?.connection else { status = .off; return }
+        switch connection.status {
+        case .connected: status = .on
+        case .connecting, .reasserting: status = .connecting
+        case .disconnected, .disconnecting, .invalid: status = .off
+        @unknown default: status = .off
+        }
+    }
+}

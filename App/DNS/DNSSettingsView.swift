@@ -7,8 +7,7 @@ import SwiftUI
 struct DNSSettingsView: View {
     let store: ProStore
 
-    // Chunk 3 で TunnelManager の status に置き換える（実機で tunnel を起動/停止）。
-    @State private var isBlockingEnabled = false
+    @State private var tunnel = TunnelManager()
 
     var body: some View {
         Group {
@@ -20,6 +19,7 @@ struct DNSSettingsView: View {
         }
         .navigationTitle("アプリ内広告ブロック")
         .navigationBarTitleDisplayMode(.inline)
+        .task { await tunnel.load() }
     }
 
     // MARK: - Pro（有効化トグル + 説明）
@@ -35,13 +35,30 @@ struct DNSSettingsView: View {
         }
     }
 
+    /// トグルは tunnel の status に連動（connecting/on を「オン」扱い）。
+    private var isEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { tunnel.status == .on || tunnel.status == .connecting },
+            set: { on in Task { await tunnel.setEnabled(on) } }
+        )
+    }
+
+    private var statusSubtitle: String {
+        switch tunnel.status {
+        case .on: return "この端末で有効です"
+        case .connecting: return "接続中…"
+        case .off: return "オンにすると端末内の DNS で広告を抑えます"
+        case .unavailable(let msg): return "有効化できませんでした: \(msg)"
+        }
+    }
+
     private var toggleCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Toggle(isOn: $isBlockingEnabled) {
+            Toggle(isOn: isEnabledBinding) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("アプリ内広告ブロック")
                         .font(.system(size: 16, weight: .bold))
-                    Text(isBlockingEnabled ? "この端末で有効です" : "オンにすると端末内の DNS で広告を抑えます")
+                    Text(statusSubtitle)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

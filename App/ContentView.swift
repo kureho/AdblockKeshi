@@ -133,6 +133,8 @@ struct CompletedView: View {
     @State private var appliedRecords: [String: AppliedRulesRecord] = [:]
     /// CDN 未取得端末のフォールバック: bundle 同梱ルールの生成日。
     @State private var bundledGeneratedAt: Date? = nil
+    /// アプリ内広告ブロック（DNS・Pro）の状態。永続 Pro 状態を読むので自前インスタンスで可。
+    @State private var proStore = ProStore()
     @StateObject private var controlVM: BlockerControlViewModel
     private let versionStore: VersionInfoStore
 
@@ -228,6 +230,35 @@ struct CompletedView: View {
                         .fill(Color(UIColor.secondarySystemBackground))
                 )
                 .padding(.horizontal, 20)
+
+                NavigationLink {
+                    DNSSettingsView(store: proStore)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "shield.lefthalf.filled")
+                            .font(.system(size: 18))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("アプリ内広告ブロック")
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text("他アプリの広告も抑える（買い切り）")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color(UIColor.secondarySystemBackground))
+                    )
+                    .padding(.horizontal, 20)
+                }
 
                 Spacer(minLength: 20)
 
