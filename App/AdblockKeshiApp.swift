@@ -74,6 +74,7 @@ struct AdblockKeshiApp: App {
             .task {
                 migrateReportedRulesIfNeeded()
                 ReviewPrompt.recordFirstLaunchIfNeeded()
+                ReviewPrompt.migrateThresholdsIfNeeded()   // 旧閾値の発火済みを新閾値へ（重複プロンプト防止）
                 await appState.refresh()
                 bumpDailyUsageIfNeeded()
                 // DNS リストの鮮度維持（tunnel 未起動でも最新化・Task 14.5）。ネットワークは非ブロッキング。

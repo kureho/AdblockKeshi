@@ -3,6 +3,7 @@ import XCTest
 
 /// ReviewPrompt v2 の発火条件テスト。
 /// 仕様: docs/superpowers/specs/2026-06-11-review-prompt-v2-design.md §3.1 / §4
+/// 2026-07-15: 発火閾値を [7,23,58] → [3,13,34] に引き下げ（満足ユーザーを離脱前に捕捉するため）。
 @MainActor
 final class ReviewPromptTests: XCTestCase {
     private let suiteName = "ReviewPromptTests"
@@ -33,19 +34,19 @@ final class ReviewPromptTests: XCTestCase {
         }
     }
 
-    // 1. 閾値未到達では発火しない
+    // 1. 第一閾値(3)未到達では発火しない
     func test_doesNotFire_belowFirstThreshold() {
         ReviewPrompt.recordFirstLaunchIfNeeded(defaults: defaults, now: base)
         var fired = 0
-        bump(times: 6, at: base + 10 * day, fired: &fired)
+        bump(times: 2, at: base + 10 * day, fired: &fired)
         XCTAssertEqual(fired, 0)
     }
 
-    // 2. count=7 到達・全条件 OK で発火する
+    // 2. count=3 到達・全条件 OK で発火する
     func test_fires_atFirstThreshold_whenAllConditionsMet() {
         ReviewPrompt.recordFirstLaunchIfNeeded(defaults: defaults, now: base)
         var fired = 0
-        bump(times: 7, at: base + 10 * day, fired: &fired)
+        bump(times: 3, at: base + 10 * day, fired: &fired)
         XCTAssertEqual(fired, 1)
     }
 
@@ -53,7 +54,7 @@ final class ReviewPromptTests: XCTestCase {
     func test_carriesOver_whenWithinFirstLaunchGrace() {
         ReviewPrompt.recordFirstLaunchIfNeeded(defaults: defaults, now: base)
         var fired = 0
-        bump(times: 7, at: base + 1 * day, fired: &fired)
+        bump(times: 3, at: base + 1 * day, fired: &fired)
         XCTAssertEqual(fired, 0)
         bump(times: 1, at: base + 4 * day, fired: &fired)
         XCTAssertEqual(fired, 1)
@@ -63,10 +64,10 @@ final class ReviewPromptTests: XCTestCase {
     func test_respectsCooldown_thenFiresAfterCooldown() {
         ReviewPrompt.recordFirstLaunchIfNeeded(defaults: defaults, now: base)
         var fired = 0
-        bump(times: 7, at: base + 10 * day, fired: &fired)
+        bump(times: 3, at: base + 10 * day, fired: &fired)
         XCTAssertEqual(fired, 1)
-        // count 8〜23: 閾値 23 を跨ぐがクールダウン内なので発火しない
-        bump(times: 16, at: base + 20 * day, fired: &fired)
+        // count 4〜13: 閾値 13 を跨ぐがクールダウン内なので発火しない
+        bump(times: 10, at: base + 20 * day, fired: &fired)
         XCTAssertEqual(fired, 1)
         // クールダウン経過後の bump で持ち越し発火
         bump(times: 1, at: base + 101 * day, fired: &fired)
@@ -77,7 +78,7 @@ final class ReviewPromptTests: XCTestCase {
     func test_blockedCarriesOver_firesOnNextUnblockedBump() {
         ReviewPrompt.recordFirstLaunchIfNeeded(defaults: defaults, now: base)
         var fired = 0
-        bump(times: 7, at: base + 10 * day, blocked: true, fired: &fired)
+        bump(times: 3, at: base + 10 * day, blocked: true, fired: &fired)
         XCTAssertEqual(fired, 0)
         bump(times: 1, at: base + 10 * day, blocked: false, fired: &fired)
         XCTAssertEqual(fired, 1)
@@ -88,7 +89,7 @@ final class ReviewPromptTests: XCTestCase {
         ReviewPrompt.recordFirstLaunchIfNeeded(defaults: defaults, now: base)
         ReviewPrompt.recordNegativeEvent(defaults: defaults, now: base + 10 * day)
         var fired = 0
-        bump(times: 7, at: base + 12 * day, fired: &fired)
+        bump(times: 3, at: base + 12 * day, fired: &fired)
         XCTAssertEqual(fired, 0)
         bump(times: 1, at: base + 18 * day, fired: &fired)
         XCTAssertEqual(fired, 1)
@@ -98,39 +99,37 @@ final class ReviewPromptTests: XCTestCase {
     func test_firesOncePerThreshold() {
         ReviewPrompt.recordFirstLaunchIfNeeded(defaults: defaults, now: base)
         var fired = 0
-        bump(times: 7, at: base + 10 * day, fired: &fired)
+        bump(times: 3, at: base + 10 * day, fired: &fired)
         XCTAssertEqual(fired, 1)
-        // クールダウンを完全に外しても、count 8〜22 では発火しない
-        bump(times: 15, at: base + 200 * day, fired: &fired)
+        // クールダウンを完全に外しても、count 4〜12 では発火しない
+        bump(times: 9, at: base + 200 * day, fired: &fired)
         XCTAssertEqual(fired, 1)
-        // 23 個目で発火
+        // 13 個目で発火
         bump(times: 1, at: base + 200 * day, fired: &fired)
         XCTAssertEqual(fired, 2)
     }
 
-    // 8. v1 からの移行: count 既超過の既存ユーザーは次の bump で 1 回だけ発火し、通過済み閾値が消化される
+    // 8. v1 からの移行: 全閾値超過の既存ユーザーは次の bump で 1 回だけ発火し、以後は再発火しない
     func test_migration_existingUserFiresOnceOnNextBump() {
-        // v1 が残した状態を再現（firedThresholds キーは存在しない）
+        // v1 が残した状態を再現（firedThresholds キーは存在しない・count は全閾値超過）
         defaults.set(50, forKey: "reviewPrompt.successCount")
         defaults.set(base, forKey: "reviewPrompt.firstLaunchDate")
         var fired = 0
         bump(times: 1, at: base + 100 * day, fired: &fired)
         XCTAssertEqual(fired, 1)
-        // 直後の bump（count=52, 通過済み閾値は消化済み・58 未到達）では発火しない
+        // 直後の bump（通過済み閾値は消化済み）では発火しない
         bump(times: 1, at: base + 100 * day, fired: &fired)
         XCTAssertEqual(fired, 1)
-        // 58 は未消化で残っており、クールダウン経過 + 58 到達で発火する
-        bump(times: 5, at: base + 200 * day, fired: &fired) // count 53...57
+        // 最上位閾値(34)も既に消化済みなので、クールダウン経過後でも二度と発火しない
+        bump(times: 10, at: base + 300 * day, fired: &fired)
         XCTAssertEqual(fired, 1)
-        bump(times: 1, at: base + 200 * day, fired: &fired) // count 58
-        XCTAssertEqual(fired, 2)
     }
 
     // 9. 境界値: 初回起動からちょうど 3 日で発火する（>= 判定）
     func test_fires_atExactly3DaysSinceFirstLaunch() {
         ReviewPrompt.recordFirstLaunchIfNeeded(defaults: defaults, now: base)
         var fired = 0
-        bump(times: 7, at: base + 3 * day, fired: &fired)
+        bump(times: 3, at: base + 3 * day, fired: &fired)
         XCTAssertEqual(fired, 1)
     }
 
@@ -138,7 +137,7 @@ final class ReviewPromptTests: XCTestCase {
     func test_fires_atExactly90DaysCooldown() {
         ReviewPrompt.recordFirstLaunchIfNeeded(defaults: defaults, now: base)
         var fired = 0
-        bump(times: 23, at: base + 10 * day, fired: &fired) // 7 で発火、23 は持ち越し
+        bump(times: 13, at: base + 10 * day, fired: &fired) // 3 で発火、13 は持ち越し
         XCTAssertEqual(fired, 1)
         bump(times: 1, at: base + 100 * day, fired: &fired) // 10+90 日ちょうど
         XCTAssertEqual(fired, 2)
@@ -149,7 +148,7 @@ final class ReviewPromptTests: XCTestCase {
         ReviewPrompt.recordFirstLaunchIfNeeded(defaults: defaults, now: base)
         ReviewPrompt.recordNegativeEvent(defaults: defaults, now: base + 10 * day)
         var fired = 0
-        bump(times: 7, at: base + 12 * day, fired: &fired)
+        bump(times: 3, at: base + 12 * day, fired: &fired)
         XCTAssertEqual(fired, 0)
         bump(times: 1, at: base + 17 * day, fired: &fired) // 10+7 日ちょうど
         XCTAssertEqual(fired, 1)
@@ -168,7 +167,33 @@ final class ReviewPromptTests: XCTestCase {
         ReviewPrompt.recordFirstLaunchIfNeeded(defaults: defaults, now: base + 10 * day)
         // 初回日付が base のままなら base+3日 の bump で発火する
         var fired = 0
-        bump(times: 7, at: base + 3 * day, fired: &fired)
+        bump(times: 3, at: base + 3 * day, fired: &fired)
         XCTAssertEqual(fired, 1)
+    }
+
+    // MARK: - 閾値移行（[7,23,58] → [3,13,34]・重複プロンプト防止）
+
+    private let kFired = "reviewPrompt.firedThresholds"
+
+    func test_migration_mapsOldFiredThresholdsToNewPositions() {
+        defaults.set([7, 23], forKey: kFired)   // 旧の第1・第2閾値を発火済み
+        ReviewPrompt.migrateThresholdsIfNeeded(defaults: defaults)
+        // 新の同位置（3, 13）に移行され、重複発火しない
+        let fired = Set(defaults.array(forKey: kFired) as? [Int] ?? [])
+        XCTAssertEqual(fired, [3, 13])
+    }
+
+    func test_migration_runsOnlyOnce_andDoesNotRemapNewValues() {
+        defaults.set([58], forKey: kFired)   // 旧の第3閾値
+        ReviewPrompt.migrateThresholdsIfNeeded(defaults: defaults)
+        XCTAssertEqual(Set(defaults.array(forKey: kFired) as? [Int] ?? []), [34])
+        // 2回目は何もしない（新値 34 を旧扱いして再マップしない）
+        ReviewPrompt.migrateThresholdsIfNeeded(defaults: defaults)
+        XCTAssertEqual(Set(defaults.array(forKey: kFired) as? [Int] ?? []), [34])
+    }
+
+    func test_migration_noFired_isNoop() {
+        ReviewPrompt.migrateThresholdsIfNeeded(defaults: defaults)
+        XCTAssertNil(defaults.array(forKey: kFired))
     }
 }

@@ -19,7 +19,11 @@ import UIKit
 enum ReviewPrompt {
     /// 累計成功回数の発火閾値。5 の倍数を避けて広告サイクル (5枚ごと) との衝突確率を下げる。
     /// 衝突回避の保証は `blocked` 引数 + 持ち越しが担う。
-    static let thresholds = [7, 23, 58]
+    // 2026-07-15: [7,23,58] → [3,13,34] に引き下げ。満足ユーザーが初回プロンプトに届く前に離脱し
+    // ★がほぼ蓄積しない問題への対策。`≥3日`ガード維持（初対面では聞かない）。
+    static let thresholds = [3, 13, 34]
+    /// 移行元の旧閾値（2026-07-15 以前）。firedThresholds の位置対応マッピングに使う。
+    private static let oldThresholds = [7, 23, 58]
 
     private static let minimumDaysSinceFirstLaunch = 3
     private static let cooldownDays = 90
@@ -31,6 +35,26 @@ enum ReviewPrompt {
     private static let kRequested = "reviewPrompt.requestedCount"
     private static let kFired = "reviewPrompt.firedThresholds"
     private static let kNegative = "reviewPrompt.lastNegativeDate"
+    private static let kThresholdMigratedV2 = "reviewPrompt.thresholdMigratedV2"
+
+    /// 旧閾値 [7,23,58] → 新閾値 [3,13,34] の移行（1回だけ）。
+    /// 発火済みの旧値を「同じ順番の新閾値」に置換し、既発火ユーザーへの重複プロンプトを防ぐ。
+    /// 起動時に recordFirstLaunchIfNeeded と併せて呼ぶ。
+    static func migrateThresholdsIfNeeded(defaults: UserDefaults = .standard) {
+        guard !defaults.bool(forKey: kThresholdMigratedV2) else { return }
+        if let fired = defaults.array(forKey: kFired) as? [Int], !fired.isEmpty {
+            var migrated = Set<Int>()
+            for value in fired {
+                if let index = oldThresholds.firstIndex(of: value), index < thresholds.count {
+                    migrated.insert(thresholds[index])   // 旧の同位置 → 新閾値
+                } else {
+                    migrated.insert(value)               // 既に新値/対象外はそのまま
+                }
+            }
+            defaults.set(migrated.sorted(), forKey: kFired)
+        }
+        defaults.set(true, forKey: kThresholdMigratedV2)
+    }
 
     /// 累計成功回数（カードのパーソナライズ表示用・読み取り専用）
     static func successCount(defaults: UserDefaults = .standard) -> Int {
