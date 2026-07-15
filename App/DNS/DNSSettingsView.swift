@@ -19,7 +19,13 @@ struct DNSSettingsView: View {
         }
         .navigationTitle("アプリ内広告ブロック")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await tunnel.load() }
+        .task {
+            // ゲート判定前に Pro 権利を最新化（既存購入・grandfather を反映。P1 対策）。
+            // grandfather は実機の AppTransaction（sim はタイムアウトで無害）。
+            await store.refreshEntitlements()
+            await store.refreshGrandfatherFromAppTransaction()
+            await tunnel.load()
+        }
     }
 
     // MARK: - Pro（有効化トグル + 説明）

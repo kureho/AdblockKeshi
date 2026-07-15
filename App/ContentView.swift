@@ -290,6 +290,13 @@ struct CompletedView: View {
             appliedRecords = AppliedRulesStore()?.read() ?? [:]
             bundledGeneratedAt = BundledRulesInfo.generatedAt()
         }
+        .task {
+            // Pro 権利をアプリ起動時に最新化（既存購入・grandfather を反映 → App Group にも書き、
+            // DNS 画面へ入る前に isPro を pre-warm・tunnel の Pro チェックとも整合。P1 対策）。
+            proStore.startTransactionListener()
+            await proStore.refreshEntitlements()
+            await proStore.refreshGrandfatherFromAppTransaction()
+        }
     }
 
     /// フィルタ更新状況の表示テキスト。
