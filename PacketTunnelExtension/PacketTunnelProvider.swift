@@ -15,6 +15,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var upstreamV6: NWConnection?
     private var nextRewriteID: UInt16 = 1
     private var expiryTimer: DispatchSourceTimer?
+    private var selfFetchTimer: DispatchSourceTimer?
 
     /// sentinel = RFC 2544 予約帯（198.18.0.0/15）。tunnel が DNS を吸い込むための擬似 DNS サーバ IP。
     private enum Net {
@@ -47,13 +48,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             self.startUpstreams()
             self.startExpiryTimer()
             self.readLoop()
-            completionHandler(nil)
+            completionHandler(nil)   // bundled/App Group リストで即起動
+            // 起動後に最新リストを self-fetch（成功したら reload）+ 定期更新
+            self.performSelfFetch()
+            self.startSelfFetchTimer()
         }
     }
 
     override func stopTunnel(with reason: NEProviderStopReason,
                             completionHandler: @escaping () -> Void) {
         expiryTimer?.cancel(); expiryTimer = nil
+        selfFetchTimer?.cancel(); selfFetchTimer = nil
         upstreamV4?.cancel(); upstreamV6?.cancel()
         upstreamV4 = nil; upstreamV6 = nil
         completionHandler()
@@ -121,7 +126,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private func readLoop() {
         packetFlow.readPackets { [weak self] packets, _ in
             guard let self else { return }
-            for packet in packets { self.handleOutbound(packet) }
+            // engine の読み書きを直列化（self-fetch reload との競合回避）
+            self.workQueue.async {
+                for packet in packets { self.handleOutbound(packet) }
+            }
             self.readLoop()   // 再帰でループ
         }
     }
@@ -201,5 +209,25 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         timer.resume()
         expiryTimer = timer
+    }
+
+    // MARK: - リスト self-fetch（tunnel 稼働中の鮮度維持・Task 14）
+
+    /// CDN から最新 DNS リストを取得し、更新があれば engine を作り直す（reload は workQueue で直列化）。
+    private func performSelfFetch() {
+        Task { [weak self] in
+            guard let self else { return }
+            if let updated = await DNSListUpdater.shared()?.updateIfNeeded(), updated {
+                self.workQueue.async { self.reloadEngine() }
+            }
+        }
+    }
+
+    private func startSelfFetchTimer() {
+        let timer = DispatchSource.makeTimerSource(queue: workQueue)
+        timer.schedule(deadline: .now() + 6 * 3600, repeating: 6 * 3600)   // 6時間ごと
+        timer.setEventHandler { [weak self] in self?.performSelfFetch() }
+        timer.resume()
+        selfFetchTimer = timer
     }
 }
