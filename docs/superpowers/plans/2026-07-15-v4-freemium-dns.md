@@ -26,9 +26,12 @@
   - Task 11 PacketTunnelExtension ターゲット（sim BUILD SUCCEEDED・entitlements・Safari CB から DNS excludes）
   - Task 12 BlocklistStore（App Group→bundle→空・TDD 5件）/ Task 12.7 DNSUpdatePlanner（sha 比較・TDD 5件）
   - Task 13 PacketTunnelProvider 本体（非Pro起動拒否・sentinel split tunnel・packetFlow ループ・上流 v4/v6 ID リライト転送・5s expiry・handleAppMessage reload）＝**sim BUILD SUCCEEDED**
-- ⏸ **Chunk 3 残り = 実機ランタイム + 鮮度 self-fetch**:
-  - Task 13 Step 5: 実機スモーク（tunnel connected・広告ドメイン 0.0.0.0・通常閲覧無事）= **実機のみ**
-  - トグル→TunnelManager(NETunnelProviderManager) 配線 + 本番導線（CompletedView リンク）= 実機で動作確認しながら
+- ✅✅ **Task 13 Step 5 実機スモーク成功 2026-07-15（KPhone iPhone 17 Pro・iOS 26.5.2）**: 実機ビルド/署名（NE+iCloud capability）→ インストール → 起動 → **VPN 許可（kureho 1タップ）→ トンネル connected（「この端末で有効です」）→ Safari で `doubleclick.net` 接続不可（ブロック=0.0.0.0）+ `example.com` 正常表示（forward）**。パケットループ・PacketCodec・DNSEngine・DNSBlocklist・上流転送が実機で動作確認済。build/install/launch は全自動・手動は VPN 許可1タップのみ。
+- ✅ TunnelManager（NETunnelProviderManager 配線）+ トグル接続 + 本番導線（CompletedView リンク）実装済（sim/実機ビルド通過）。
+- ⏸ **Chnk 3 残り = 鮮度 self-fetch + 追加ランタイム確認**:
+  - Task 14/14.5: DNS リスト self-fetch（別 updater 設計 + 実機ネットワーク検証の follow-up・鮮度拡張）
+  - 追加ランタイム（任意）: 報告→DNS 自己ファストレーン E2E / IPv6 / トグル OFF→ON 復帰 / 実 Pro（購入・grandfather）での起動
+  - ※オンデバイス XCTest 自動化は app の iOS26 起動脆弱性（テストホスト SIGTRAP）で別途 host 起動修正が要る
   - Task 14/14.5: DNS リスト self-fetch（tunnel 内 + app 側）= 別 updater で設計 + 実機ネットワーク検証の follow-up（鮮度拡張・コアは bundle+App Group+報告自己ファストレーンで動く）
 - ⏸ Chunk 6（metadata/転換）は kureho/審査ゲート。
 - ✅ **kureho 操作（Apple Developer）完了 2026-07-15**: bundle ID `com.kureho.adblockkeshi`（65YY9ZYP8A）に **NETWORK_EXTENSIONS + ICLOUD(XCODE_6/KVS)** 有効化済。現 capabilities = APP_GROUPS/ICLOUD/IN_APP_PURCHASE/NETWORK_EXTENSIONS。
