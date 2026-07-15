@@ -31,7 +31,14 @@
 
 ### ④ 提出 — ✅ 完了（cancel→Web UI IAP 紐付け→再提出・上記「提出完了」参照）
 
-### ⑤ 承認後（Apple から approved 通知が来たら）
+### ⑤ 承認後（Apple から approved 通知が来たら）— **1本のスクリプトに自動化済**
+
+承認メールが来たら kureho は「承認きた」と言うだけ。Claude が **`scripts/post_approval_golive.py --apply`** を実行:
+- **preflight ゲート**: version=PENDING_DEVELOPER_RELEASE かつ IAP=APPROVED を必須確認（未承認なら自動中断＝早まった無料化を構造的に防止）
+- ①価格→¥0（appPriceSchedules）→ ②¥0検証 → ③手動リリース（appStoreVersionReleaseRequests）→ ④LP deploy 手順を印字
+- dry-run（引数なし）で予定確認可。**トリガーは承認メール（人間）・実行は全自動**（不可逆な無料化を無人発火させない設計）
+- 実行後: 実機ストア¥0確認・4点監査・実機Pro判定・数日レビュー監視
+
 Claude が誘導:
 1. **即時価格変更で ¥0（無料）に** → 実機ストアで ¥0 確認 → 分単位で「このバージョンをリリース」（深夜帯）
 2. app-support LP を deploy（`v4-freemium-lp-draft` を main へ → `vercel --prod`）
