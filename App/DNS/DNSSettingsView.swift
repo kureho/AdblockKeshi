@@ -21,9 +21,11 @@ struct DNSSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             // ゲート判定前に Pro 権利を最新化（既存購入・grandfather を反映。P1 対策）。
-            // grandfather は実機の AppTransaction（sim はタイムアウトで無害）。
-            await store.refreshEntitlements()
-            await store.refreshGrandfatherFromAppTransaction()
+            // DEBUG 強制 Pro 時は StoreKit 参照が不要（sim ではサインイン要求が出るため）まとめてスキップ。
+            if !ProStore.resolveDebugForcePro() {
+                await store.refreshEntitlements()
+                await store.refreshGrandfatherFromAppTransaction()
+            }
             await tunnel.load()
         }
     }
