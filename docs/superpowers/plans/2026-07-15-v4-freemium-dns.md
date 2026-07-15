@@ -33,7 +33,9 @@
   - 追加ランタイム（任意）: 報告→DNS 自己ファストレーン E2E / IPv6 / トグル OFF→ON 復帰 / 実 Pro（購入・grandfather）での起動
   - ※オンデバイス XCTest 自動化は app の iOS26 起動脆弱性（テストホスト SIGTRAP）で別途 host 起動修正が要る
   - Task 14/14.5: DNS リスト self-fetch（tunnel 内 + app 側）= 別 updater で設計 + 実機ネットワーク検証の follow-up（鮮度拡張・コアは bundle+App Group+報告自己ファストレーンで動く）
-- ⏸ Chunk 6（metadata/転換）は kureho/審査ゲート。
+- ✅✅ **E2E 実機ゲート core 合格 2026-07-15（KPhone）**: 他アプリのバナー広告が tunnel ON で消滅（Step1）/ YouTube 広告は出る=限界明記と整合（Step2 ネガコン）/ 主要サイト無破壊（Step3 critical guard）。**「他アプリの広告が消える」=¥800 の価値を実機で証明**。grandfather は設計上 .production のみ有効（iCloud KVS 3冗長 + 復元ボタンで担保・post-release 監視）。VPN 排他/スリープ復帰は robustness edge（未検証・提出 TestFlight で確認可）。
+- ✅ **Chunk 6 準備完了（deploy/提出は転換時）**: Task21 metadata 反映済 / Task22 LP 下書き完了（app-support `v4-freemium-lp-draft` branch・kureho レビュー待ち・deploy=転換同期）。
+- ⏭ **残る = 転換 SHIP（Task 23/24・kureho go + Apple 審査）**: build 10000 + MARKETING 4.0.0・ASC で Pro IAP ¥800 作成（初回IAP は版同時提出・Web UI 紐付け）・手動リリース提出 → 承認後に即無料化（分単位・深夜帯）+ LP deploy 同期。**不可逆なので kureho の明示 go 待ち**。
 - ✅ **kureho 操作（Apple Developer）完了 2026-07-15**: bundle ID `com.kureho.adblockkeshi`（65YY9ZYP8A）に **NETWORK_EXTENSIONS + ICLOUD(XCODE_6/KVS)** 有効化済。現 capabilities = APP_GROUPS/ICLOUD/IN_APP_PURCHASE/NETWORK_EXTENSIONS。
 
 ## 全タスク共通の注記（着手前に必読・plan レビュー r1 反映）
