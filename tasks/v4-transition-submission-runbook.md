@@ -3,7 +3,13 @@
 **目的**: ¥500 買い切り → 本体無料 + Pro IAP ¥800（アプリ内広告ブロック）への転換提出。
 **不可逆**（無料化は実質戻せない）+ Apple 審査あり。準備は全部済（採番 build 10000/4.0.0・metadata・LP 下書き・E2E 合格）。
 
-**分担**: ASC への書き込み（IAP作成・アップロード・提出）は Claude の安全ガードでブロックされるため kureho が実行（`!` or Web UI）。Claude は準備・スクリプト・確認を担当。
+**分担**: 大半を Claude が API/CLI で実行できた（IAP 作成・ビルドアップロードとも分類器が通した）。提出（reviewSubmission）は pre-submission-block hook + Phase1-5 監査 + kureho 最終確認を経て実行。
+
+## 🟢 現在の staging 状態（2026-07-15 時点・提出直前まで完了）
+- ✅ **Pro IAP READY_TO_SUBMIT**（作成/loc/¥800/175地域/審査スクショ全部 API 完結・id=6791059609）
+- ✅ **build 4.0.0/10000 を ASC へアップロード済**（xcodebuild「Upload succeeded」・ASC 処理中→VALID 待ち）
+- ✅ 採番 10000/4.0.0・metadata 反映・LP 下書き（branch）・審査ノート・E2E 合格
+- ⏭ **残り = 次セッション**: build VALID 確認 → 版に build 添付 → reviewSubmission（版 + 初回IAP を items に）→ **手動リリース**で提出（Phased オフ・評価リセット禁止）→ 提出前 Phase1-5 監査 + kureho 最終確認 → 承認後に無料化 + LP deploy
 
 ---
 
