@@ -7,21 +7,13 @@
 
 ---
 
-## kureho がやること（順番厳守・約15分）
+## ✅ ① IAP 作成 = Claude が API で完了済み（2026-07-15）
+`com.kureho.adblockkeshi.pro`（id=6791059609）・NON_CONSUMABLE・**¥800**・ja/en 説明・
+175地域配信・審査スクショ（1242x2208・COMPLETE）→ **state=READY_TO_SUBMIT**。
+※ 初回IAPは版と同時に審査へ回るため、下記④の提出で version と一緒に submission items に含める。
+※ kureho の Web UI 作業は不要だった（全て API で完結）。
 
-### ① ASC で IAP 作成（Web UI・初回IAPは Web UI 必須）
-1. ASC → 広告消し → **App内課金** → **＋** → **非消耗型（Non-Consumable）**
-2. 参照名: `アプリ内広告ブロック`
-3. **製品ID: `com.kureho.adblockkeshi.pro`**（★コードと一致・変更不可・厳密に）
-4. 価格: **¥800**
-5. ローカリゼーション（日本語）:
-   - 表示名: `アプリ内広告ブロック`
-   - 説明: `他のアプリや Safari の広告を端末内の DNS で抑えます。ずっと買い切り。`
-6. **審査用スクリーンショット**: 下記②で Claude が用意する Paywall 画像をアップロード
-7. **この IAP を 4.0.0 バージョンに紐付け**（バージョンページの「App内課金」欄で選択・初回は Web UI 必須）
-
-### ② 審査スクショ（Claude 用意 → kureho アップロード）
-Claude が Paywall 画面のスクショを生成して渡す → ①-6 でアップロードするだけ。
+## kureho がやること（残り）
 
 ### ③ ビルドのアップロード（`!` 一発）
 Claude が Archive を作成 → kureho が以下を実行:
