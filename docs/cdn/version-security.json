@@ -1,9 +1,9 @@
 {
-  "security-rules_sha256": "3bc2902601c0a0deb7c76ae652f1ded4f3c8c2856a4b25acbe9448eed7b8f99c",
-  "security-rules_bytes": 3517459,
+  "security-rules_sha256": "9b5fc81773bedc3849c51b5896740b8e3f20921c5b98270fbae69f1dbcab2cd8",
+  "security-rules_bytes": 3518086,
   "merged-rules_sha256": "2e2c7af805263af55a72845cc6bcbeb3384fd01d589aad80ae6104f0114e1df7",
   "merged-rules_bytes": 20470276,
   "empty-rules_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "empty-rules_bytes": 2,
-  "generated_at": "2026-07-19T01:19:08.477750Z"
+  "generated_at": "2026-07-26T01:24:41.219340Z"
 }
