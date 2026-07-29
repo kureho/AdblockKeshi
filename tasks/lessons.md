@@ -1,5 +1,25 @@
 # AdblockKeshi 教訓集
 
+## 2026-07-29: 上流 DNS のハードコードは NAT64/DNS64 モバイル網で全断する（4.0.0 本番障害 → 4.0.1 hotfix）
+
+### 事象
+v4.0.0 の DNS 型アプリ内広告ブロック（NEPacketTunnelProvider）が、IPv6 単独 + NAT64/DNS64 のモバイル回線で名前解決全断＝通信不能。Wi-Fi（デュアルスタック）では正常なため、提出前 E2E（7/15・Wi-Fi のみ）で検出できず本番流出した。
+
+### 根本原因
+上流 DNS を Cloudflare 1.1.1.1 にハードコードしていたため、キャリアの DNS64 変換（IPv6 単独網が IPv4 リソースへ到達する要）を迂回し、合成 AAAA が得られず全滅。
+
+### 修正（4.0.1・build 10001）
+1. 上流はシステム DNS snapshot 優先・取得不可時のみ public DNS fallback（UpstreamPlanner）
+2. DNSHealthMonitor watchdog（無応答検知 → rotate → 全滅で stopTunnel フェイルセーフ）
+3. ネットワーク切替 reassert の DNS 再取得予算は DHCP 配布遅延を見込んで 30 秒（2 秒では実機で枯渇 → トグル勝手 OFF を実測）
+
+### 教訓
+1. **ネットワーク系機能の E2E は Wi-Fi とモバイル回線の両方を通す**（可能なら IPv6 単独網）。回線種別は sim-blind な検証軸（skill submitting-ios-build Phase 2.5 と同型）
+2. **上流サーバーのハードコードは「現在の網が提供する経路」を壊す**。まずシステム提供値・fallback は後置
+3. 失陥時に黙って壊れない watchdog（検知 → 自動復旧 → 最終的に安全側停止）を最初から入れる
+
+---
+
 ## 2026-06-12: 月次フィルタ更新が runner イメージ更新で silent fail（6/1〜6/12 の12日間停止）
 
 ### 事象
