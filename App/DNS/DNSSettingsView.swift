@@ -2,7 +2,7 @@ import SwiftUI
 
 /// アプリ内広告ブロック（DNS）の設定画面。
 /// 非 Pro は Paywall、Pro はワンタップトグル + 状態 + 限界明記（他VPN排他・再起動後は手動ON・
-/// YouTube等は不可・上流 Cloudflare・端末内処理）。
+/// YouTube等は不可・上流はお使いの回線の DNS・端末内処理）。
 /// ★トグルの実 tunnel 起動は Chunk 3（NETunnelProviderManager・実機のみ）で配線する。
 struct DNSSettingsView: View {
     let store: ProStore
@@ -88,7 +88,7 @@ struct DNSSettingsView: View {
             InfoRow(icon: "lock.shield", iconColor: .accentColor,
                     text: "判定もクエリも端末内。外部サーバーは経由しません")
             InfoRow(icon: "network", iconColor: .blue,
-                    text: "名前解決先は Cloudflare（1.1.1.1）に変わります")
+                    text: "名前解決はお使いの回線の DNS をそのまま利用します")
             InfoRow(icon: "personalhotspot", iconColor: .purple,
                     text: "VPN 表示になります（他の VPN とは同時に使えません）")
             InfoRow(icon: "arrow.clockwise", iconColor: .orange,

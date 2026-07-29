@@ -57,3 +57,17 @@ spec: `~/claude/docs/superpowers/specs/2026-06-27-adblock-privacy-redaction-desi
 - `docs/cdn/feature-flags.json` は公開 CDN アーティファクトのため残置（孤立だが無害）。
 
 （2026-06-08 generated、2026-06-27 stale 究明監査で live 3.4.0 と照合し全項目を再分類）
+
+## 4.0.1 hotfix — モバイル回線(NAT64/DNS64)全断障害（2026-07-29 発覚・kureho 承認済み方針=案A）
+
+根本原因: ハードコード Cloudflare 上流が IPv6単独+NAT64/DNS64 のモバイル網でキャリア DNS64 を迂回 → 全断。
+Wi-Fi(デュアルスタック)では正常 = 7/15 E2E が Wi-Fi のみだったため出荷前に検出できず。
+
+- [ ] promotionalText 注意書き反映（scripts/set_promo_mobile_notice_v400.py・分類器 deny → kureho `!` 実行待ち）
+- [ ] TDD: SystemDNSResolvers.parse（resolv.conf → nameserver 抽出）
+- [ ] TDD: UpstreamPlanner.plan（sentinel/loopback 除外・dedupe・Cloudflare fallback 後置）
+- [ ] TDD: DNSHealthMonitor（無応答検知 → rotate → 全滅で stopTunnel = watchdog フェイルセーフ）
+- [ ] PacketTunnelProvider 配線（起動前 snapshot・単一上流+rotation・受信ループ常時再武装・path change reassert）
+- [ ] DNSSettingsView:91 の「Cloudflare（1.1.1.1）」文言更新 + LP privacy 文言確認
+- [ ] sim 全テスト → Codex review + code-reviewer → 実機（Wi-Fi + モバイル回線必須）検証
+- [ ] 提出は kureho 判断（reviewNotes に上流変更を明記）
