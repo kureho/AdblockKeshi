@@ -1,7 +1,7 @@
 # AdblockKeshi プロジェクト指示
 
 ## プロダクト
-- iOS Safari Content Blocker、買い切り **¥500**、シンプル極限訴求
+- iOS Safari Content Blocker、**無料 + 買い切り IAP『アプリ内広告ブロック』¥800**（v4.0 フリーミアム転換・2026-07-29 配信。〜v3 は買い切り ¥500）、シンプル極限訴求
 - ターゲット: 「アドブロック」という言葉を知らない、Safari をもっと快適に使いたい層
 - v1 spec: `~/claude/docs/superpowers/specs/2026-05-30-adblock-design.md`
 - **v2.0 spec（セキュリティ機能追加）**: `~/claude/docs/superpowers/specs/2026-06-02-anti-phishing-design.md`
