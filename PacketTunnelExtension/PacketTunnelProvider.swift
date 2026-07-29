@@ -399,6 +399,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         setTunnelNetworkSettings(nil) { [weak self] error in
             guard let self else { return }
             self.workQueue.async {
+                // stopTunnel（手動 OFF）後に遅延完了した場合は何もしない（cancel の二重発火防止）
+                guard !self.isShuttingDown else { return }
                 if error != nil {
                     // settings を外せない＝resolv.conf が sentinel のままで snapshot が汚染される。
                     // fallback 直行（v4.0.0 障害の再導入）はせず、中途半端に握らず自動停止する
@@ -439,6 +441,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                                                      fallbacks: Net.fallbackUpstreams)
             self.setTunnelNetworkSettings(self.makeSettings()) { error in
                 self.workQueue.async {
+                    // stopTunnel（手動 OFF）後に遅延完了した場合、上流を再生成してはいけない
+                    guard !self.isShuttingDown else { return }
                     if let error {
                         self.finishReassert(cancelWith: error)   // 再適用に失敗＝中途半端に握らない
                         return
