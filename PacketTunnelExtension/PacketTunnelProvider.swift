@@ -408,15 +408,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                         userInfo: [NSLocalizedDescriptionKey: "ネットワーク切替の再設定に失敗したため保護を自動停止しました"]))
                     return
                 }
-                self.resnapshotThenReapply(attemptsLeft: 4)
+                self.resnapshotThenReapply(attemptsLeft: ReassertRetryPolicy.maxAttempts)
             }
         }
     }
 
-    /// resolv.conf がシステム DNS に戻るまで 0.5 秒間隔で snapshot をリトライ（最大 4 回 = 2 秒）。
+    /// resolv.conf がシステム DNS に戻るまで ReassertRetryPolicy の間隔で snapshot をリトライ（予算 30 秒）。
+    /// Wi-Fi join 直後は DHCP が DNS を configure するまで数秒〜十数秒かかるため、予算が短いと
+    /// 日常の Wi-Fi 切替で cancel（トグル勝手 OFF）になる（2026-07-29 実機で実測 → v4.0.1 で延長）。
     /// 取れないまま fallback-only で運転すると NAT64 網で v4.0.0 障害が再発するため、諦める時は停止する。
     private func resnapshotThenReapply(attemptsLeft: Int) {
-        workQueue.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        workQueue.asyncAfter(deadline: .now() + ReassertRetryPolicy.interval) { [weak self] in
             guard let self, !self.isShuttingDown else { return }
             let snapshot = SystemDNSResolvers.snapshot()
             let systemOnly = UpstreamPlanner.plan(systemServers: snapshot,
