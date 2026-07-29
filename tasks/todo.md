@@ -72,7 +72,8 @@ Wi-Fi(デュアルスタック)では正常 = 7/15 E2E が Wi-Fi のみだった
 - [x] sim 全テスト GREEN（iPhone 17・TEST SUCCEEDED）→ 3レビュー完了 + 指摘全反映（下記）
 - [x] 実機 E2E 合格（モバイル回線・KPhone Debug 版・2026-07-29 ラウンド3）: トグル ON で yahoo.co.jp 解決 / apple.com 素通し / doubleclick.net ブロック / アクティブブラウジング下 132 秒生存 + watchdog 誤発火なし = v4.0.0 障害解消を実機確認
 - [x] **実機で Wi-Fi 切替障害を検出 → 修正**: Wi-Fi ON 切替で reassert の snapshot リトライ予算（0.5s×4=2秒）が DHCP の DNS 配布前に枯渇 → cancel でトグル勝手 OFF（20:11:45 実測。死因は fetchLastDisconnectError 診断テストで「ネットワーク切替後に回線の DNS を取得できない…」文言を実機から取得し確定）。修正 = `ReassertRetryPolicy` 新設で予算 30 秒化（TDD RED「2.0<30.0」→GREEN・回帰テスト付き）。診断用 `TunnelDisconnectDiagnosticsTests` 追加（sim は XCTSkip）
-- [ ] 実機検証つづき（修正版で再検証中）: Wi-Fi⇄モバイル切替（連続含む）/ 機内モード往復 / スリープ復帰直後 / 他 VPN 排他 / 受信エラー→再武装 / トグル OFF クラッシュ無し / TunnelDNSVerificationTests（実機のみ）。**⚠ xcodebuild test は実機でアプリ再インストール → 稼働中 extension が死ぬ。生存測定と併用不可（手動 Safari プローブで代替）**
+- [x] **切替テスト合格（30 秒予算版・2026-07-29 20:27〜20:28）**: トグル ON → Wi-Fi ON → Wi-Fi OFF → 機内モード往復 → 手動 OFF を完走。途中のエラー停止なし（監視 = 起動 20:27:23 / 消滅 20:28:03 の1サイクルのみ・fetchLastDisconnectError = nil = 最後の切断は正常切断）
+- [ ] 実機検証の残り（任意・優先度低）: スリープ復帰直後（suspend-gap 処理・長時間放置が必要）/ 他 VPN 排他（iOS 側保証）/ 受信エラー→再武装（ユニットテスト済み）。**⚠ xcodebuild test は実機でアプリ再インストール → 稼働中 extension が死ぬ。生存測定と併用不可（手動 Safari プローブで代替）**
 - [ ] 4.0.1 リリース時: MARKETING_VERSION 4.0.1 採番（project.yml は 4.0.0 のまま）・reviewNotes に上流変更明記（審査時回答「Cloudflare へ転送」との整合）・app-support products.ts:3938(FAQ)/:4026(privacy) の Cloudflare 文言を「通常は回線 DNS・取得できない場合のみ代替 DNS」に更新 + デプロイ（4.0.1 配信に同期）
 - [ ] 提出は kureho 判断（自律提出しない・live 4.0.0 無傷維持）
 
