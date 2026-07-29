@@ -82,4 +82,29 @@ final class DNSHealthMonitorTests: XCTestCase {
         m.recordForward(now: 100); m.recordForward(now: 101); m.recordForward(now: 102)
         XCTAssertEqual(m.check(now: 106), .stopTunnel, "回す先が無ければ即 stop")
     }
+
+    // reset(): サスペンド復帰・電波喪失など「無応答が上流劣化の証拠にならない」区間の白紙化
+
+    func test_reset_clearsUnansweredWindow() {
+        let m = monitor(upstreamCount: 2)
+        m.recordForward(now: 100); m.recordForward(now: 101); m.recordForward(now: 102)
+        m.reset()
+        XCTAssertEqual(m.check(now: 110), .none, "サスペンド中に溜まった無応答で誤 rotate しない")
+    }
+
+    func test_reset_restoresRotationBudget() {
+        let m = monitor(upstreamCount: 2)
+        m.recordForward(now: 100); m.recordForward(now: 101); m.recordForward(now: 102)
+        XCTAssertEqual(m.check(now: 106), .rotate)
+        m.noteRotation(now: 106)
+        m.reset()
+        m.recordForward(now: 200); m.recordForward(now: 201); m.recordForward(now: 202)
+        XCTAssertEqual(m.check(now: 208), .rotate, "reset 後は rotation 予算も白紙（即 stop しない）")
+    }
+
+    func test_zeroUpstreams_stopTunnelImmediately() {
+        let m = monitor(upstreamCount: 0)
+        m.recordForward(now: 100); m.recordForward(now: 101); m.recordForward(now: 102)
+        XCTAssertEqual(m.check(now: 106), .stopTunnel, "候補ゼロなら握り続けない（防御・実際は fallback 定数で空にならない）")
+    }
 }

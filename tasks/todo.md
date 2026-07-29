@@ -63,11 +63,23 @@ spec: `~/claude/docs/superpowers/specs/2026-06-27-adblock-privacy-redaction-desi
 根本原因: ハードコード Cloudflare 上流が IPv6単独+NAT64/DNS64 のモバイル網でキャリア DNS64 を迂回 → 全断。
 Wi-Fi(デュアルスタック)では正常 = 7/15 E2E が Wi-Fi のみだったため出荷前に検出できず。
 
-- [ ] promotionalText 注意書き反映（scripts/set_promo_mobile_notice_v400.py・分類器 deny → kureho `!` 実行待ち）
-- [ ] TDD: SystemDNSResolvers.parse（resolv.conf → nameserver 抽出）
-- [ ] TDD: UpstreamPlanner.plan（sentinel/loopback 除外・dedupe・Cloudflare fallback 後置）
-- [ ] TDD: DNSHealthMonitor（無応答検知 → rotate → 全滅で stopTunnel = watchdog フェイルセーフ）
-- [ ] PacketTunnelProvider 配線（起動前 snapshot・単一上流+rotation・受信ループ常時再武装・path change reassert）
-- [ ] DNSSettingsView:91 の「Cloudflare（1.1.1.1）」文言更新 + LP privacy 文言確認
-- [ ] sim 全テスト → Codex review + code-reviewer → 実機（Wi-Fi + モバイル回線必須）検証
-- [ ] 提出は kureho 判断（reviewNotes に上流変更を明記）
+- [ ] promotionalText 注意書き反映（scripts/set_promo_mobile_notice_v400.py・分類器 deny → **kureho `!` 実行待ち**）
+- [x] TDD: SystemDNSResolvers.parse（resolv.conf → nameserver 抽出）
+- [x] TDD: UpstreamPlanner.plan（sentinel/loopback 除外・dedupe・Cloudflare fallback 後置）
+- [x] TDD: DNSHealthMonitor（無応答検知 → rotate → 全滅で stopTunnel = watchdog フェイルセーフ・reset() 含め12テスト GREEN）
+- [x] PacketTunnelProvider 配線（起動前 snapshot・単一上流+rotation・受信ループ常時再武装・path change reassert）
+- [x] DNSSettingsView 文言更新（:89 端末内判定・:91 通常は回線 DNS/取得できない場合のみ代替 DNS）
+- [x] sim 全テスト GREEN（iPhone 17・TEST SUCCEEDED）→ 3レビュー完了 + 指摘全反映（下記）
+- [ ] **実機検証（Wi-Fi + モバイル回線必須・KPhone 協力要）**: モバイルでトグル ON→名前解決 / Wi-Fi⇄モバイル切替（連続含む）/ 機内モード往復 / スリープ復帰直後 / 他 VPN 排他 / 受信エラー→再武装 / トグル OFF クラッシュ無し / TunnelDNSVerificationTests（実機のみ）
+- [ ] 4.0.1 リリース時: MARKETING_VERSION 4.0.1 採番（project.yml は 4.0.0 のまま）・reviewNotes に上流変更明記（審査時回答「Cloudflare へ転送」との整合）・app-support products.ts:3938(FAQ)/:4026(privacy) の Cloudflare 文言を「通常は回線 DNS・取得できない場合のみ代替 DNS」に更新 + デプロイ（4.0.1 配信に同期）
+- [ ] 提出は kureho 判断（自律提出しない・live 4.0.0 無傷維持）
+
+### 3レビュー（Codex adversarial=no-ship 4件 / Codex review=2件 / code-reviewer=条件付き承認）指摘 → 反映済み7領域
+
+1. [x] reassert の settings nil 失敗無視 → error 明示処理 + cancelTunnelWithError（fallback 直行の再導入防止）
+2. [x] 停止後の受信ループ再武装復活 + stopTunnel クロスキュー競合 → upstreamGeneration トークン + isShuttingDown + workQueue.async 化
+3. [x] 期限切れ/未知 ID 応答で watchdog リセットされる穴 → recordResponse を forwarding.resolve 成功後へ移動
+4. [x] snapshot 空で無警告 fallback → reassert 側は 0.5s×4 リトライ + 取れなければ cancel（fallback-only 運転拒否）
+5. [x] 末尾上流の範囲外 rotate（no-op で DNS 握り続け）→ startUpstream をラップアラウンド化（monitor の rotation 予算と意味論一致）
+6. [x] Cloudflare 固定化（NAT64 で部分全断が無期限化・watchdog では検知不能）→ ①サスペンドギャップで health.reset() ②電波 unsatisfied 中は watchdog 停止+reset ③60s ごとの index 0 復帰プローブ（example.com A クエリ・本線非干渉）
+7. [x] reassert 中の path 変化握りつぶし → pendingReassert で消化 / UI 文言の fallback 整合

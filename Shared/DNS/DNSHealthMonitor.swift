@@ -37,6 +37,14 @@ final class DNSHealthMonitor {
         rotations = 0   // 応答実績のある上流に切り替わった → rotation 予算を回復
     }
 
+    /// サスペンド復帰・電波喪失など「無応答が上流劣化の証拠にならない」区間があった時の白紙化。
+    /// window も rotation 予算も戻す（停止中に溜まった記録で誤 rotate / 誤 stopTunnel しない）。
+    func reset() {
+        unansweredCount = 0
+        firstUnansweredAt = nil
+        rotations = 0
+    }
+
     func noteRotation(now: TimeInterval) {
         rotations += 1
         unansweredCount = 0

@@ -9,9 +9,13 @@ import Network
 ///
 /// 4.0.1 hotfix（モバイル回線 NAT64/DNS64 全断障害）:
 /// - 上流 = トンネル確立「前」に snapshot したシステム DNS（キャリア DNS64 を生かす）→ Cloudflare は最後の砦
-/// - watchdog = 上流無応答なら rotate → 全滅なら cancelTunnelWithError（端末のネットを死んだままにしない）
-/// - 受信ループはエラーでも再武装（v4.0.0 は最初のエラーで永久停止だった）
-/// - ネットワーク切替（Wi-Fi⇄モバイル）で reassert して snapshot を取り直す
+/// - watchdog = 上流無応答なら rotate → 全滅なら cancelTunnelWithError（端末のネットを死んだままにしない）。
+///   電波喪失（path unsatisfied）・サスペンド復帰の無応答は上流劣化の証拠にならないので数えない
+/// - 受信ループはエラーでも再武装（v4.0.0 は最初のエラーで永久停止だった）。generation で失効管理
+/// - ネットワーク切替（Wi-Fi⇄モバイル）で reassert して snapshot を取り直す。システム DNS が
+///   取れないまま fallback-only で運転しない（それは v4.0.0 障害の再導入）
+/// - fallback 運転中は 60 秒ごとに index 0（システム DNS）へ復帰プローブ（NAT64 網で Cloudflare は
+///   「応答は返るが DNS64 合成が無い」＝watchdog では検知できない部分故障になるため）
 final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private let workQueue = DispatchQueue(label: "com.kureho.adblockkeshi.tunnel")
@@ -23,7 +27,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var health: DNSHealthMonitor?
     private var pathMonitor: NWPathMonitor?
     private var pathSignature: String?
+    private var isPathSatisfied = true
     private var isReasserting = false
+    private var pendingReassert = false
+    private var isShuttingDown = false
+    /// 遅延ブロック（受信ループ再武装）の失効判定。startUpstream / stopTunnel / reassert で進める。
+    private var upstreamGeneration = 0
+    private var lastMaintenanceTick: TimeInterval?
+    private var primaryProbe: NWConnection?
+    private var lastPrimaryProbeAt: TimeInterval?
     private var nextRewriteID: UInt16 = 1
     private var maintenanceTimer: DispatchSourceTimer?
     private var selfFetchTimer: DispatchSourceTimer?
@@ -76,11 +88,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func stopTunnel(with reason: NEProviderStopReason,
                             completionHandler: @escaping () -> Void) {
-        maintenanceTimer?.cancel(); maintenanceTimer = nil
-        selfFetchTimer?.cancel(); selfFetchTimer = nil
-        pathMonitor?.cancel(); pathMonitor = nil
-        upstream?.cancel(); upstream = nil
-        completionHandler()
+        // NEProvider の専用キューから共有状態を直接触らない（workQueue 上の I/O 経路と競合する）
+        workQueue.async { [weak self] in
+            guard let self else { completionHandler(); return }
+            self.isShuttingDown = true
+            self.upstreamGeneration &+= 1   // 予約済みの再武装ブロックを失効させる
+            self.maintenanceTimer?.cancel(); self.maintenanceTimer = nil
+            self.selfFetchTimer?.cancel(); self.selfFetchTimer = nil
+            self.pathMonitor?.cancel(); self.pathMonitor = nil
+            self.primaryProbe?.cancel(); self.primaryProbe = nil
+            self.upstream?.cancel(); self.upstream = nil
+            completionHandler()
+        }
     }
 
     /// app からの即時 reload（sendProviderMessage）。リスト更新後の反映に使う。
@@ -131,16 +150,20 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// 現在の plan で watchdog と先頭上流を（作り）直す。workQueue 上で呼ぶ。
     private func activateUpstreams() {
         health = DNSHealthMonitor(upstreamCount: upstreamPlan.count)
+        lastPrimaryProbeAt = nil
         startUpstream(at: 0)
     }
 
-    /// index 番目の上流へ接続を張り替える。workQueue 上で呼ぶ。
+    /// index 番目（範囲外はラップ）の上流へ接続を張り替える。workQueue 上で呼ぶ。
+    /// ラップしないと「応答実績で rotation 予算が戻ったのに index は末尾のまま」の状態で
+    /// 範囲外 no-op → 上流ゼロで DNS を握る窓ができる。全滅時の停止は watchdog の予算が保証する。
     private func startUpstream(at index: Int) {
+        upstreamGeneration &+= 1
         upstream?.cancel()
         upstream = nil
-        guard index < upstreamPlan.count else { return }   // 尽きたら watchdog の stopTunnel に任せる
-        upstreamIndex = index
-        let conn = NWConnection(host: NWEndpoint.Host(upstreamPlan[index]), port: 53, using: .udp)
+        guard !upstreamPlan.isEmpty else { return }   // fallback 定数があるため実際には空にならない（防御）
+        upstreamIndex = index % upstreamPlan.count
+        let conn = NWConnection(host: NWEndpoint.Host(upstreamPlan[upstreamIndex]), port: 53, using: .udp)
         upstream = conn
         conn.start(queue: workQueue)
         receiveUpstream(conn)
@@ -153,11 +176,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             if error == nil {
                 self.receiveUpstream(conn)
             } else {
-                // 受信エラーで再武装を止めない（v4.0.0 の脆さ修正）。1 秒おいて同じ上流を作り直す
+                // 受信エラーで再武装を止めない（v4.0.0 の脆さ修正）。1 秒おいて同じ上流を作り直す。
+                // generation が進んでいたら（rotate / reassert / stopTunnel 後）復活させない
                 self.upstream = nil
                 conn.cancel()
+                let generation = self.upstreamGeneration
                 self.workQueue.asyncAfter(deadline: .now() + 1) { [weak self] in
-                    guard let self, self.upstream == nil else { return }   // rotate/reassert 済みなら不要
+                    guard let self, !self.isShuttingDown,
+                          self.upstreamGeneration == generation, self.upstream == nil else { return }
                     self.startUpstream(at: self.upstreamIndex)
                 }
             }
@@ -224,9 +250,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private func handleUpstreamResponse(_ data: Data) {
         let bytes = [UInt8](data)
         guard bytes.count >= 2 else { return }
-        health?.recordResponse(now: Date().timeIntervalSince1970)
         let rewrittenID = UInt16(bytes[0]) << 8 | UInt16(bytes[1])
         guard let request = forwarding.resolve(rewrittenID: rewrittenID) else { return }
+        // resolve 成功＝クライアントに実際に届く応答だけを健全性の証拠にする
+        // （期限切れ・未知 ID の応答で watchdog を回復させると、実利用はタイムアウトなのに rotate しない）
+        health?.recordResponse(now: Date().timeIntervalSince1970)
         // 応答 DNS ID を元クライアントの ID に戻す
         let reqBytes = [UInt8](request.payload)
         guard reqBytes.count >= 2 else { return }
@@ -252,8 +280,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             let now = Date().timeIntervalSince1970
+            // サスペンド復帰: 止まっていた実時間中の無応答は上流劣化の証拠にならない → 白紙化
+            if let last = self.lastMaintenanceTick, now - last > 30 {
+                self.health?.reset()
+            }
+            self.lastMaintenanceTick = now
             self.forwarding.expireAll(olderThan: now - 5)   // 応答なしは偽装せず捨てる
             self.runWatchdog(now: now)
+            self.runPrimaryRetryProbe(now: now)
         }
         timer.resume()
         maintenanceTimer = timer
@@ -261,7 +295,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     /// watchdog フェイルセーフ: 無応答なら次の上流へ、全滅ならトンネル自動停止（素の通信に戻す）。
     private func runWatchdog(now: TimeInterval) {
-        guard !isReasserting, let health else { return }
+        // 電波喪失（path unsatisfied）中の無応答は上流のせいではない → 判定しない
+        guard !isReasserting, !isShuttingDown, isPathSatisfied, let health else { return }
         switch health.check(now: now) {
         case .none:
             break
@@ -269,12 +304,56 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             health.noteRotation(now: now)
             startUpstream(at: upstreamIndex + 1)
         case .stopTunnel:
+            isShuttingDown = true   // 以後の watchdog 再発火・再武装を止める（cancel は一度きり）
             cancelTunnelWithError(NSError(
                 domain: NEVPNErrorDomain,
                 code: NEVPNError.connectionFailed.rawValue,
                 userInfo: [NSLocalizedDescriptionKey: "DNS 上流が応答しないため保護を自動停止しました"]))
         }
     }
+
+    // MARK: - fallback 固定化からの自動復帰（index 0 = システム DNS への復帰プローブ）
+
+    /// NAT64 網の Cloudflare は「応答は返るが DNS64 合成が無い」＝watchdog（応答の有無しか見ない）では
+    /// 検知できない部分故障になる。非 primary 運転中は 60 秒ごとに index 0 へ別接続でプローブを打ち、
+    /// 応答が返れば primary に戻す。本線 upstream は触らないので実トラフィックは劣化しない。
+    private func runPrimaryRetryProbe(now: TimeInterval) {
+        guard !isReasserting, !isShuttingDown, isPathSatisfied,
+              upstreamIndex > 0, !upstreamPlan.isEmpty else {
+            primaryProbe?.cancel(); primaryProbe = nil
+            lastPrimaryProbeAt = nil
+            return
+        }
+        guard let last = lastPrimaryProbeAt else {
+            lastPrimaryProbeAt = now   // rotate 直後の即プローブはフラッピングの元 → 初回は 60 秒待つ
+            return
+        }
+        guard now - last >= 60 else { return }
+        lastPrimaryProbeAt = now
+        primaryProbe?.cancel()
+        let conn = NWConnection(host: NWEndpoint.Host(upstreamPlan[0]), port: 53, using: .udp)
+        primaryProbe = conn
+        conn.start(queue: workQueue)
+        conn.receiveMessage { [weak self] data, _, _, _ in
+            guard let self, conn === self.primaryProbe else { return }
+            self.primaryProbe = nil
+            conn.cancel()
+            guard !self.isShuttingDown, !self.isReasserting, self.upstreamIndex > 0,
+                  let data, !data.isEmpty else { return }
+            // SERVFAIL でも応答が返る＝到達性は回復している → primary へ戻す（新しい上流に新しい window）
+            self.health?.reset()
+            self.startUpstream(at: 0)
+        }
+        conn.send(content: Self.probeQuery, completion: .contentProcessed { _ in })
+    }
+
+    /// プローブ用の固定 DNS クエリ（example.com A IN・RD=1）。応答内容は見ない＝到達性だけを確認する。
+    private static let probeQuery: Data = {
+        var bytes: [UInt8] = [0x4B, 0x48, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        bytes += [0x07] + Array("example".utf8) + [0x03] + Array("com".utf8) + [0x00]
+        bytes += [0x00, 0x01, 0x00, 0x01]
+        return Data(bytes)
+    }()
 
     // MARK: - ネットワーク切替（Wi-Fi⇄モバイル）で snapshot を取り直す
 
@@ -286,7 +365,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func handlePathUpdate(_ path: Network.NWPath) {
-        guard path.status == .satisfied else { return }
+        let satisfied = (path.status == .satisfied)
+        if isPathSatisfied != satisfied {
+            isPathSatisfied = satisfied
+            // 電波喪失区間（とその復帰）をまたいだ無応答は上流劣化の証拠にならない → 白紙化。
+            // 喪失中は runWatchdog 自体も止まるので、誤 rotate / 誤 stopTunnel が構造的に起きない
+            health?.reset()
+        }
+        guard satisfied else { return }
         // 物理インターフェイスだけで署名を作る（自分の utun の付け外しで発火しないように）
         let signature = path.availableInterfaces
             .filter { $0.type == .wifi || $0.type == .cellular || $0.type == .wiredEthernet }
@@ -295,35 +381,84 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         guard let last = pathSignature else { pathSignature = signature; return }   // 初回は基準記録のみ
         guard signature != last, !signature.isEmpty else { pathSignature = signature; return }
         pathSignature = signature
-        reassertForNetworkChange()
+        if isReasserting {
+            pendingReassert = true   // reassert 中に来た切替は握りつぶさず、完了後にやり直す
+        } else {
+            reassertForNetworkChange()
+        }
     }
 
     /// settings を一旦外してシステム DNS を復元 → snapshot し直し → settings 再適用 → 上流作り直し。
     private func reassertForNetworkChange() {
-        guard !isReasserting else { return }
+        guard !isReasserting, !isShuttingDown else { return }
         isReasserting = true
         reasserting = true
+        upstreamGeneration &+= 1   // 予約済みの再武装ブロックを失効させる
         upstream?.cancel(); upstream = nil
-        setTunnelNetworkSettings(nil) { [weak self] _ in
+        primaryProbe?.cancel(); primaryProbe = nil
+        setTunnelNetworkSettings(nil) { [weak self] error in
             guard let self else { return }
-            // resolv.conf がシステム DNS に戻るまで少し待ってから snapshot する
-            self.workQueue.asyncAfter(deadline: .now() + 0.5) {
-                self.rebuildUpstreamPlan()
-                self.setTunnelNetworkSettings(self.makeSettings()) { error in
-                    self.workQueue.async {
-                        defer {
-                            self.reasserting = false
-                            self.isReasserting = false
-                        }
-                        if let error {
-                            self.cancelTunnelWithError(error)   // 再適用に失敗＝中途半端に握らない
-                            return
-                        }
-                        self.activateUpstreams()
+            self.workQueue.async {
+                if error != nil {
+                    // settings を外せない＝resolv.conf が sentinel のままで snapshot が汚染される。
+                    // fallback 直行（v4.0.0 障害の再導入）はせず、中途半端に握らず自動停止する
+                    self.finishReassert(cancelWith: NSError(
+                        domain: NEVPNErrorDomain,
+                        code: NEVPNError.connectionFailed.rawValue,
+                        userInfo: [NSLocalizedDescriptionKey: "ネットワーク切替の再設定に失敗したため保護を自動停止しました"]))
+                    return
+                }
+                self.resnapshotThenReapply(attemptsLeft: 4)
+            }
+        }
+    }
+
+    /// resolv.conf がシステム DNS に戻るまで 0.5 秒間隔で snapshot をリトライ（最大 4 回 = 2 秒）。
+    /// 取れないまま fallback-only で運転すると NAT64 網で v4.0.0 障害が再発するため、諦める時は停止する。
+    private func resnapshotThenReapply(attemptsLeft: Int) {
+        workQueue.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self, !self.isShuttingDown else { return }
+            let snapshot = SystemDNSResolvers.snapshot()
+            let systemOnly = UpstreamPlanner.plan(systemServers: snapshot,
+                                                  excluding: Net.selfAddresses, fallbacks: [])
+            if systemOnly.isEmpty {
+                if attemptsLeft > 1 {
+                    self.resnapshotThenReapply(attemptsLeft: attemptsLeft - 1)
+                } else {
+                    self.finishReassert(cancelWith: NSError(
+                        domain: NEVPNErrorDomain,
+                        code: NEVPNError.connectionFailed.rawValue,
+                        userInfo: [NSLocalizedDescriptionKey: "ネットワーク切替後に回線の DNS を取得できないため保護を自動停止しました"]))
+                }
+                return
+            }
+            self.upstreamPlan = UpstreamPlanner.plan(systemServers: snapshot,
+                                                     excluding: Net.selfAddresses,
+                                                     fallbacks: Net.fallbackUpstreams)
+            self.setTunnelNetworkSettings(self.makeSettings()) { error in
+                self.workQueue.async {
+                    if let error {
+                        self.finishReassert(cancelWith: error)   // 再適用に失敗＝中途半端に握らない
+                        return
+                    }
+                    self.reasserting = false
+                    self.isReasserting = false
+                    self.activateUpstreams()
+                    if self.pendingReassert {   // reassert 中に来ていた次の切替をやり直す
+                        self.pendingReassert = false
+                        self.reassertForNetworkChange()
                     }
                 }
             }
         }
+    }
+
+    private func finishReassert(cancelWith error: Error) {
+        reasserting = false
+        isReasserting = false
+        pendingReassert = false
+        isShuttingDown = true
+        cancelTunnelWithError(error)
     }
 
     // MARK: - リスト self-fetch（tunnel 稼働中の鮮度維持・Task 14）
