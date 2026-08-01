@@ -18,4 +18,14 @@ enum ScreenshotMode {
     static var extraHorizontalPadding: CGFloat {
         isActive ? 16 : 0
     }
+
+    /// `--open-dns` 起動引数があれば DNS 設定画面へ直行する（DEBUG only・撮影用）。
+    /// タップ操作なしで DNSSettingsView を撮るために使う。Release では常に false。
+    static var autoOpenDNS: Bool {
+        #if DEBUG
+        return isActive && ProcessInfo.processInfo.arguments.contains("--open-dns")
+        #else
+        return false
+        #endif
+    }
 }

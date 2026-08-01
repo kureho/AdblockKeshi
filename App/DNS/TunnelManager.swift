@@ -18,6 +18,13 @@ final class TunnelManager {
 
     private(set) var status: Status = .off
 
+    #if DEBUG
+    /// 撮影用（--screenshot-mode）: 実 VPN なしで「有効」表示にする。Release には存在しない。
+    func forceOnForScreenshot() {
+        status = .on
+    }
+    #endif
+
     @ObservationIgnored private var manager: NETunnelProviderManager?
     @ObservationIgnored private var statusObserver: NSObjectProtocol?
 

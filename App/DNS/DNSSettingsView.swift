@@ -20,6 +20,13 @@ struct DNSSettingsView: View {
         .navigationTitle("アプリ内広告ブロック")
         .navigationBarTitleDisplayMode(.inline)
         .task {
+            #if DEBUG
+            // 撮影モード時は実 VPN を読まず「有効」表示に固定（sim には NE が無く IPC failed になるため）。
+            if ScreenshotMode.isActive {
+                tunnel.forceOnForScreenshot()
+                return
+            }
+            #endif
             // ゲート判定前に Pro 権利を最新化（既存購入・grandfather を反映。P1 対策）。
             // DEBUG 強制 Pro 時は StoreKit 参照が不要（sim ではサインイン要求が出るため）まとめてスキップ。
             if !ProStore.resolveDebugForcePro() {

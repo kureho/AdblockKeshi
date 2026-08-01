@@ -127,6 +127,8 @@ private func reloadBasicBlocker(identifier: String) async {
 
 struct CompletedView: View {
     @State private var pulse = false
+    /// 撮影用 `--open-dns` の自動遷移フラグ（DEBUG only・ScreenshotMode.autoOpenDNS 経由でのみ立つ）。
+    @State private var screenshotAutoOpenDNS = false
     /// moat（報告で追加 N 件）表示用。「フィルタ最終更新」の日付には使わない（虚偽表示解消）。
     @State private var versionInfo: VersionInfo? = nil
     /// 実際に端末へ適用された variant の記録（RuleUpdater が適用成功時に書く）。
@@ -285,12 +287,19 @@ struct CompletedView: View {
         // NavigationBar 配置時に NSISEngine が API Misuse で SIGTRAP (EXC_BREAKPOINT)。
         // CompletedView は title を持たないので NavigationBar を明示的に非表示にする。
         .toolbar(.hidden, for: .navigationBar)
+        .navigationDestination(isPresented: $screenshotAutoOpenDNS) {
+            DNSSettingsView(store: proStore)
+        }
         .onAppear {
             versionInfo = versionStore.read()
             appliedRecords = AppliedRulesStore()?.read() ?? [:]
             bundledGeneratedAt = BundledRulesInfo.generatedAt()
+            if ScreenshotMode.autoOpenDNS { screenshotAutoOpenDNS = true }
         }
         .task {
+            // 撮影モード（DEBUG only）では StoreKit を起動しない。sim の sandbox サインイン
+            // ダイアログが撮影に被るため。Release では ScreenshotMode.isActive が常に false。
+            guard !ScreenshotMode.isActive else { return }
             // Pro 権利をアプリ起動時に最新化（既存購入・grandfather を反映 → App Group にも書き、
             // DNS 画面へ入る前に isPro を pre-warm・tunnel の Pro チェックとも整合。P1 対策）。
             proStore.startTransactionListener()
