@@ -1,15 +1,16 @@
 # [paid-approved-by-kureho] v4.0.2 metadata-only staging・ASC API・課金なし(DevProgram内)
 """広告消し v4.0.2（メタデータのみ・スクショ全5枚刷新）の ASC staging。
+[paid-approved-by-kureho] 2026-08-02 kureho「スクショいい感じ！これでいこう！」= 4.0.2 提出承認済み
 
-- binary は live 4.0.1 と同一 build 10001 を流用（コード変更なし）
+- 配信済み build 10001 は新 version に attach 不可（ASC 409 実証）→ 同一コードの
+  build 10002 を新規 Archive+Upload して attach（機能変更なし・DEBUG 専用ハーネスのみ差分）
 - ja localization: description/keywords/URL/promotionalText は live 4.0.1 から copy、
   whatsNew のみ 4.0.2 用（掲載情報更新の正直表記）
 - ja APP_IPHONE_67 の既存スクショ（新 version に複製された旧5枚）を削除し、
   tasks/screenshot-drafts-v402/final/ の新5枚をアップロード
-- reviewNotes は「metadata-only・binary は live と同一」を明記
 
 提出（reviewSubmission）は本スクリプトではやらない（precheck ログ後に別実行）。
-実行: python3 scripts/stage_v402.py
+実行: python3 scripts/stage_v402.py [--skip-build]  # upload 処理中は --skip-build で先行実行
 """
 import hashlib
 import sys
@@ -22,8 +23,8 @@ from asc_api import ASC  # noqa: E402
 
 APP_ID = "6774906945"  # 広告消し
 LIVE_VERSION_ID = "572520eb-3115-4bca-8791-5a4eb9f0e26a"  # 4.0.1 READY_FOR_SALE
-LIVE_BUILD_ID = "3ad750a1-ef9c-441f-a9d2-0fa4e127564b"  # build 10001（live で配信中）
 NEW_VERSION = "4.0.2"
+NEW_BUILD_NUMBER = "10002"  # 同一コードの再アーカイブ（配信済み 10001 は attach 不可）
 DISPLAY_TYPE = "APP_IPHONE_67"
 SHOTS_DIR = Path.home() / "claude/AdblockKeshi/tasks/screenshot-drafts-v402/final"
 SHOT_FILES = [
@@ -36,7 +37,7 @@ SHOT_FILES = [
 
 WHATS_NEW = "App Store の掲載情報（スクリーンショット）を最新の機能に合わせて更新しました。アプリの機能に変更はありません。"
 
-REVIEW_NOTES = """This is a metadata-only update (4.0.2): we refreshed the App Store screenshots so they reflect the current v4.x feature set (the previous screenshots described the old Safari-only behavior from v3). The binary is identical to the currently live version 4.0.1 (build 10001). No feature, IAP, price, or code changes.
+REVIEW_NOTES = """This is a metadata-only update (4.0.2): we refreshed the App Store screenshots so they reflect the current v4.x feature set (the previous screenshots described the old Safari-only behavior from v3). The app is functionally identical to the currently live version 4.0.1 - no feature, IAP, or price changes. (The binary was rebuilt only to bump the version/build number, since App Store Connect does not allow re-attaching an already-released build.)
 
 [App overview]
 - Free: Safari Content Blocker features (ad blocking + anti-phishing). No account is required.
@@ -99,7 +100,31 @@ def upload_screenshot(asc: ASC, set_id: str, file_path: Path, file_name: str) ->
     return screenshot_id
 
 
+def wait_for_valid_build(asc: ASC) -> str:
+    """build 10002 が VALID になるまで最大 40 分ポーリング。build id を返す。"""
+    for i in range(80):
+        res = asc.get(
+            "/v1/builds",
+            params={
+                "filter[app]": APP_ID,
+                "filter[version]": NEW_BUILD_NUMBER,
+                "sort": "-uploadedDate",
+                "limit": 3,
+            },
+        )
+        for b in res.get("data", []):
+            state = b["attributes"]["processingState"]
+            print(f"  [{i}] build {b['attributes']['version']} state={state}", flush=True)
+            if state == "VALID":
+                return b["id"]
+            if state in ("FAILED", "INVALID"):
+                raise RuntimeError(f"build processing failed: {state}")
+        time.sleep(30)
+    raise TimeoutError(f"build {NEW_BUILD_NUMBER} が 40 分以内に VALID にならなかった")
+
+
 def main() -> None:
+    skip_build = "--skip-build" in sys.argv
     assert "掲載情報" in WHATS_NEW
     for ng in NG_WORDS:
         assert ng not in WHATS_NEW, f"NG語: {ng}"
@@ -182,15 +207,19 @@ def main() -> None:
     if extra:
         print(f"[!] 想定外 locale が存在: {extra} → 要確認")
 
-    print("=== 3. build attach（live と同一 build 10001） ===")
-    asc.patch(
-        f"/v1/appStoreVersions/{vid}/relationships/build",
-        {"data": {"type": "builds", "id": LIVE_BUILD_ID}},
-    )
-    b = asc.get(f"/v1/appStoreVersions/{vid}/build")
-    attached = (b.get("data") or {}).get("id")
-    assert attached == LIVE_BUILD_ID, f"build attach 不一致: {attached}"
-    print(f"[+] attached build 10001: {attached}")
+    if skip_build:
+        print("=== 3. build attach → SKIP（--skip-build・upload 完了後に再実行） ===")
+    else:
+        print(f"=== 3. build {NEW_BUILD_NUMBER} VALID 待ち + attach ===")
+        build_id = wait_for_valid_build(asc)
+        asc.patch(
+            f"/v1/appStoreVersions/{vid}/relationships/build",
+            {"data": {"type": "builds", "id": build_id}},
+        )
+        b = asc.get(f"/v1/appStoreVersions/{vid}/build")
+        attached = (b.get("data") or {}).get("id")
+        assert attached == build_id, f"build attach 不一致: {attached}"
+        print(f"[+] attached build {NEW_BUILD_NUMBER}: {attached}")
 
     print("=== 4. reviewNotes 更新 ===")
     rd = asc.get(f"/v1/appStoreVersions/{vid}/appStoreReviewDetail")
