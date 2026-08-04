@@ -47,3 +47,6 @@ docs/screenshots/**/*.mov
 
 # Node (root 直下に accidentally できたとき用)
 node_modules/
+
+# スクショ作業物（fastlane/screenshots と同じくローカル保管のみ）
+tasks/screenshot-drafts-*/
