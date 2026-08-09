@@ -38,10 +38,17 @@ final class ReportFormViewModel: ObservableObject {
         return nil
     }
 
+    /// 保護ドメイン（サーバ critical-list と同期）の説明文言。
+    /// サーバに投げても critical_domain 400 で必ず失敗するため、送信前に理由を示す。
+    static let criticalDomainMessage = "このサイトは主要サービス保護のため報告できません（誤ブロック防止）"
+
     var urlError: String? {
         guard !urlInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         if case .invalid(let reason) = URLValidator.validate(urlInput) {
             return reason.userMessage
+        }
+        if let host = validatedURL?.host, CriticalDomainGuard.isCritical(host) {
+            return Self.criticalDomainMessage
         }
         return nil
     }
@@ -55,7 +62,8 @@ final class ReportFormViewModel: ObservableObject {
     }
 
     var canSubmit: Bool {
-        guard validatedURL != nil else { return false }
+        guard let url = validatedURL else { return false }
+        if let host = url.host, CriticalDomainGuard.isCritical(host) { return false }
         guard selectedAdType != nil else { return false }
         if !memoInput.isEmpty, case .invalid = MemoValidator.validate(memoInput) { return false }
         if case .submitting = state { return false }

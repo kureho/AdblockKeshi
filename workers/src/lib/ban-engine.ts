@@ -2,26 +2,25 @@
  * 4-tier auto-ban level escalation (spec rev4 §4 rev3 fix), Workers runtime.
  *
  * Reads abuse_log within a 24h sliding window, counts only ban-加算対象
- * reasons (rate_limit / spam_memo / invalid_url / critical_domain), and
- * delegates level decisions to ban-engine-core (shared with scripts/).
+ * reasons (BAN_ELIGIBLE_REASONS in ban-engine-core = rate_limit / spam_memo /
+ * invalid_url), and delegates level decisions to ban-engine-core (shared with
+ * scripts/).
  *
- * pii_redacted is informational only (silent redact, ban-加算除外).
+ * critical_domain and pii_redacted are informational only（記録はするが
+ * ban 集計対象外。critical_domain は正直ユーザーの誤操作が主のため 2026-08-09 除外）.
  */
 
 import {
   computeBanActions,
   determineBanLevel,
   BAN_LEVELS,
+  BAN_ELIGIBLE_REASONS,
   type AbuseAggregate,
   type ExistingBanRow,
 } from './ban-engine-core'
 
 export { determineBanLevel, BAN_LEVELS }
 export type { BanLevel } from './ban-engine-core'
-
-const BAN_ELIGIBLE_REASONS = [
-  'rate_limit', 'spam_memo', 'invalid_url', 'critical_domain',
-] as const
 
 // D1 (SQLite) caps bound parameters per statement. Keep this in sync with
 // `D1_MAX_IN_PARAMS` in scripts/lib/d1-rest.ts — both runtimes hit the same

@@ -6,6 +6,7 @@
 
 import {
   computeBanActions,
+  BAN_ELIGIBLE_REASONS,
   type AbuseAggregate,
   type ExistingBanRow,
 } from '../../workers/src/lib/ban-engine-core'
@@ -22,10 +23,6 @@ export interface BanEngineRunResult {
   banned: number
   upgraded: number
 }
-
-const BAN_ELIGIBLE_REASONS = [
-  'rate_limit', 'spam_memo', 'invalid_url', 'critical_domain',
-] as const
 
 export async function runBanEngineViaRest(
   env: BanEngineEnv,

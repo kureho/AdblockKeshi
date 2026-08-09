@@ -92,3 +92,24 @@ XCUITest ターゲット `AdblockKeshiUITests` を新設（`UITests/ReportFormUI
 
 ### 適用範囲
 SwiftUI アプリ全般。UIViewRepresentable で UIKit テキスト入力を包む時・複数行 TextField を置く時は毎回この 2 点をチェックする。
+
+---
+
+## 2026-08-09 報告機能: 「拒否 = abuse」設計が正直ユーザーを自動 ban する（問い合わせで発覚）
+
+### 事象（お問い合わせ「報告の送信に失敗しました」と何度も出てくる・メール未入力）
+D1 実測で確定: 問い合わせ主は `apps.apple.com`（広告のリンク先 = App Store ページ）を 22:30〜22:49 JST に 9 回報告 → 全て critical_domain 400 で拒否 → 各拒否が abuse_log に加算され **3 件閾値で L1 auto-ban（24h）発動**。別ユーザーも `search.yahoo.co.jp` で同型 4 回。直近 7 日の報告失敗は全件この構造起因。
+
+### 根本原因（設計レベル）
+1. ユーザーは「広告配信元ドメイン」ではなく**見えている URL（広告が出たページ / 広告のリンク先）を報告する**。それは高確率で critical-list 上の大手ドメイン
+2. critical_domain 拒否を ban 材料に数えていた（悪意と誤操作を区別しない）
+3. エラー表示が「入力エラー (url): critical_domain: apple.com is protected」という英語技術文言で、ユーザーは理由を理解できず再試行 → ban が加速
+
+### 修正
+- **サーバ側（即時・push だけで反映）**: `BAN_ELIGIBLE_REASONS` を ban-engine-core に一本化し critical_domain を除外（rate_limit/spam_memo/invalid_url は維持）。実行系は hourly-aggregation（GitHub Actions）なので Worker deploy 不要
+- **クライアント側（次回アプリ更新に同梱）**: 送信前に `CriticalDomainGuard` で弾いて日本語説明をインライン表示 + サーバ 400 のフォールバック文言も日本語化（`APIError.criticalDomainProtected`）
+
+### 教訓・適用範囲
+- **「サーバが拒否した」と「ユーザーに悪意がある」は別物**。ペナルティ集計に入れてよいのは「正直なクライアント UI からは物理的に発生しない」失敗だけ（例: クライアント検証を通らない invalid_url）。クライアントから普通に発生し得る拒否を ban 材料にすると、機能を熱心に使うユーザーから順に封じられる
+- 検証・拒否ルールはクライアントとサーバで**同じリストを送信前に効かせる**（サーバだけにあると失敗往復 + abuse 加算だけが残る）
+- 問い合わせフォームのメール任意入力は「返信不可」問い合わせを生む。原因を運営側データで特定できる設計（今回は D1 の abuse_log）が命綱

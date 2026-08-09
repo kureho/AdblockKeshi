@@ -4,6 +4,7 @@ enum APIError: LocalizedError, Equatable {
     case networkUnavailable
     case rateLimitExceeded(retryAfter: TimeInterval)
     case validationFailed(field: String, reason: String)
+    case criticalDomainProtected
     case turnstileVerificationFailed
     case unauthorized
     case banned(level: Int, expiresAt: Date)
@@ -25,6 +26,8 @@ enum APIError: LocalizedError, Equatable {
             }
         case .validationFailed(let field, let reason):
             return "入力エラー (\(field)): \(reason)"
+        case .criticalDomainProtected:
+            return "この URL は主要サービス保護のため報告の対象外です（誤ブロック防止）。時間を置いても送信できません"
         case .turnstileVerificationFailed:
             return "確認に失敗しました。もう一度お試しください"
         case .unauthorized:

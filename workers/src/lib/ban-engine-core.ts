@@ -15,6 +15,18 @@ export interface BanLevel {
   label: string
 }
 
+/**
+ * abuse_log のうち ban 集計の対象にする reason（単一定義・両ランタイム共有）。
+ * critical_domain は対象外: 保護ドメイン（apps.apple.com 等）への報告は
+ * 「広告が出たページ/リンク先の URL を貼る」正直ユーザーの誤操作が主で、
+ * ban 材料にすると報告機能ごと封じてしまう（2026-08-09 問い合わせ実証）。
+ * 悪意ある連投は rate_limit 側で従来どおり捕捉される。
+ * pii_redacted も従来どおり情報記録のみ（silent redact）。
+ */
+export const BAN_ELIGIBLE_REASONS = [
+  'rate_limit', 'spam_memo', 'invalid_url',
+] as const
+
 export const BAN_LEVELS: BanLevel[] = [
   { level: 1, durationSeconds: 24 * 3600,           label: '24h' },
   { level: 2, durationSeconds: 7 * 24 * 3600,       label: '7d' },

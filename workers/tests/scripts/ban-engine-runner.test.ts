@@ -48,6 +48,8 @@ describe('runBanEngineViaRest', () => {
     expect(calls[0].body.sql).toMatch(/SELECT/i)
     expect(calls[0].body.sql).toMatch(/abuse_log/)
     expect(calls[0].body.sql).toMatch(/reason IN/i)
+    // critical_domain は ban 材料にしない（正直ユーザーの保護ドメイン報告を封じないため）
+    expect(calls[0].body.sql).not.toMatch(/critical_domain/)
   })
 
   test('below L1 threshold → existing query runs but no writes', async () => {

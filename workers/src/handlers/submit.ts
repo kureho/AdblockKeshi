@@ -28,8 +28,9 @@ interface SubmitBody {
  *   7. rate limit (uuid daily/monthly, ip 15min, banned) — rate_limit abuse_log
  *   8. D1 INSERT
  *
- * Each ban-eligible reason (rate_limit/spam_memo/invalid_url/critical_domain)
- * is logged so ban-engine can aggregate them into 4-tier auto-bans.
+ * Each abuse reason (rate_limit/spam_memo/invalid_url/critical_domain) is
+ * logged; ban-engine aggregates only BAN_ELIGIBLE_REASONS (ban-engine-core)
+ * into 4-tier auto-bans — critical_domain/pii_redacted are記録のみ（集計対象外）.
  */
 export async function handleSubmit(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {

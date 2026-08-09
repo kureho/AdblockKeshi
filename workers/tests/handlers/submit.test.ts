@@ -161,7 +161,8 @@ describe('POST /v1/reports/submit', () => {
     expect(response.status).toBe(403)
   })
 
-  // 🆕 ban-eligible reason を abuse_log に書く verify (ban-engine の前提)
+  // 🆕 abuse reason を abuse_log に書く verify (ban-engine の入力。
+  // ただし critical_domain は記録のみで ban 集計対象外 = BAN_ELIGIBLE_REASONS 参照)
   async function abuseRow(uuid: string) {
     return await env.DB
       .prepare(`SELECT identifier_type, reason FROM abuse_log WHERE identifier_hash = ? ORDER BY id DESC LIMIT 1`)

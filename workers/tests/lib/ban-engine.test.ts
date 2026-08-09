@@ -48,6 +48,23 @@ describe('runBanEngine', () => {
     expect(ban).toBeNull()
   })
 
+  it('does not ban for ban-加算除外 reason critical_domain', async () => {
+    // 保護ドメイン（apps.apple.com 等）への報告は正直ユーザーの誤操作が主で、
+    // ban 材料にすると報告機能ごと封じてしまう（2026-08-09 問い合わせで実証）
+    const now = Math.floor(Date.now() / 1000)
+    const uuid = HEX64('c')
+    for (let i = 0; i < 10; i++) {
+      await env.DB.prepare(
+        'INSERT INTO abuse_log (identifier_hash, identifier_type, reason, created_at) VALUES (?, ?, ?, ?)'
+      ).bind(uuid, 'uuid', 'critical_domain', now - 100).run()
+    }
+    const result = await runBanEngine(env.DB, now)
+    expect(result.banned).toBe(0)
+
+    const ban = await env.DB.prepare('SELECT * FROM bans WHERE identifier_hash = ?').bind(uuid).first()
+    expect(ban).toBeNull()
+  })
+
   it('bans uuid with 3 rate_limit abuses to L1 (24h)', async () => {
     const now = Math.floor(Date.now() / 1000)
     const uuid = HEX64('b')

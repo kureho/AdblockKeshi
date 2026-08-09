@@ -112,6 +112,9 @@ extension APIError {
         case "turnstile_failed": return .turnstileVerificationFailed
         case "rate_limit_exceeded": return .rateLimitExceeded(retryAfter: dto?.retryAfter ?? 3600)
         case "validation_failed":
+            // サーバ critical-list とクライアント CriticalDomainGuard がずれた場合の
+            // フォールバック（通常は送信前にクライアントで弾かれる）
+            if (dto?.message ?? "").hasPrefix("critical_domain") { return .criticalDomainProtected }
             return .validationFailed(field: "url", reason: dto?.message ?? "validation_failed")
         case "banned":
             return .banned(level: 1, expiresAt: Date(timeIntervalSinceNow: dto?.retryAfter ?? 86400))

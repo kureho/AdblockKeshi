@@ -1,4 +1,17 @@
 import { describe, it, expect } from 'vitest'
+import { BAN_ELIGIBLE_REASONS } from '../../src/lib/ban-engine-core'
+
+describe('BAN_ELIGIBLE_REASONS', () => {
+  it('excludes critical_domain and pii_redacted (honest-user reasons)', () => {
+    expect(BAN_ELIGIBLE_REASONS).not.toContain('critical_domain')
+    expect(BAN_ELIGIBLE_REASONS).not.toContain('pii_redacted')
+  })
+  it('keeps the malicious-pattern reasons', () => {
+    expect(BAN_ELIGIBLE_REASONS).toContain('rate_limit')
+    expect(BAN_ELIGIBLE_REASONS).toContain('spam_memo')
+    expect(BAN_ELIGIBLE_REASONS).toContain('invalid_url')
+  })
+})
 import {
   computeBanActions,
   type AbuseAggregate,
