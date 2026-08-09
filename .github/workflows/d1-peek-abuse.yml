@@ -39,3 +39,33 @@ jobs:
             "SELECT substr(identifier_hash,1,8) AS id8, identifier_type, reason, datetime(created_at,'unixepoch') AS t FROM abuse_log WHERE created_at > ${NOW}-259200 ORDER BY created_at DESC LIMIT 50"
           q "reports_detail_3d" \
             "SELECT substr(uuid_hash,1,8) AS id8, status, ad_type, datetime(created_at,'unixepoch') AS t FROM reports WHERE created_at > ${NOW}-259200 ORDER BY created_at DESC LIMIT 30"
+      - name: Hostname-only aggregation of critical_domain rejects (no full URLs in logs)
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          curl -sS -X POST \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/d1/database/91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4/query" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"sql":"SELECT substr(identifier_hash,1,8) AS id8, url FROM abuse_log WHERE reason = '"'"'critical_domain'"'"' AND created_at > CAST(strftime('"'"'%s'"'"','"'"'now'"'"') AS INTEGER)-604800"}' \
+            | python3 -c '
+          import json, sys
+          from urllib.parse import urlparse
+          from collections import Counter
+          d = json.load(sys.stdin)
+          if not d.get("success"):
+              print("API_ERROR:", json.dumps(d.get("errors"))); sys.exit(1)
+          rows = d["result"][0]["results"]
+          c = Counter()
+          for r in rows:
+              try:
+                  host = urlparse(r["url"]).hostname or "(unparsable)"
+              except Exception:
+                  host = "(unparsable)"
+              c[(r["id8"], host)] += 1
+          print("===== critical_domain rejects by (id8, hostname) 7d =====")
+          for (id8, host), n in c.most_common():
+              print(f"{id8}  {host}  x{n}")
+          '
