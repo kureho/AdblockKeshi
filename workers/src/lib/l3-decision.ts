@@ -34,8 +34,12 @@ export function isInTrancoSet(domain: string, trancoSet: Set<string>): boolean {
 }
 
 export function decideL3(candidate: L3Candidate, trancoSet: Set<string>): L3Decision {
+  // D-lite: critical-list 該当も自動却下せず kureho_queue へ送る。
+  // 「報告データとしては価値があるが、自動適用は安全側に倒す」という Top 1M と同じ扱い。
+  // 自動適用しない点は変わらないので l3_check は 'fail' のまま。
+  // ★これにより decideL3 は 'rejected_critical' を返さなくなる（型は過去データのために残す）。
   if (isCriticalDomain(candidate.domain)) {
-    return { id: candidate.id, l3_check: 'fail', next_status: 'rejected_critical' }
+    return { id: candidate.id, l3_check: 'fail', next_status: 'kureho_queue' }
   }
   if (isInTrancoSet(candidate.domain, trancoSet)) {
     return { id: candidate.id, l3_check: 'fail', next_status: 'kureho_queue' }

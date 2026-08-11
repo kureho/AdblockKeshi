@@ -35,18 +35,20 @@ describe('isInTrancoSet', () => {
 describe('decideL3', () => {
   const trancoSet = new Set(['big-site.com', 'news-portal.jp'])
 
-  test('critical-list hit → rejected_critical', () => {
+  // D-lite: critical も自動却下せず kureho_queue へ送る（報告データとしては価値があるため）。
+  // 自動適用しない点は変わらないので l3_check は 'fail' のまま。
+  test('critical-list hit → kureho_queue', () => {
     const result = decideL3({ id: 'c1', domain: 'apple.com' }, trancoSet)
     expect(result).toEqual({
       id: 'c1',
       l3_check: 'fail',
-      next_status: 'rejected_critical',
+      next_status: 'kureho_queue',
     })
   })
 
-  test('critical-list hit via suffix → rejected_critical', () => {
+  test('critical-list hit via suffix → kureho_queue', () => {
     const result = decideL3({ id: 'c2', domain: 'support.apple.com' }, trancoSet)
-    expect(result.next_status).toBe('rejected_critical')
+    expect(result.next_status).toBe('kureho_queue')
   })
 
   test('tranco hit (not critical) → kureho_queue', () => {
@@ -76,6 +78,6 @@ describe('decideL3', () => {
     // Hypothetical: apple.com appears in tranco too (it would in real Top 1M)
     const set = new Set(['apple.com', 'big-site.com'])
     const result = decideL3({ id: 'c6', domain: 'apple.com' }, set)
-    expect(result.next_status).toBe('rejected_critical')
+    expect(result.next_status).toBe('kureho_queue')
   })
 })

@@ -37,9 +37,16 @@ export async function runAggregation(
   const rows = await d1Query(
     env,
     deps.fetch,
+    // D-lite: 自動改善パイプラインの母集団は「Safari で見た かつ Content Blocker が有効だった」
+    // 報告のみ。other_app は Safari 用フィルタでは原理的に消せず、blocker OFF はフィルタの
+    // 取りこぼしではないため、どちらも cosmetic rule 生成の材料にならない。
+    // 旧クライアントの報告は status='observation_legacy' で入るので status でも除外されるが、
+    // ここでも条件を効かせて二重に塞ぐ。
     `SELECT id, uuid_hash, ip_hash, domain, url, url_path_hash, memo, created_at
        FROM reports
       WHERE status = 'pending'
+        AND seen_in = 'safari'
+        AND blocker_enabled = 1
       ORDER BY created_at ASC
       LIMIT 10000`
   )
