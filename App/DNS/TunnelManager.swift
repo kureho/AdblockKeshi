@@ -51,10 +51,18 @@ final class TunnelManager {
     /// DNSBlocklist を持ち続ける。アプリ更新で extension プロセスが置き換わる前提には
     /// 依存せず、ここで明示的に reload させて即座に実害を止める。
     /// 受け側は `PacketTunnelProvider.handleAppMessage` → `reloadEngine()`。
+    /// reload 対象とする稼働中ステータス。
+    ///
+    /// `.reasserting`（ネットワーク切替中）を含めるのが重要: この状態でも tunnel プロセスは
+    /// 生きていてメモリ上に旧 DNSEngine を保持しているが、`reassertForNetworkChange()` は
+    /// 上流 DNS を取り直すだけで `reloadEngine()` を呼ばない。ここで除外すると、切替中に
+    /// アプリを開いたユーザーだけ dns-self.json を消しても旧リストが残り続ける。
+    private static let reloadableStatuses: Set<NEVPNStatus> = [.connected, .reasserting]
+
     static func requestReloadIfRunning() async {
         guard let managers = try? await NETunnelProviderManager.loadAllFromPreferences(),
               let session = managers.first?.connection as? NETunnelProviderSession,
-              session.status == .connected
+              reloadableStatuses.contains(session.status)
         else { return }
         try? session.sendProviderMessage(Data()) { _ in }
     }
