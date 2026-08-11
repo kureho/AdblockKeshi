@@ -10,9 +10,14 @@ ALTER TABLE reports ADD COLUMN app_version TEXT;
 ALTER TABLE reports ADD COLUMN app_build TEXT;
 ALTER TABLE reports ADD COLUMN filter_version TEXT;
 
--- index は追加しない: 集計は `status='pending' AND seen_in='safari' AND created_at>=?` で走り、
+-- index は追加しない: 集計は `status='pending' ... ORDER BY created_at ASC LIMIT 10000` で走り、
 -- 既存の idx_reports_status_created(status, created_at) が効く。seen_in は 3 値でカーディナリティが
 -- 低く、単独 index の効果が薄い。
+--
+-- ★これが成り立つ前提は「pending に集約対象の報告しか入らない」こと。
+--   submit 側で対象外（other_app / blocker 無効・不明）は observation_out_of_scope に振り分ける
+--   （`workers/src/handlers/submit.ts` の reportStatus）。対象外を pending に入れると
+--   どのランでも消費されず滞留し、古い順 LIMIT の枠を埋めて新しい報告を押し出す。
 
 -- 既存の pending は旧仕様（URL の意味が曖昧・診断情報なし）の報告なので、
 -- D-lite の 3ユーザー/14日判定の母集団に混ぜない。削除はせず参考データとして残す。

@@ -132,7 +132,8 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
   // status を observation_legacy にして 3ユーザー/14日 の自動昇格母集団から隔離する。
   // 日時で切らないのは、D-lite 公開後も旧アプリから報告が届き続けるため。
   const seenIn: SeenIn | null = isSeenIn(body.seen_in) ? body.seen_in : null
-  const status = seenIn === null ? 'observation_legacy' : 'pending'
+  const blockerEnabled = toNullableFlag(body.blocker_enabled)
+  const status = reportStatus(seenIn, blockerEnabled)
 
   await env.DB.prepare(`
     INSERT INTO reports (
@@ -144,7 +145,7 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
     id, uuidHash, ipHash, domain, body.url, urlPathHash,
     redactedMemo === '' ? null : redactedMemo, adType, status, now,
     seenIn,
-    toNullableFlag(body.blocker_enabled),
+    blockerEnabled,
     toNullableFlag(body.dns_enabled),
     toNullableText(body.app_version),
     toNullableText(body.app_build),
@@ -178,6 +179,30 @@ async function insertAbuseLog(
     INSERT INTO abuse_log (identifier_hash, identifier_type, reason, url, created_at)
     VALUES (?, ?, ?, ?, ?)
   `).bind(identifierHash, identifierType, reason, url, now).run()
+}
+
+/**
+ * 保存時の status を決める。
+ *
+ * ★不変条件: **`pending` = 自動改善パイプラインが必ず消費する母集団**。
+ * 集約（`scripts/aggregation/aggregate-reports.ts`）は
+ * `status='pending' AND seen_in='safari' AND blocker_enabled=1` しか取得せず、
+ * 消費した行だけを `aggregated` へ進める。したがって条件を満たさない報告を
+ * `pending` で入れると **どのランでも消費されず永久に滞留する**。
+ * 集約 SQL は `ORDER BY created_at ASC LIMIT 10000`（古い順）なので、滞留が上限を
+ * 超えると取得結果が全て 14 日窓の外の古い行で埋まり、新しい報告が集約されなくなる。
+ *
+ * どの報告も削除はせず、参考データとして observation 系 status で保持する。
+ *
+ * - `observation_legacy`     … 旧クライアント（seen_in を送ってこない）
+ * - `observation_out_of_scope` … Safari 以外で見た広告（Safari 用フィルタでは原理的に消せない）
+ *                                / Content Blocker が無効だった or 状態不明（取りこぼしとは言えない）
+ */
+function reportStatus(seenIn: SeenIn | null, blockerEnabled: 1 | 0 | null): string {
+  if (seenIn === null) return 'observation_legacy'
+  if (seenIn !== 'safari') return 'observation_out_of_scope'
+  if (blockerEnabled !== 1) return 'observation_out_of_scope'
+  return 'pending'
 }
 
 /** 診断フラグ: true/false 以外（未送信・型違い）は NULL として扱う。 */

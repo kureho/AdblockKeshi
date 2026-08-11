@@ -74,7 +74,11 @@ describe('submit contract (contracts/submit-request.json)', () => {
     expect(row.blocker_enabled).toBe(0)
   })
 
-  /** 診断がひとつも取れなかったクライアント（全 nil = キー省略）でも報告は成立する。 */
+  /**
+   * 診断がひとつも取れなかったクライアント（全 nil = キー省略）でも報告は成立する。
+   * ただし `blocker_enabled` が NULL だと集約クエリが拾えないので、pending には入れず
+   * observation として保持する（pending に置くと永久に滞留するため）。
+   */
   it('accepts the payload with every diagnostic omitted', async () => {
     const uuid = HEX64('d')
     const token = await signToken(
@@ -90,7 +94,7 @@ describe('submit contract (contracts/submit-request.json)', () => {
     })
     expect(response.status).toBe(200)
     const body = (await response.json()) as any
-    expect(body.status).toBe('pending')
+    expect(body.status).toBe('observation_out_of_scope')
 
     const row = await env.DB.prepare('SELECT * FROM reports WHERE id = ?')
       .bind(body.id).first<any>()

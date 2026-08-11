@@ -23,7 +23,7 @@ describe('POST /v1/reports/submit', () => {
     const token = await makeToken(uuid, 'submit')
     const response = await SELF.fetch('https://test/v1/reports/submit', {
       method: 'POST',
-      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://example.com/article', memo: 'overlay ad', seen_in: 'safari' }),
+      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://example.com/article', memo: 'overlay ad', seen_in: 'safari', blocker_enabled: true }),
       headers: { 'Content-Type': 'application/json' },
     })
     expect(response.status).toBe(200)
@@ -76,13 +76,14 @@ describe('POST /v1/reports/submit', () => {
     const token = await makeToken(uuid, 'submit')
     const response = await SELF.fetch('https://test/v1/reports/submit', {
       method: 'POST',
-      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://apple.com/support', seen_in: 'safari' }),
+      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://apple.com/support', seen_in: 'safari', blocker_enabled: true }),
       headers: { 'Content-Type': 'application/json' },
     })
     expect(response.status).toBe(200)
     const body = await response.json() as any
     const row = await env.DB.prepare('SELECT domain, status FROM reports WHERE id = ?').bind(body.id).first<any>()
     expect(row.domain).toBe('apple.com')
+    // 保護ドメインでも他と同じ扱いで受理する（自動昇格を止めるのは L3 の責務）
     expect(row.status).toBe('pending')
   })
 
@@ -330,9 +331,9 @@ describe('POST /v1/reports/submit — D-lite 診断情報', () => {
     return response
   }
 
-  it('seen_in ありの新クライアントは pending で保存される', async () => {
+  it('Safari かつ Content Blocker 有効の報告だけが pending になる', async () => {
     const uuid = HEX64('2')
-    const res = await submit(uuid, { seen_in: 'safari' })
+    const res = await submit(uuid, { seen_in: 'safari', blocker_enabled: true })
     expect(res.status).toBe(200)
     const body = await res.json() as any
     const row = await env.DB.prepare('SELECT status, seen_in FROM reports WHERE id = ?').bind(body.id).first<any>()
@@ -350,14 +351,59 @@ describe('POST /v1/reports/submit — D-lite 診断情報', () => {
     expect(row.seen_in).toBeNull()
   })
 
-  it('other_app も受け付ける（Safari フィルタでは消せない広告の切り分け用）', async () => {
+  // ★pending = 自動改善パイプラインが必ず消費する母集団、という不変条件を守る。
+  // 集約は `status='pending' AND seen_in='safari' AND blocker_enabled=1` しか取らないので、
+  // 条件を満たさない報告を pending で入れると **どのランでも消費されず滞留し続ける**。
+  // 集約 SQL は古い順 LIMIT 10000 なので、滞留が上限を超えると新しい報告が
+  // 14 日窓の外の古い行に押し出されて永久に集約されなくなる。
+  it('other_app は受け付けるが pending にはしない（Safari フィルタでは消せないため）', async () => {
     const uuid = HEX64('4')
-    const res = await submit(uuid, { seen_in: 'other_app' })
+    const res = await submit(uuid, { seen_in: 'other_app', blocker_enabled: true })
     expect(res.status).toBe(200)
     const body = await res.json() as any
     const row = await env.DB.prepare('SELECT status, seen_in FROM reports WHERE id = ?').bind(body.id).first<any>()
-    expect(row.status).toBe('pending')
+    expect(row.status).toBe('observation_out_of_scope')
     expect(row.seen_in).toBe('other_app')
+  })
+
+  it('Content Blocker が無効だった報告は pending にしない（フィルタの取りこぼしではない）', async () => {
+    const uuid = HEX64('8')
+    const res = await submit(uuid, { seen_in: 'safari', blocker_enabled: false })
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    const row = await env.DB.prepare('SELECT status, blocker_enabled FROM reports WHERE id = ?').bind(body.id).first<any>()
+    expect(row.status).toBe('observation_out_of_scope')
+    expect(row.blocker_enabled).toBe(0)
+  })
+
+  it('blocker_enabled が取得できなかった報告も pending にしない（集約が NULL を拾わないため）', async () => {
+    const uuid = HEX64('9')
+    const res = await submit(uuid, { seen_in: 'safari' })
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    const row = await env.DB.prepare('SELECT status, blocker_enabled FROM reports WHERE id = ?').bind(body.id).first<any>()
+    expect(row.status).toBe('observation_out_of_scope')
+    expect(row.blocker_enabled).toBeNull()
+  })
+
+  it('保存された pending は例外なく集約クエリの条件を満たす', async () => {
+    await submit(HEX64('a'), { seen_in: 'safari', blocker_enabled: true })
+    await submit(HEX64('b'), { seen_in: 'safari', blocker_enabled: false })
+    await submit(HEX64('c'), { seen_in: 'other_app', blocker_enabled: true })
+    await submit(HEX64('d'), { seen_in: 'safari' })
+    await submit(HEX64('e'), {})
+
+    const stray = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM reports
+        WHERE status = 'pending'
+          AND NOT (seen_in = 'safari' AND blocker_enabled = 1)`
+    ).first<any>()
+    expect(stray.n, 'pending に集約対象外の報告が混ざると永久に滞留する').toBe(0)
+
+    const pending = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM reports WHERE status = 'pending'`
+    ).first<any>()
+    expect(pending.n, '対象の報告は pending として残る').toBe(1)
   })
 
   it('診断情報が保存される', async () => {
@@ -393,6 +439,15 @@ describe('POST /v1/reports/submit — D-lite 診断情報', () => {
     expect(row.blocker_enabled).toBeNull()
     expect(row.dns_enabled).toBeNull()
     expect(row.app_version).toBeNull()
+  })
+
+  it('診断が取れなくても報告は保持される（削除も 4xx もしない）', async () => {
+    const uuid = HEX64('f')
+    const res = await submit(uuid, { seen_in: 'safari' })
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    const row = await env.DB.prepare('SELECT id, url FROM reports WHERE id = ?').bind(body.id).first<any>()
+    expect(row.url).toBe('https://news.example.com/a')
   })
 
   it('未知の seen_in 値は拒否せず null として扱う（旧扱いで隔離）', async () => {
