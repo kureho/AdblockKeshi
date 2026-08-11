@@ -1,10 +1,13 @@
 import Foundation
 
-/// 自己報告ファストレーンの保存層。
+/// 報告由来ルールの保存層。
 ///
-/// - `rules-self.json`   … 報告した本人の端末ルール（即時追記）
-/// - `rules-global.json` … サーバ検証を通って配信されたグローバルルール（FilterDownloader が保存）
-/// - `rules-reported.json` … 上2つを union した安全な自己学習集合。4→3 統合後は
+/// - `rules-self.json`   … 旧「自己報告ファストレーン」で本人の端末に書かれたルール。
+///                         **D-lite で廃止**。新規に書くことはなく、残骸は起動時に purge する
+///                         （報告は改善用データであって、その端末のブロック指定ではない）。
+/// - `rules-global.json` … サーバ検証を通って配信されたグローバルルール（FilterDownloader が保存）。
+///                         **これが唯一の現役供給源。絶対に消さない。**
+/// - `rules-reported.json` … 上2つを union した安全なルール集合。4→3 統合後は
 ///                           `CombinedRuleListCoordinator` が `safeMergedReportedRules()` 経由で
 ///                           読み、標準 ContentBlocker の combined-<state> に統合する。
 ///
@@ -33,18 +36,21 @@ struct SelfReportedRulesStore {
         self.fileManager = fileManager
     }
 
-    /// 自己報告ルールを追加し merged を再構築。新規追加されたら true（重複は false）。
+    /// 既存端末治癒（D-lite）: 自己報告ルールを全消しして merged を作り直す。
+    ///
+    /// `rules-self.json` を空にするだけで、`rules-global.json`（CDN 由来 = L6 の成果物）は
+    /// 一切触らない。`rebuildMerged()` が global だけから merged を作り直すので、
+    /// サーバ検証済みの保護は無傷のまま「自分で報告した host が自分だけブロックされる」状態を解く。
+    ///
+    /// ネットワーク非依存・idempotent（毎起動呼んでよい）。self の除去 or merged 内容の変化が
+    /// 起きたら true。global 由来の危険ルールが merged から strip される場合も true になり、
+    /// 呼び出し側の reload 判断に使える。
     @discardableResult
-    func appendSelfRule(_ rule: ContentBlockerRule) throws -> Bool {
-        var selfRules = loadSelfRules()
-        let key = rule.trigger.urlFilter
-        guard !selfRules.contains(where: { $0.trigger.urlFilter == key }) else {
-            return false
-        }
-        selfRules.append(rule)
-        try write(selfRules, to: Self.selfFilename)
-        try rebuildMerged()
-        return true
+    func purgeSelfRules() throws -> Bool {
+        let hadSelfRules = !loadSelfRules().isEmpty
+        if hadSelfRules { try write([], to: Self.selfFilename) }
+        let mergedChanged = try rebuildMerged()
+        return hadSelfRules || mergedChanged
     }
 
     /// self + global を union して merged を書く。
@@ -60,10 +66,11 @@ struct SelfReportedRulesStore {
         return union != previous
     }
 
-    /// self ∪ global を「document ブロック除外 + structural dedup」した安全な自己学習ルール集合を返す。
+    /// self ∪ global を「document ブロック除外 + structural dedup」した安全なルール集合を返す。
     /// 並び順は **global → self**（self を末尾に置く）。予算超過時に `ReportedRuleBudget.selectReported`
-    /// が末尾を優先保持するため、ユーザー自身の報告（self・ファストレーン）が global より優先して
-    /// combined に載る。dedup は内容一致で行い、最初の出現（global 側）を残す。
+    /// が末尾を優先保持する。D-lite 以降 self は常に空なので実質 global のみだが、
+    /// purge 前の端末が起動しきるまでの過渡状態のために union は残す。
+    /// dedup は内容一致で行い、最初の出現（global 側）を残す。
     func safeMergedReportedRules() -> [ContentBlockerRule] {
         var seen = Set<ContentBlockerRule>()
         var union: [ContentBlockerRule] = []
@@ -74,19 +81,6 @@ struct SelfReportedRulesStore {
             }
         }
         return union
-    }
-
-    /// 既存端末治癒: 保存済み self ルールから document ブロック(旧形式)を除去し merged を作り直す。
-    /// ネットワーク非依存・idempotent。self の除去 or merged 内容の変化が起きたら true
-    /// （global 由来の危険ルールが merged から strip される場合も reload を促すため）。
-    @discardableResult
-    func sanitizeStoredSelfRules() throws -> Bool {
-        let current = loadSelfRules()
-        let safe = current.filter { !ReportedRuleSafety.isDocumentBlockingRisk($0) }
-        let selfChanged = safe.count != current.count
-        if selfChanged { try write(safe, to: Self.selfFilename) }
-        let mergedChanged = try rebuildMerged()
-        return selfChanged || mergedChanged
     }
 
     func loadSelfRules() -> [ContentBlockerRule] { load(Self.selfFilename) }

@@ -1,11 +1,16 @@
 import Foundation
 
-/// 報告された広告ドメインの自己ファストレーン保存層（App Group・`dns-self.json`）。
-/// 既存 Content Blocker の `rules-self.json` と対称: 「自分の報告は自分の端末で即効く」を
-/// DNS ブロックでも実現する。tunnel が curated リストと union して読む（DNSBlocklistLoader）。
+/// 旧「DNS 自己報告ファストレーン」の保存層（App Group・`dns-self.json`）。
+///
+/// ★v4.0.3 で廃止済み。新規に書く経路は無く、このストアに残っているのは
+/// 既存端末の残骸を消すための `purge()` と、その検証に必要な読み取りだけ。
+/// 廃止理由: DNS には first-party / third-party の区別が無いため、報告した host を
+/// ブロックすると報告先サイト自体が名前解決できなくなっていた。
 ///
 /// fail-safe: 未存在/不正 JSON は空配列（curated のみで縮退・ブロックが壊れない方向）。
 struct DNSSelfReportStore {
+    static let filename = "dns-self.json"
+
     let fileURL: URL
 
     init(fileURL: URL) {
@@ -19,7 +24,7 @@ struct DNSSelfReportStore {
         guard let container = FileManager.default
                 .containerURL(forSecurityApplicationGroupIdentifier: identifier)
         else { return nil }
-        return DNSSelfReportStore(fileURL: container.appendingPathComponent("dns-self.json"))
+        return DNSSelfReportStore(fileURL: container.appendingPathComponent(filename))
     }
 
     /// 保存済みの自己報告ドメイン（未存在/不正は空配列）。

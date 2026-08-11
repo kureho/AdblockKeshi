@@ -4,17 +4,24 @@ enum ReportStatus: String, Codable, CaseIterable, Equatable {
     case pending
     case validating
     case approved
-    /// この端末で即ブロック反映済み（自己報告ファストレーン）。全体反映は別途サーバ検証を待つ。
-    case appliedLocally = "applied_locally"
     case rejectedNoAdDetected = "rejected_no_ad_detected"
     case rejectedSafetyGate = "rejected_safety_gate"
+
+    /// 未知の値は `.pending` に寄せる（fail-safe）。
+    ///
+    /// D-lite で `applied_locally`（端末即反映）を廃止したが、既存端末の履歴には
+    /// その値が保存されている。素直に throw すると `LocalReportHistoryStore` の
+    /// fail-safe が働いて **履歴が丸ごと消える**ため、受付済として読み替える。
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = ReportStatus(rawValue: raw) ?? .pending
+    }
 
     var displayLabel: String {
         switch self {
         case .pending: return "受付済"
         case .validating: return "検証中"
         case .approved: return "反映済"
-        case .appliedLocally: return "この端末で反映済"
         case .rejectedNoAdDetected, .rejectedSafetyGate: return "対象外"
         }
     }
@@ -23,19 +30,18 @@ enum ReportStatus: String, Codable, CaseIterable, Equatable {
         switch self {
         case .pending: return .neutral
         case .validating: return .info
-        case .approved, .appliedLocally: return .success
+        case .approved: return .success
         case .rejectedNoAdDetected, .rejectedSafetyGate: return .warning
         }
     }
 
     var detailDescription: String {
         switch self {
-        case .pending: return "報告を受け付けました。検証開始まで最大 1 時間。"
-        case .validating: return "自動検証中です。最大 7 日間で結果が出ます。"
+        case .pending: return "報告を受け付けました。フィルタ改善の参考として確認します。"
+        case .validating: return "内容を確認しています。"
         case .approved: return "広告ブロックリストへ反映済みです。"
-        case .appliedLocally: return "この端末ではすぐにブロックへ反映しました。全体への反映は検証後（最大 7 日）です。"
-        case .rejectedNoAdDetected: return "自動検証で広告を検出できませんでした。"
-        case .rejectedSafetyGate: return "安全装置で除外されました (大手サイト等)。"
+        case .rejectedNoAdDetected: return "確認しましたが、広告を検出できませんでした。"
+        case .rejectedSafetyGate: return "安全装置により、フィルタへの反映対象から除外されました (大手サイト等)。"
         }
     }
 }

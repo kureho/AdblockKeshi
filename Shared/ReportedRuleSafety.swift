@@ -2,7 +2,7 @@ import Foundation
 
 /// 報告ルールが top-level document（訪問中のページ自体）を遮断し得るかを判定する純粋ロジック。
 ///
-/// 自己報告ファストレーン・CDN(global)・bundle のどの経路から来たルールでも、
+/// CDN(global)・bundle・（D-lite 以前の）自己報告のどの経路から来たルールでも、
 /// merged へ書き出す前にこの判定で document ブロックを排除する（防御多層）。
 /// 2026-06-23: 報告した広告URLの host を無制限に host-block していたため、ユーザーが
 /// 訪問中ページのURL（例: streamtape.com）を報告するとそのページ自体が開けなくなる

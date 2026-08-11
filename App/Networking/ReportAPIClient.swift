@@ -26,7 +26,8 @@ final class ReportAPIClient: ReportAPIClientProtocol {
         self.decoder = JSONDecoder()
     }
 
-    func submitReport(url: URL, memo: String?, adType: AdType?) async throws {
+    func submitReport(url: URL, memo: String?, adType: AdType?,
+                      seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws {
         let token = try await acquireToken(scope: .submit)
         let uuidHash = try uuidStore.getUUIDHash()
         let endpoint = baseURL.appendingPathComponent("/v1/reports/submit")
@@ -36,7 +37,13 @@ final class ReportAPIClient: ReportAPIClientProtocol {
             uuidHash: uuidHash,
             url: url.absoluteString,
             memo: memo,
-            adType: adType?.rawValue
+            adType: adType?.rawValue,
+            seenIn: seenIn.rawValue,
+            blockerEnabled: diagnostics.blockerEnabled,
+            dnsEnabled: diagnostics.dnsEnabled,
+            appVersion: diagnostics.appVersion,
+            appBuild: diagnostics.appBuild,
+            filterVersion: diagnostics.filterVersion
         )
         request.httpBody = try encoder.encode(body)
         let _: SubmitResponseDTO = try await send(request)
@@ -112,9 +119,9 @@ extension APIError {
         case "turnstile_failed": return .turnstileVerificationFailed
         case "rate_limit_exceeded": return .rateLimitExceeded(retryAfter: dto?.retryAfter ?? 3600)
         case "validation_failed":
-            // サーバ critical-list とクライアント CriticalDomainGuard がずれた場合の
-            // フォールバック（通常は送信前にクライアントで弾かれる）
-            if (dto?.message ?? "").hasPrefix("critical_domain") { return .criticalDomainProtected }
+            // D-lite: 保護ドメインの拒否は廃止した（報告は「広告が消えなかったページ」の
+            // 改善用データなので yahoo.co.jp 等を送るのは正常な操作）。
+            // ここへ来るのは URL 形式・memo 長など、入力を直せば通るものだけ。
             return .validationFailed(field: "url", reason: dto?.message ?? "validation_failed")
         case "banned":
             return .banned(level: 1, expiresAt: Date(timeIntervalSinceNow: dto?.retryAfter ?? 86400))

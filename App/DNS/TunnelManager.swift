@@ -75,6 +75,31 @@ final class TunnelManager {
         try? session.sendProviderMessage(Data()) { _ in }
     }
 
+    // MARK: - 診断用（報告に添える dns_enabled）
+
+    /// その status のとき **実際に DNS 保護が効いていた**か。
+    /// 報告の診断値は「Pro を買ったか」ではなく「そのとき守られていたか」でなければ
+    /// 「保護 ON なのに広告が出た」と「そもそも保護 OFF」を切り分けられない。
+    ///
+    /// - `.connected`: 通常の稼働中。
+    /// - `.reasserting`: ネットワーク切替中だが tunnel は上がっていて DNS を処理する。
+    /// - `.connecting`: まだ経路が確立しておらず保護は始まっていない。
+    nonisolated static func isProtecting(_ status: NEVPNStatus) -> Bool {
+        switch status {
+        case .connected, .reasserting: return true
+        default: return false
+        }
+    }
+
+    /// 現在 DNS 保護が動いているか。構成を読めなければ nil（＝診断不能。false と区別する）。
+    /// 未構成（一度も ON にしていない）は「動いていない」が確定するので false。
+    nonisolated static func currentlyProtecting() async -> Bool? {
+        guard let managers = try? await NETunnelProviderManager.loadAllFromPreferences()
+        else { return nil }
+        guard let connection = managers.first?.connection else { return false }
+        return isProtecting(connection.status)
+    }
+
     // MARK: - start / stop
 
     private func start() async {

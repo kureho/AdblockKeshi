@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct ReportSentView: View {
+    /// 直前の報告で選ばれた「どこで見たか」。文言の出し分けに使う。
+    let seenIn: SeenIn
     let onAgainTap: () -> Void
     let onCloseTap: () -> Void
 
@@ -15,13 +17,14 @@ struct ReportSentView: View {
                 .foregroundStyle(.green)
 
             VStack(spacing: 12) {
-                Text("報告を受け付けました")
+                Text(ReportSentMessage.title)
                     .font(.title2.bold())
 
-                Text("安全に反映できる広告は、この端末の保護へ追加されます。\n複数の利用者から届いた報告は、確認後に全体の保護へ反映されることがあります。")
+                Text(ReportSentMessage.body(for: seenIn))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
             }
 
             Spacer()
@@ -70,8 +73,14 @@ struct ReportSentView: View {
     }
 }
 
-#Preview {
+#Preview("Safari") {
     NavigationStack {
-        ReportSentView(onAgainTap: {}, onCloseTap: {})
+        ReportSentView(seenIn: .safari, onAgainTap: {}, onCloseTap: {})
+    }
+}
+
+#Preview("Safari 以外のアプリ") {
+    NavigationStack {
+        ReportSentView(seenIn: .otherApp, onAgainTap: {}, onCloseTap: {})
     }
 }

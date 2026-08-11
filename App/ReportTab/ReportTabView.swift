@@ -2,7 +2,8 @@ import SwiftUI
 
 enum ReportTabRoute: Hashable {
     case form
-    case sent
+    /// 送信完了。どこで見た広告かで文言を出し分けるため一緒に運ぶ。
+    case sent(SeenIn)
     case history
 }
 
@@ -27,12 +28,13 @@ struct ReportTabView: View {
                     ReportFormView(
                         apiClient: apiClient,
                         historyStore: historyStore,
-                        onSubmitSuccess: {
-                            path.append(.sent)
+                        onSubmitSuccess: { seenIn in
+                            path.append(.sent(seenIn))
                         }
                     )
-                case .sent:
+                case .sent(let seenIn):
                     ReportSentView(
+                        seenIn: seenIn,
                         onAgainTap: {
                             path.removeAll()
                             path.append(.form)

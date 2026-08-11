@@ -14,18 +14,35 @@ struct TokenRequestDTO: Encodable {
     }
 }
 
+/// Workers の `SubmitBody`（`workers/src/handlers/submit.ts`）と 1:1 対応。
+/// Optional は synthesized encoder が `encodeIfPresent` するのでキーごと省略され、
+/// サーバ側では未指定 = NULL として扱われる。
 struct SubmitRequestDTO: Encodable {
     let token: String
     let uuidHash: String
     let url: String
     let memo: String?
     let adType: String?
+    /// D-lite: どこで見た広告か。**有無が新旧クライアントの境界**でもある。
+    let seenIn: String?
+    /// 以下は診断用の自動添付。取得できなくても報告を失敗させないため全て任意。
+    let blockerEnabled: Bool?
+    let dnsEnabled: Bool?
+    let appVersion: String?
+    let appBuild: String?
+    let filterVersion: String?
 
     enum CodingKeys: String, CodingKey {
         case token
         case uuidHash = "uuid_hash"
         case url, memo
         case adType = "ad_type"
+        case seenIn = "seen_in"
+        case blockerEnabled = "blocker_enabled"
+        case dnsEnabled = "dns_enabled"
+        case appVersion = "app_version"
+        case appBuild = "app_build"
+        case filterVersion = "filter_version"
     }
 }
 

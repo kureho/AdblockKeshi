@@ -7,7 +7,7 @@ final class ReportedRuleBudgetTests: XCTestCase {
 
     /// 報告順（oldest→newest）の安全な reported ルールを n 件生成。
     private func reported(_ n: Int) -> [ContentBlockerRule] {
-        (0..<n).compactMap { ReportedRuleBuilder.blockRule(forURL: "https://ad\($0).test/") }
+        (0..<n).map { TestRuleFactory.hostBlockRule("ad\($0).test") }
     }
 
     func test_no_truncation_when_combined_under_cap() {

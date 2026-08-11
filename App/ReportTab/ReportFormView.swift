@@ -66,11 +66,11 @@ struct ReportFormView: View {
 
     init(apiClient: ReportAPIClientProtocol,
          historyStore: LocalReportHistoryStore,
-         onSubmitSuccess: @escaping () -> Void) {
+         onSubmitSuccess: @escaping (SeenIn) -> Void) {
         _viewModel = StateObject(wrappedValue: ReportFormViewModel(
             apiClient: apiClient,
             historyStore: historyStore,
-            selfReportApplier: SelfReportApplier(),
+            diagnosticsCollector: ReportDiagnosticsCollector(),
             onSuccess: onSubmitSuccess
         ))
     }
@@ -102,9 +102,25 @@ struct ReportFormView: View {
                     }
                 }
             } header: {
-                Text("広告があった URL")
+                Text("広告が消えなかったページの URL")
             } footer: {
-                Text("Safari のアドレスバーからコピーして貼り付けてください")
+                Text("広告が表示されていたページを、そのまま貼り付けてください。")
+                    .font(.caption2)
+            }
+
+            Section {
+                Picker("どこで広告を見ましたか？", selection: $viewModel.selectedSeenIn) {
+                    Text("選択してください").tag(SeenIn?.none)
+                    ForEach(SeenIn.allCases) { value in
+                        Label(value.title, systemImage: value.iconSystemName)
+                            .tag(SeenIn?.some(value))
+                    }
+                }
+                .pickerStyle(.menu)
+            } header: {
+                Text("どこで広告を見ましたか？")
+            } footer: {
+                Text(seenInFooterText)
                     .font(.caption2)
             }
 
@@ -207,6 +223,15 @@ struct ReportFormView: View {
                 secondaryButton: .cancel(Text("OK")) { viewModel.dismissError() }
             )
         }
+    }
+
+    /// 選択中の項目に応じて補足を出し分ける。Safari 以外を選んだ時点で
+    /// 「Safari 用フィルタでは消せない」と伝えておく（送信後にも同じ趣旨を出す）。
+    private var seenInFooterText: String {
+        guard let seenIn = viewModel.selectedSeenIn else {
+            return "Safari でウェブページを見ていたのか、他のアプリの中だったのかを選んでください。"
+        }
+        return seenIn.detail
     }
 
     private var turnstileBinding: Binding<Bool> {
