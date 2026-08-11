@@ -2,6 +2,15 @@
  * Critical domain list - never block. Phase 2 has 50 hardcoded entries;
  * Plan B switches to Tranco Top 1M sync.
  * Matches exact host + suffix match (so subdomains are also protected).
+ *
+ * ★このリストに追記するときは、≤4.0.3 の旧クライアントへの影響を必ず確認すること。
+ * D-lite で submit の critical → 400 拒否を撤廃したため、旧クライアントは critical ドメインの報告でも
+ * 200 を受け取り、成功後に SelfReportApplier で端末内ブロックを書く。旧クライアントが自己ブロックを
+ * 回避できるのは、バイナリに凍結された Swift 側 `CriticalDomainGuard` が同じドメインを持っている場合だけ。
+ * 2026-08-11 時点では両リストは完全一致（51 対 51・comm 双方向差分ゼロ）なので経路は成立しない。
+ * ここに**サーバ側だけ**ドメインを足すと、そのドメインについて初めて経路が開く
+ * （旧クライアントが自分の端末で大手サイトをブロックしてしまう）。
+ * 新クライアントは SelfReportApplier 自体を持たないので影響を受けない。
  */
 export const CRITICAL_DOMAINS = new Set<string>([
   // Apple & Apple services
