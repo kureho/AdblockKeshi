@@ -53,11 +53,19 @@ final class TunnelManager {
     /// 受け側は `PacketTunnelProvider.handleAppMessage` → `reloadEngine()`。
     /// reload 対象とする稼働中ステータス。
     ///
-    /// `.reasserting`（ネットワーク切替中）を含めるのが重要: この状態でも tunnel プロセスは
-    /// 生きていてメモリ上に旧 DNSEngine を保持しているが、`reassertForNetworkChange()` は
-    /// 上流 DNS を取り直すだけで `reloadEngine()` を呼ばない。ここで除外すると、切替中に
-    /// アプリを開いたユーザーだけ dns-self.json を消しても旧リストが残り続ける。
-    private static let reloadableStatuses: Set<NEVPNStatus> = [.connected, .reasserting]
+    /// 判定基準は「extension プロセスがメモリ上に DNSEngine を保持している可能性があるか」。
+    /// engine を持っているのに reload を送らないと、`dns-self.json` を消しても旧リストで
+    /// 報告 host をブロックし続ける窓が残る。
+    ///
+    /// - `.connecting`: `startTunnel` は**最初に** `reloadEngine()` を呼ぶ（接続確立を待たない）。
+    ///   したがってこの時点で既に旧 `dns-self.json` を読んだ engine が存在する。
+    /// - `.connected`: 通常の稼働中。
+    /// - `.reasserting`: ネットワーク切替中。`reassertForNetworkChange()` は上流 DNS を
+    ///   取り直すだけで `reloadEngine()` を呼ばないため、放置すると自力で復帰しない。
+    ///
+    /// `.disconnecting` を含めないのは、間もなく engine ごと破棄されるため（自然解消する）。
+    /// `.invalid` / `.disconnected` は engine が存在しない。
+    private static let reloadableStatuses: Set<NEVPNStatus> = [.connecting, .connected, .reasserting]
 
     static func requestReloadIfRunning() async {
         guard let managers = try? await NETunnelProviderManager.loadAllFromPreferences(),
