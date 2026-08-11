@@ -1,0 +1,71 @@
+# 一時診断ツール: 「報告の送信に失敗しました」問い合わせ (2026-08-09) の原因調査用。
+# read-only な SELECT を流すだけ。取得後にこのファイルは削除する。
+# 公開 repo のためログには集計値・8桁切り詰めハッシュ・時刻のみ出力（URL/ドメイン/フルハッシュ禁止）。
+# heavy-process-safety / workflow-timeout-guard 遵守: Linux runner・timeout 必須・手動起動のみ。
+name: d1-peek-abuse
+
+on:
+  workflow_dispatch:
+
+jobs:
+  peek:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Query aggregates (read-only SELECT)
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          q() {
+            local label="$1" sql="$2"
+            echo "===== ${label} ====="
+            curl -sS -X POST \
+              "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/d1/database/91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4/query" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "$(python3 -c 'import json,sys; print(json.dumps({"sql": sys.argv[1]}))' "$sql")" \
+              | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([r.get("results") for r in d.get("result",[])], indent=1, ensure_ascii=False)) if d.get("success") else print("API_ERROR:", json.dumps(d.get("errors")))'
+          }
+          NOW="CAST(strftime('%s','now') AS INTEGER)"
+          q "reports_by_day_7d" \
+            "SELECT date(created_at,'unixepoch') AS d, COUNT(*) AS n FROM reports WHERE created_at > ${NOW}-604800 GROUP BY d ORDER BY d"
+          q "abuse_by_day_reason_7d" \
+            "SELECT date(created_at,'unixepoch') AS d, reason, identifier_type, COUNT(*) AS n FROM abuse_log WHERE created_at > ${NOW}-604800 GROUP BY d, reason, identifier_type ORDER BY d"
+          q "active_bans" \
+            "SELECT substr(identifier_hash,1,8) AS id8, identifier_type, reason, abuse_count, ban_level, datetime(created_at,'unixepoch') AS created, datetime(expires_at,'unixepoch') AS expires FROM bans WHERE expires_at > ${NOW}"
+          q "abuse_detail_3d" \
+            "SELECT substr(identifier_hash,1,8) AS id8, identifier_type, reason, datetime(created_at,'unixepoch') AS t FROM abuse_log WHERE created_at > ${NOW}-259200 ORDER BY created_at DESC LIMIT 50"
+          q "reports_detail_3d" \
+            "SELECT substr(uuid_hash,1,8) AS id8, status, ad_type, datetime(created_at,'unixepoch') AS t FROM reports WHERE created_at > ${NOW}-259200 ORDER BY created_at DESC LIMIT 30"
+      - name: Hostname-only aggregation of critical_domain rejects (no full URLs in logs)
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          curl -sS -X POST \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/d1/database/91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4/query" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"sql":"SELECT substr(identifier_hash,1,8) AS id8, url FROM abuse_log WHERE reason = '"'"'critical_domain'"'"' AND created_at > CAST(strftime('"'"'%s'"'"','"'"'now'"'"') AS INTEGER)-604800"}' \
+            | python3 -c '
+          import json, sys
+          from urllib.parse import urlparse
+          from collections import Counter
+          d = json.load(sys.stdin)
+          if not d.get("success"):
+              print("API_ERROR:", json.dumps(d.get("errors"))); sys.exit(1)
+          rows = d["result"][0]["results"]
+          c = Counter()
+          for r in rows:
+              try:
+                  host = urlparse(r["url"]).hostname or "(unparsable)"
+              except Exception:
+                  host = "(unparsable)"
+              c[(r["id8"], host)] += 1
+          print("===== critical_domain rejects by (id8, hostname) 7d =====")
+          for (id8, host), n in c.most_common():
+              print(f"{id8}  {host}  x{n}")
+          '
