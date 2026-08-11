@@ -11,6 +11,36 @@
    `CF_API_TOKEN` secret は D1 REST API 専用で、Workers deploy 権限を持つかは未確認。
 3. **4.0.3 が WAITING_FOR_REVIEW**（live は 4.0.2）。iOS の D-lite 提出は 4.0.3 が審査を抜けるまで開始できない。
 
+## 4.0.3 の配信自動検知（2026-08-11 設置）
+
+kureho から再度連絡してもらう前提にせず、配信開始を自動検知して本手順へ引き継ぐ。
+
+| ファイル | 役割 |
+|---|---|
+| `~/claude/tasks/scripts/adblockkeshi_dlite_release_check.py` | 判定のみ（読み取り専用）。1 行を出力 |
+| `~/claude/tasks/scripts/adblockkeshi_dlite_on_release.sh` | launchd から呼ばれる。通知 + handoff 生成 + 一回きり管理 |
+| `~/Library/LaunchAgents/com.kureho.adblockkeshi-dlite-on-release.plist` | 日次 4 回（08:23 / 12:53 / 17:23 / 22:53） |
+
+**発火条件は 2 ソースが揃ったときだけ**（審査ステータスや推測では発火しない）:
+
+1. ASC の `appStoreState` = `READY_FOR_SALE`
+2. iTunes lookup の live version = `4.0.3` ← 実際にストアに出ている版
+3. 加えて 4.0.3 に紐づく build = `10003`
+
+ASC が READY_FOR_SALE でもストア反映には遅延があるため、①だけでは「配信された」と言えない
+（配信日は iTunes lookup 実測が正、という既存の運用と揃えている）。
+②が未反映の間は `PROPAGATING:<ver>` を返して発火しない。
+
+発火すると `AdblockKeshi/tasks/dlite-release-detected.md` が生成され、macOS 通知が出る。
+`REJECTED` / `BUILD_MISMATCH` のときは自動継続せず通知のみ。
+
+**用済み後の撤去**:
+```bash
+launchctl bootout gui/$UID/com.kureho.adblockkeshi-dlite-on-release
+rm ~/Library/LaunchAgents/com.kureho.adblockkeshi-dlite-on-release.plist
+rm -f ~/claude/tasks/adblockkeshi-dlite-on-release.done
+```
+
 ## 実行順序の判断（2026-08-11）
 
 **4.0.3 配信 → Workers deploy → iOS D-lite 提出**の順にする。
