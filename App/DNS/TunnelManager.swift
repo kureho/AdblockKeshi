@@ -81,14 +81,18 @@ final class TunnelManager {
     /// 報告の診断値は「Pro を買ったか」ではなく「そのとき守られていたか」でなければ
     /// 「保護 ON なのに広告が出た」と「そもそも保護 OFF」を切り分けられない。
     ///
-    /// - `.connected`: 通常の稼働中。
-    /// - `.reasserting`: ネットワーク切替中だが tunnel は上がっていて DNS を処理する。
+    /// ★上の `reloadableStatuses` と**わざと違う集合**にしてある。あちらの問いは
+    /// 「extension がメモリ上に DNSEngine を持っているか」で、こちらは
+    /// 「その瞬間 DNS がブロックエンジンを通っていたか」。揃えてはいけない。
+    ///
+    /// - `.connected`: 通常の稼働中。**これだけが保護中**。
+    /// - `.reasserting`: `PacketTunnelProvider.reassertForNetworkChange()` が
+    ///   `setTunnelNetworkSettings(nil)` で設定を一旦外し、システム DNS を復元している最中。
+    ///   DNS はブロックエンジンを通らないので保護中ではない。ここを true にすると、
+    ///   切替中に見た広告が「保護 ON なのに取りこぼした」と誤分類される。
     /// - `.connecting`: まだ経路が確立しておらず保護は始まっていない。
     nonisolated static func isProtecting(_ status: NEVPNStatus) -> Bool {
-        switch status {
-        case .connected, .reasserting: return true
-        default: return false
-        }
+        status == .connected
     }
 
     /// 現在 DNS 保護が動いているか。構成を読めなければ nil（＝診断不能。false と区別する）。
