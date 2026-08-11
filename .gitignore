@@ -50,3 +50,9 @@ node_modules/
 
 # スクショ作業物（fastlane/screenshots と同じくローカル保管のみ）
 tasks/screenshot-drafts-*/
+
+# ローカル専用の設計文書（評価リセット計画など営業判断を含むため public repo に出さない）
+# 誤って `git add -A` しても混入しないようにする（2026-08-11 Codex review 指摘）
+tasks/dlite-design-*.md
+tasks/dns-hotfix-*-design.md
+tasks/report-feature-redesign-*.md
