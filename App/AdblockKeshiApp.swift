@@ -117,6 +117,14 @@ extension AdblockKeshiApp {
     private func migrateReportedRulesIfNeeded() {
         if let store = SelfReportedRulesStore() { _ = try? store.sanitizeStoredSelfRules() }
         CombinedRuleListCoordinator.scheduleRegenerate()
+        // v4.0.3: DNS 自己報告ファストレーンの残骸(dns-self.json)を削除する。
+        // 報告した host が DNS でブロックされ、そのサイトが開けなくなっていた（4.0.2 までの不具合）。
+        // purge は idempotent なので毎起動呼んでよい（2 回目以降は no-op）。
+        // 実際に削除できたときだけ、稼働中 tunnel にメモリ上の旧リストを捨てさせる。
+        if let dnsStore = DNSSelfReportStore.sharedAppGroup(),
+           (try? dnsStore.purge()) == true {
+            Task { await TunnelManager.requestReloadIfRunning() }
+        }
     }
 }
 

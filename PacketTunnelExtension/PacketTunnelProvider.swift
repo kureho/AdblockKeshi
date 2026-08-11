@@ -114,8 +114,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private func reloadEngine() {
         let curated = BlocklistStore.shared().loadDomains()
-        let selfReported = DNSSelfReportStore.sharedAppGroup()?.readDomains() ?? []
-        let blocklist = DNSBlocklistLoader.effectiveBlocklist(curated: curated, selfReported: selfReported)
+        // ★自己報告ファストレーン(dns-self.json)は v4.0.3 で廃止したので読まない。
+        // DNS には first-party / third-party の区別が無く、「広告が消えなかったページ」を
+        // 報告するとその host が名前解決できなくなっていた（= サイトが開けない・4.0.2 までの不具合）。
+        // 旧版で書き込まれたファイルが端末に残っていても、ここで読まないので実害は生じない。
+        let blocklist = DNSBlocklistLoader.effectiveBlocklist(curated: curated, selfReported: [])
         engine = DNSEngine(blocklist: blocklist)
     }
 

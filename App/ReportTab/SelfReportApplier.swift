@@ -13,7 +13,8 @@ protocol SelfReportApplying {
 @MainActor
 struct SelfReportApplier: SelfReportApplying {
     func apply(reportedURL: URL) {
-        // ① Content Blocker(Safari) の自己ファストレーン
+        // Content Blocker(Safari) の自己ファストレーン。
+        // `load-type: third-party` + document 除外なので、訪問中のサイト自体は壊さない。
         if let rule = ReportedRuleBuilder.blockRule(forURL: reportedURL.absoluteString),
            let store = SelfReportedRulesStore() {
             // 追記 + merged 再構築。失敗してもサーバ報告自体は成立しているので握り潰す。
@@ -21,10 +22,9 @@ struct SelfReportApplier: SelfReportApplying {
             // combined を再生成（off-main）して標準 ContentBlocker を reload。
             CombinedRuleListCoordinator.scheduleRegenerate()
         }
-        // ② DNS ブロックの自己ファストレーン（あなたの報告で他アプリの広告ブロックも即増える）
-        //    tunnel が dns-rules(curated/CDN) ∪ dns-self を読む（DNSBlocklistLoader）。
-        if let dnsStore = DNSSelfReportStore.sharedAppGroup() {
-            DNSSelfReportApplier(store: dnsStore).apply(reportedURL: reportedURL)
-        }
+        // ★DNS 自己ファストレーンは v4.0.3 で廃止（DNSSelfReportApplier ごと削除）。
+        // DNS には first-party / third-party の区別が無いため、「広告が消えなかったページ」を
+        // 報告するとそのサイト自体が名前解決できなくなっていた（4.0.2 までの不具合）。
+        // 残骸の削除は AdblockKeshiApp.migrateReportedRulesIfNeeded() が起動時に行う。
     }
 }

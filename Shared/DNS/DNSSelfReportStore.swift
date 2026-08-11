@@ -41,6 +41,22 @@ struct DNSSelfReportStore {
         try data.write(to: fileURL, options: [.atomic])
     }
 
+    /// 保存済みの自己報告ドメインを丸ごと削除する（v4.0.3 hotfix）。
+    ///
+    /// DNS には first-party / third-party の区別が無いため、「広告が消えなかったページ」として
+    /// 報告された host をブロックすると、そのサイト自体が名前解決できなくなる（= サイトが開けない）。
+    /// 自己報告ファストレーンごと廃止したので、既存端末に残っている残骸をここで消す。
+    ///
+    /// 戻り値: 実際に削除したら true / 元から無ければ false。idempotent なので
+    /// 「一度きり」の管理フラグは不要（2 回目以降は no-op）。
+    @discardableResult
+    func purge() throws -> Bool {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: fileURL.path) else { return false }
+        try fileManager.removeItem(at: fileURL)
+        return true
+    }
+
     /// 小文字化 + 前後空白除去 + 末尾ドット除去（DNSBlocklist.normalize と同じ正規化）。
     private static func normalize(_ s: String) -> String {
         var d = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

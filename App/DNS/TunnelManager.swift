@@ -45,6 +45,20 @@ final class TunnelManager {
         if enabled { await start() } else { stop() }
     }
 
+    /// 稼働中の tunnel にブロックリストの再読込を要求する（停止中/未構成なら何もしない）。
+    ///
+    /// v4.0.3: 起動時に `dns-self.json` を削除しても、既に動いている tunnel はメモリ上の
+    /// DNSBlocklist を持ち続ける。アプリ更新で extension プロセスが置き換わる前提には
+    /// 依存せず、ここで明示的に reload させて即座に実害を止める。
+    /// 受け側は `PacketTunnelProvider.handleAppMessage` → `reloadEngine()`。
+    static func requestReloadIfRunning() async {
+        guard let managers = try? await NETunnelProviderManager.loadAllFromPreferences(),
+              let session = managers.first?.connection as? NETunnelProviderSession,
+              session.status == .connected
+        else { return }
+        try? session.sendProviderMessage(Data()) { _ in }
+    }
+
     // MARK: - start / stop
 
     private func start() async {
