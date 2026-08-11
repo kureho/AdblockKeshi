@@ -6,10 +6,14 @@ enum ReportDiagnosticsSources {
     /// system API の応答を待つ上限。これを過ぎたら診断を諦めて報告を送る。
     static let timeout: TimeInterval = 3
 
+    /// state を読むだけの stateless な checker。プロセス寿命で持つ
+    /// （呼び出しごとに生成すると completion 到達前の解放を考える必要が出る）。
+    private static let blockerStateChecker = ContentBlockerStateChecker()
+
     /// Safari Content Blocker が有効か。設定アプリのトグルは非同期でしか読めない。
     static let blockerEnabled: @Sendable () async -> Bool? = {
         await BestEffortValue.resolve(timeout: timeout) { done in
-            ContentBlockerStateChecker().fetchState { state in
+            blockerStateChecker.fetchState { state in
                 switch state {
                 case .enabled:  done(true)
                 case .disabled: done(false)
