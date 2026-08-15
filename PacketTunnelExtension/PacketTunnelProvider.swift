@@ -39,6 +39,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var nextRewriteID: UInt16 = 1
     private var maintenanceTimer: DispatchSourceTimer?
     private var selfFetchTimer: DispatchSourceTimer?
+    /// 時限一時停止の期限（素通し運転中のみ非 nil）。maintenance tick が期限超過で自動再開する。
+    private var pauseDeadline: Date?
 
     /// sentinel = RFC 2544 予約帯（198.18.0.0/15）。tunnel が DNS を吸い込むための擬似 DNS サーバ IP。
     private enum Net {
@@ -113,6 +115,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     // MARK: - エンジン（curated ∪ self をロード）
 
     private func reloadEngine() {
+        // v4.2.0 時限一時停止: 期限内なら素通しエンジン（全ドメイン forward）で運転する。
+        // トンネルは止めない＝このプロセスが生き続けるので、アプリが suspend されていても
+        // maintenance tick（5秒）が期限超過を検知して確実に自動再開できる。
+        if let pausedUntil = DNSPauseStore.sharedAppGroup()?.readPausedUntil() {
+            pauseDeadline = pausedUntil
+            engine = DNSEngine(blocklist: DNSBlocklist(domains: []))
+            return
+        }
+        pauseDeadline = nil
         let curated = BlocklistStore.shared().loadDomains()
         // ★自己報告ファストレーン(dns-self.json)は v4.0.3 で廃止したので読まない。
         // DNS には first-party / third-party の区別が無く、「広告が消えなかったページ」を
@@ -120,6 +131,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // 旧版で書き込まれたファイルが端末に残っていても、ここで読まないので実害は生じない。
         let blocklist = DNSBlocklistLoader.effectiveBlocklist(curated: curated, selfReported: [])
         engine = DNSEngine(blocklist: blocklist)
+    }
+
+    /// 一時停止の期限が切れていたら保護を自動再開する（maintenance tick から毎 5 秒）。
+    /// clear() は best-effort（失敗しても readPausedUntil が期限切れ nil を返すので再開自体は成立する）。
+    private func resumeFromPauseIfExpired(now: TimeInterval) {
+        guard let deadline = pauseDeadline, now >= deadline.timeIntervalSince1970 else { return }
+        pauseDeadline = nil
+        try? DNSPauseStore.sharedAppGroup()?.clear()
+        reloadEngine()
     }
 
     // MARK: - network settings
@@ -289,6 +309,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             self.lastMaintenanceTick = now
             self.forwarding.expireAll(olderThan: now - 5)   // 応答なしは偽装せず捨てる
+            self.resumeFromPauseIfExpired(now: now)         // 時限一時停止の自動再開（誤差 ≤5 秒）
             self.runWatchdog(now: now)
             self.runPrimaryRetryProbe(now: now)
         }

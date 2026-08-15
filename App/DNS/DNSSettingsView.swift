@@ -43,6 +43,9 @@ struct DNSSettingsView: View {
         ScrollView {
             VStack(spacing: 18) {
                 toggleCard
+                if tunnel.status == .on || tunnel.pausedUntil != nil {
+                    pauseCard
+                }
                 explanationCard
                 restoreFooter
             }
@@ -85,6 +88,56 @@ struct DNSSettingsView: View {
             RoundedRectangle(cornerRadius: 16)
                 .fill(Color(UIColor.secondarySystemBackground))
         )
+    }
+
+    /// v4.2.0: 時限一時停止（自動再開つき）。サイトや他アプリの不調時に「全 OFF → 戻し忘れ」を防ぐ。
+    private var pauseCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("一時停止")
+                .font(.system(size: 13, weight: .heavy))
+                .foregroundStyle(.secondary)
+            if let until = tunnel.pausedUntil {
+                HStack(spacing: 8) {
+                    Image(systemName: "pause.circle.fill")
+                        .foregroundStyle(.orange)
+                    Text("停止中 · \(until.formatted(date: .omitted, time: .shortened)) に自動で再開します")
+                        .font(.footnote)
+                }
+                Button {
+                    Task { await tunnel.resumeProtection() }
+                } label: {
+                    Text("今すぐ再開")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                HStack(spacing: 10) {
+                    pauseButton("15分", duration: .fifteenMinutes)
+                    pauseButton("1時間", duration: .oneHour)
+                }
+                Text("サイトやアプリの調子が悪いときに。時間が来ると自動で保護を再開します")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(UIColor.secondarySystemBackground))
+        )
+    }
+
+    private func pauseButton(_ label: String, duration: DNSPauseStore.Duration) -> some View {
+        Button {
+            Task { await tunnel.pauseProtection(for: duration) }
+        } label: {
+            Text(label)
+                .font(.system(size: 15, weight: .semibold))
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.bordered)
     }
 
     private var explanationCard: some View {
