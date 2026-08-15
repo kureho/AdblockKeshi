@@ -6,6 +6,7 @@ import { checkRateLimit } from '../lib/rate-limit'
 import { sha256Hex } from '../lib/hash'
 import { isAdType, type AdType } from '../lib/ad-type'
 import { isSeenIn, type SeenIn } from '../lib/seen-in'
+import { isReportKind, type ReportKind } from '../lib/report-kind'
 
 interface SubmitBody {
   token?: string
@@ -13,6 +14,8 @@ interface SubmitBody {
   url?: string
   memo?: string
   ad_type?: string
+  /** v4.2.0: 報告種別。未送信/未知値 = NULL 保存 = 広告報告の意味。 */
+  report_kind?: string
   /** D-lite: どこで見た広告か。新クライアントのみ送る（有無が新旧の境界）。 */
   seen_in?: string
   /** 以下は診断用の自動添付。取得できなくても報告を失敗させないため全て任意。 */
@@ -133,14 +136,16 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
   // 日時で切らないのは、D-lite 公開後も旧アプリから報告が届き続けるため。
   const seenIn: SeenIn | null = isSeenIn(body.seen_in) ? body.seen_in : null
   const blockerEnabled = toNullableFlag(body.blocker_enabled)
-  const status = reportStatus(seenIn, blockerEnabled)
+  // v4.2.0: 未知値/未送信は NULL（= 広告扱い・seen_in と同じ前方互換方針）。
+  const reportKind: ReportKind | null = isReportKind(body.report_kind) ? body.report_kind : null
+  const status = reportStatus(reportKind, seenIn, blockerEnabled)
 
   await env.DB.prepare(`
     INSERT INTO reports (
       id, uuid_hash, ip_hash, domain, url, url_path_hash, memo, ad_type, status, created_at,
-      seen_in, blocker_enabled, dns_enabled, app_version, app_build, filter_version
+      seen_in, blocker_enabled, dns_enabled, app_version, app_build, filter_version, report_kind
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     id, uuidHash, ipHash, domain, body.url, urlPathHash,
     redactedMemo === '' ? null : redactedMemo, adType, status, now,
@@ -150,6 +155,7 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
     toNullableText(body.app_version),
     toNullableText(body.app_build),
     toNullableText(body.filter_version),
+    reportKind,
   ).run()
 
   if (didRedact) {
@@ -194,11 +200,14 @@ async function insertAbuseLog(
  *
  * どの報告も削除はせず、参考データとして observation 系 status で保持する。
  *
+ * - `broken_site`            … v4.2.0 壊れ報告。**どんな診断値でも pending に入れない**
+ *                                （壊れているサイトをさらにブロックする方向へ誤学習させない）
  * - `observation_legacy`     … 旧クライアント（seen_in を送ってこない）
  * - `observation_out_of_scope` … Safari 以外で見た広告（Safari 用フィルタでは原理的に消せない）
  *                                / Content Blocker が無効だった or 状態不明（取りこぼしとは言えない）
  */
-function reportStatus(seenIn: SeenIn | null, blockerEnabled: 1 | 0 | null): string {
+function reportStatus(reportKind: ReportKind | null, seenIn: SeenIn | null, blockerEnabled: 1 | 0 | null): string {
+  if (reportKind === 'site_broken') return 'broken_site'
   if (seenIn === null) return 'observation_legacy'
   if (seenIn !== 'safari') return 'observation_out_of_scope'
   if (blockerEnabled !== 1) return 'observation_out_of_scope'
