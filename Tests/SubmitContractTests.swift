@@ -27,6 +27,7 @@ final class SubmitContractTests: XCTestCase {
             url: try XCTUnwrap(contract["url"] as? String),
             memo: contract["memo"] as? String,
             adType: contract["ad_type"] as? String,
+            reportKind: try XCTUnwrap(contract["report_kind"] as? String),
             seenIn: contract["seen_in"] as? String,
             blockerEnabled: contract["blocker_enabled"] as? Bool,
             dnsEnabled: contract["dns_enabled"] as? Bool,
@@ -58,5 +59,12 @@ final class SubmitContractTests: XCTestCase {
         let contract = try loadContract()
         let raw = try XCTUnwrap(contract["ad_type"] as? String)
         XCTAssertNotNil(AdType(rawValue: raw), "契約の ad_type が AdType に存在しない: \(raw)")
+    }
+
+    /// 契約が使う `report_kind` は `ReportKind` の rawValue でなければならない。
+    func test_contractReportKind_isAValidReportKindRawValue() throws {
+        let contract = try loadContract()
+        let raw = try XCTUnwrap(contract["report_kind"] as? String)
+        XCTAssertNotNil(ReportKind(rawValue: raw), "契約の report_kind が ReportKind に存在しない: \(raw)")
     }
 }

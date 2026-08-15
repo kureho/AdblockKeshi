@@ -18,6 +18,7 @@ final class SubmitRequestDTOEncodingTests: XCTestCase {
             url: "https://example.com/article",
             memo: "メモ",
             adType: "popup",
+            reportKind: "site_broken",
             seenIn: "safari",
             blockerEnabled: true,
             dnsEnabled: false,
@@ -35,6 +36,7 @@ final class SubmitRequestDTOEncodingTests: XCTestCase {
         XCTAssertEqual(json["url"] as? String, "https://example.com/article")
         XCTAssertEqual(json["memo"] as? String, "メモ")
         XCTAssertEqual(json["ad_type"] as? String, "popup")
+        XCTAssertEqual(json["report_kind"] as? String, "site_broken")
         XCTAssertEqual(json["seen_in"] as? String, "safari")
         XCTAssertEqual(json["blocker_enabled"] as? Bool, true)
         XCTAssertEqual(json["dns_enabled"] as? Bool, false)
@@ -47,7 +49,7 @@ final class SubmitRequestDTOEncodingTests: XCTestCase {
         let json = try encode(fullDTO())
         XCTAssertEqual(
             Set(json.keys),
-            ["token", "uuid_hash", "url", "memo", "ad_type", "seen_in",
+            ["token", "uuid_hash", "url", "memo", "ad_type", "report_kind", "seen_in",
              "blocker_enabled", "dns_enabled", "app_version", "app_build", "filter_version"]
         )
     }
@@ -59,6 +61,7 @@ final class SubmitRequestDTOEncodingTests: XCTestCase {
             url: "https://example.com/article",
             memo: nil,
             adType: nil,
+            reportKind: "ad_not_blocked",
             seenIn: "other_app",
             blockerEnabled: nil,
             dnsEnabled: nil,
@@ -68,7 +71,8 @@ final class SubmitRequestDTOEncodingTests: XCTestCase {
         )
         let json = try encode(dto)
 
-        XCTAssertEqual(Set(json.keys), ["token", "uuid_hash", "url", "seen_in"])
+        XCTAssertEqual(Set(json.keys), ["token", "uuid_hash", "url", "report_kind", "seen_in"],
+                       "report_kind は新クライアントでは常に送る（旧サーバは未知キーを無視する）")
         for omitted in ["memo", "ad_type", "blocker_enabled", "dns_enabled",
                         "app_version", "app_build", "filter_version"] {
             XCTAssertNil(json[omitted], "\(omitted) は nil ならキーごと省略する")
@@ -80,7 +84,8 @@ final class SubmitRequestDTOEncodingTests: XCTestCase {
     func test_falseFlags_areSentNotOmitted() throws {
         let dto = SubmitRequestDTO(
             token: "tok", uuidHash: String(repeating: "a", count: 64),
-            url: "https://example.com/a", memo: nil, adType: nil, seenIn: "safari",
+            url: "https://example.com/a", memo: nil, adType: nil,
+            reportKind: "ad_not_blocked", seenIn: "safari",
             blockerEnabled: false, dnsEnabled: false,
             appVersion: nil, appBuild: nil, filterVersion: nil
         )

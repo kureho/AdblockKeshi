@@ -4,6 +4,7 @@
   "url": "https://example.com/article",
   "memo": "動画の上に広告が残る",
   "ad_type": "sticky_banner",
+  "report_kind": "ad_not_blocked",
   "seen_in": "safari",
   "blocker_enabled": true,
   "dns_enabled": false,
