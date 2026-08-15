@@ -19,7 +19,7 @@ final class ReportFormViewModelDLiteTests: XCTestCase {
         var lastDiagnostics: ReportDiagnostics?
         var submitCount = 0
 
-        func submitReport(url: URL, memo: String?, adType: AdType?,
+        func submitReport(url: URL, memo: String?, adType: AdType?, reportKind: ReportKind,
                           seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws {
             submitCount += 1
             lastURL = url
@@ -40,7 +40,7 @@ final class ReportFormViewModelDLiteTests: XCTestCase {
         client: ReportAPIClientProtocol,
         history: LocalReportHistoryStore? = nil,
         collector: ReportDiagnosticsCollecting? = nil,
-        onSuccess: @escaping (SeenIn) -> Void = { _ in }
+        onSuccess: @escaping (ReportSuccess) -> Void = { _ in }
     ) -> ReportFormViewModel {
         ReportFormViewModel(
             apiClient: client,
@@ -71,7 +71,7 @@ final class ReportFormViewModelDLiteTests: XCTestCase {
     func test_completeSubmit_passesSeenInToClient_andResetsIt() async {
         let client = CaptureClient()
         var succeededWith: SeenIn?
-        let vm = makeViewModel(client: client, onSuccess: { succeededWith = $0 })
+        let vm = makeViewModel(client: client, onSuccess: { succeededWith = $0.seenIn })
         vm.urlInput = "https://example.com/article"
         vm.selectedAdType = .popup
         vm.selectedSeenIn = .otherApp

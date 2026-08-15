@@ -23,6 +23,9 @@ struct SubmitRequestDTO: Encodable {
     let url: String
     let memo: String?
     let adType: String?
+    /// v4.2.0: 報告種別（ad_not_blocked / site_broken）。新クライアントは常に送る。
+    /// 旧サーバは未知キーとして無視し、新サーバは未送信を ad_not_blocked として扱う。
+    let reportKind: String
     /// D-lite: どこで見た広告か。**有無が新旧クライアントの境界**でもある。
     let seenIn: String?
     /// 以下は診断用の自動添付。取得できなくても報告を失敗させないため全て任意。
@@ -37,6 +40,7 @@ struct SubmitRequestDTO: Encodable {
         case uuidHash = "uuid_hash"
         case url, memo
         case adType = "ad_type"
+        case reportKind = "report_kind"
         case seenIn = "seen_in"
         case blockerEnabled = "blocker_enabled"
         case dnsEnabled = "dns_enabled"

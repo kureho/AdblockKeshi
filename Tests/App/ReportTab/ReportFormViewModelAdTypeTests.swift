@@ -9,7 +9,7 @@ final class ReportFormViewModelAdTypeTests: XCTestCase {
         var lastSubmittedURL: URL?
         var didCallRequestToken = false
 
-        func submitReport(url: URL, memo: String?, adType: AdType?,
+        func submitReport(url: URL, memo: String?, adType: AdType?, reportKind: ReportKind,
                           seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws {
             lastSubmittedURL = url
             lastSubmittedAdType = adType
@@ -21,7 +21,7 @@ final class ReportFormViewModelAdTypeTests: XCTestCase {
     }
 
     private func makeViewModel(_ client: ReportAPIClientProtocol,
-                               onSuccess: @escaping (SeenIn) -> Void = { _ in }) -> ReportFormViewModel {
+                               onSuccess: @escaping (ReportSuccess) -> Void = { _ in }) -> ReportFormViewModel {
         ReportFormViewModel(apiClient: client, onSuccess: onSuccess)
     }
 

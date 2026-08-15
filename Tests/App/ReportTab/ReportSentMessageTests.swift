@@ -45,4 +45,36 @@ final class ReportSentMessageTests: XCTestCase {
             XCTAssertFalse(ReportSentMessage.title.contains(fragment))
         }
     }
+
+    // MARK: - v4.2.0 壊れ報告
+
+    func test_adSuccess_usesSeenInMessage() {
+        let success = ReportSuccess(kind: .adNotBlocked, seenIn: .otherApp, host: "a.example.com")
+        XCTAssertEqual(ReportSentMessage.body(for: success), ReportSentMessage.body(for: .otherApp))
+    }
+
+    func test_brokenSafari_framesReportAsUnbreakData() {
+        let body = ReportSentMessage.body(
+            for: ReportSuccess(kind: .siteBroken, seenIn: .safari, host: "a.example.com"))
+        XCTAssertTrue(body.contains("壊さずに"), "壊れ報告は「壊さないための参考データ」と伝える")
+        XCTAssertTrue(body.contains("参考"))
+    }
+
+    /// アプリ内の不調は Content Blocker の例外では直らない → DNS 一時停止へ誘導する。
+    func test_brokenOtherApp_pointsToDNSPause() {
+        let body = ReportSentMessage.body(
+            for: ReportSuccess(kind: .siteBroken, seenIn: .otherApp, host: "a.example.com"))
+        XCTAssertTrue(body.contains("一時停止"))
+    }
+
+    func test_brokenMessages_avoidForbiddenPromises() {
+        for seenIn in SeenIn.allCases {
+            let body = ReportSentMessage.body(
+                for: ReportSuccess(kind: .siteBroken, seenIn: seenIn, host: "a.example.com"))
+            for fragment in Self.forbidden {
+                XCTAssertFalse(body.contains(fragment),
+                               "壊れ報告 (\(seenIn)) の文言に禁止表現「\(fragment)」: \(body)")
+            }
+        }
+    }
 }

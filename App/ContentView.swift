@@ -137,6 +137,8 @@ struct CompletedView: View {
     @State private var bundledGeneratedAt: Date? = nil
     /// アプリ内広告ブロック（DNS・Pro）の状態。永続 Pro 状態を読むので自前インスタンスで可。
     @State private var proStore = ProStore()
+    /// v4.2.0: per-site 例外（このサイトで一時オフ）。空なら導線ごと出さない。
+    @State private var siteExceptionDomains: [String] = []
     @StateObject private var controlVM: BlockerControlViewModel
     private let versionStore: VersionInfoStore
 
@@ -262,6 +264,40 @@ struct CompletedView: View {
                     .padding(.horizontal, 20)
                 }
 
+                // v4.2.0: 壊れ報告から「一時オフ」にしたサイトの管理導線（例外がある時だけ）。
+                if !siteExceptionDomains.isEmpty {
+                    NavigationLink {
+                        SiteExceptionsListView(onChange: {
+                            siteExceptionDomains = SiteExceptionsStore.sharedAppGroup()?.readDomains() ?? []
+                        })
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "pause.circle")
+                                .font(.system(size: 18))
+                                .foregroundStyle(.orange)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("ブロック停止中のサイト")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                Text("\(siteExceptionDomains.count) 件のサイトでブロックを停止しています")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(Color(UIColor.secondarySystemBackground))
+                        )
+                        .padding(.horizontal, 20)
+                    }
+                }
+
                 Spacer(minLength: 20)
 
                 NavigationLink("このアプリについて") {
@@ -294,6 +330,7 @@ struct CompletedView: View {
             versionInfo = versionStore.read()
             appliedRecords = AppliedRulesStore()?.read() ?? [:]
             bundledGeneratedAt = BundledRulesInfo.generatedAt()
+            siteExceptionDomains = SiteExceptionsStore.sharedAppGroup()?.readDomains() ?? []
             if ScreenshotMode.autoOpenDNS { screenshotAutoOpenDNS = true }
         }
         .task {

@@ -10,10 +10,13 @@ enum ReportFormState: Equatable {
 
 @MainActor
 final class ReportFormViewModel: ObservableObject {
-    /// 広告が消えなかった **閲覧ページ** の URL（広告の配信元ではない）。
+    /// 問題が起きた **閲覧ページ** の URL（広告の配信元ではない）。
     @Published var urlInput: String = ""
     @Published var memoInput: String = ""
-    /// ユーザーが選択した広告タイプ。nil = 未選択 (送信不可)。
+    /// v4.2.0: 報告種別。既定は従来の広告報告（主用途を変えない）。
+    @Published var selectedKind: ReportKind = .adNotBlocked
+    /// ユーザーが選択した広告タイプ。nil = 未選択（広告報告では送信不可）。
+    /// 壊れ報告では使わない（送信時も nil を送る）。
     @Published var selectedAdType: AdType?
     /// どこで広告を見たか。nil = 未選択 (送信不可)。サーバの `seen_in` と同期。
     @Published var selectedSeenIn: SeenIn?
@@ -21,14 +24,14 @@ final class ReportFormViewModel: ObservableObject {
 
     private let apiClient: ReportAPIClientProtocol
     private let historyStore: LocalReportHistoryStore?
-    private let onSuccess: (SeenIn) -> Void
+    private let onSuccess: (ReportSuccess) -> Void
     /// 診断情報の自動取得。nil なら添付なしで送る（テスト既定）。
     private let diagnosticsCollector: ReportDiagnosticsCollecting?
 
     init(apiClient: ReportAPIClientProtocol,
          historyStore: LocalReportHistoryStore? = nil,
          diagnosticsCollector: ReportDiagnosticsCollecting? = nil,
-         onSuccess: @escaping (SeenIn) -> Void) {
+         onSuccess: @escaping (ReportSuccess) -> Void) {
         self.apiClient = apiClient
         self.historyStore = historyStore
         self.diagnosticsCollector = diagnosticsCollector
@@ -62,7 +65,8 @@ final class ReportFormViewModel: ObservableObject {
 
     var canSubmit: Bool {
         guard validatedURL != nil else { return false }
-        guard selectedAdType != nil else { return false }
+        // 広告の種類は広告報告のみ必須（壊れ報告は広告タイプでは表せない）。
+        if selectedKind.requiresAdType, selectedAdType == nil { return false }
         guard selectedSeenIn != nil else { return false }
         if !memoInput.isEmpty, case .invalid = MemoValidator.validate(memoInput) { return false }
         if case .submitting = state { return false }
@@ -101,8 +105,12 @@ final class ReportFormViewModel: ObservableObject {
             // 診断情報は best-effort。取れなくても（collector 未注入でも）送信は続行する。
             // 失敗はユーザーへ一切見せない（診断が取れないから報告できない、は本末転倒）。
             let diagnostics = await diagnosticsCollector?.collect() ?? .unavailable
+            let kind = selectedKind
             try await apiClient.submitReport(
-                url: url, memo: memo, adType: selectedAdType,
+                url: url, memo: memo,
+                // 壊れ報告に広告タイプを混ぜない（種別切替前の選択残骸がサーバの解釈を汚す）。
+                adType: kind.requiresAdType ? selectedAdType : nil,
+                reportKind: kind,
                 seenIn: seenIn, diagnostics: diagnostics
             )
             // D-lite: 報告は改善用データであり、その端末で即ブロックはしない。
@@ -111,9 +119,11 @@ final class ReportFormViewModel: ObservableObject {
             state = .idle
             urlInput = ""
             memoInput = ""
+            selectedKind = .adNotBlocked
             selectedAdType = nil
             selectedSeenIn = nil
-            onSuccess(seenIn)
+            onSuccess(ReportSuccess(kind: kind, seenIn: seenIn,
+                                    host: url.host?.lowercased() ?? ""))
             // 発火カウントは日数ベース（AdblockKeshiApp.bumpDailyUsageIfNeeded）に統一したため
             // 報告成功での bump は行わない（2026-06-11 kureho 判断）
         } catch let err as APIError {

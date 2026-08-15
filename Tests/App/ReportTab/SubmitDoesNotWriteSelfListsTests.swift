@@ -14,7 +14,7 @@ final class SubmitDoesNotWriteSelfListsTests: XCTestCase {
 
     private final class StubClient: ReportAPIClientProtocol, @unchecked Sendable {
         private(set) var submitted = 0
-        func submitReport(url: URL, memo: String?, adType: AdType?,
+        func submitReport(url: URL, memo: String?, adType: AdType?, reportKind: ReportKind,
                           seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws {
             submitted += 1
         }

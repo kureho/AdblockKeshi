@@ -26,7 +26,7 @@ final class ReportAPIClient: ReportAPIClientProtocol {
         self.decoder = JSONDecoder()
     }
 
-    func submitReport(url: URL, memo: String?, adType: AdType?,
+    func submitReport(url: URL, memo: String?, adType: AdType?, reportKind: ReportKind,
                       seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws {
         let token = try await acquireToken(scope: .submit)
         let uuidHash = try uuidStore.getUUIDHash()
@@ -38,6 +38,7 @@ final class ReportAPIClient: ReportAPIClientProtocol {
             url: url.absoluteString,
             memo: memo,
             adType: adType?.rawValue,
+            reportKind: reportKind.rawValue,
             seenIn: seenIn.rawValue,
             blockerEnabled: diagnostics.blockerEnabled,
             dnsEnabled: diagnostics.dnsEnabled,
