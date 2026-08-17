@@ -87,3 +87,27 @@ Wi-Fi(デュアルスタック)では正常 = 7/15 E2E が Wi-Fi のみだった
 5. [x] 末尾上流の範囲外 rotate（no-op で DNS 握り続け）→ startUpstream をラップアラウンド化（monitor の rotation 予算と意味論一致）
 6. [x] Cloudflare 固定化（NAT64 で部分全断が無期限化・watchdog では検知不能）→ ①サスペンドギャップで health.reset() ②電波 unsatisfied 中は watchdog 停止+reset ③60s ごとの index 0 復帰プローブ（example.com A クエリ・本線非干渉）
 7. [x] reassert 中の path 変化握りつぶし → pendingReassert で消化 / UI 文言の fallback 整合
+
+## ⚠️ description の「報告タブを使わない限り外部通信しない」が不正確（2026-08-17 検出・未着手）
+
+live v4.0.3 の ja description:
+
+> 【データの取り扱い】
+> 報告タブを使わない限り、本アプリは外部通信を行いません。
+
+実際にはフィルタ更新のための通信が、報告タブに触れなくても走る:
+
+- `App/AdblockKeshiApp.swift:81` — 起動時に `Task.detached { await DNSListUpdater.shared()?.updateIfNeeded() }`
+- `App/ContentView.swift:94` — 起動時に `RuleUpdater`（CDN = GitHub Pages からルール DL）
+- `App/BackgroundTaskManager.swift:43` — バックグラウンド更新でも同じ経路
+
+同段落の後半「報告タブから送信されるデータは、URL とメモのみ。閲覧履歴・氏名・連絡先・位置情報は
+一切送信しません」は**正しい**（更新はダウンロードのみで個人データを送らない）。誤っているのは
+「外部通信を行いません」という言い切りだけ。育つフィルタが売りである以上、更新 DL があること自体は
+むしろ訴求になるので、隠す理由がない。
+
+**今は直さない**: 4.1.0 が審査中（WAITING_FOR_REVIEW）。metadata を触ると submission の cancel が
+必要になり `feedback_no_partial_day_submission` に反する。
+→ **4.1.0 の判定が出たあと、次の metadata 更新に載せる**。差し替え案:
+「報告タブを使わない限り、あなたのデータが外部へ送信されることはありません。
+（フィルタを最新に保つためのダウンロードのみ行います）」
