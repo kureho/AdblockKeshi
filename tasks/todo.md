@@ -127,14 +127,25 @@ live v4.0.3 の ja description:
 ### 追加検出（2026-08-18・同じ台帳監査で 2 件目）
 
 `audit_store_privacy_claims.py` が拾ったもう 1 つの主張 **「・端末内で処理し、外部サーバーは経由しません」も不正確**だった。
-ブロック判定が端末内なのは正しいが、**システム DNS が全滅すると Cloudflare 1.1.1.1 へ転送する**
+ブロック判定が端末内なのは正しいが、**回線の DNS を取得できない場合は Cloudflare 1.1.1.1 へ転送する**
 （`/Users/oharakureho/claude/AdblockKeshi/PacketTunnelExtension/PacketTunnelProvider.swift:52` の `fallbackUpstreams`・
-plan は `/Users/oharakureho/claude/AdblockKeshi/Shared/DNS/UpstreamPlanner.swift:8` で「システム DNS → fallback」の順）。
+plan は `/Users/oharakureho/claude/AdblockKeshi/Shared/DNS/UpstreamPlanner.swift:8` が `systemServers + fallbacks` の順で
+候補を作るため、`systemServers` が空 or 全て除外条件に該当すると先頭が Cloudflare になる）。
 → **「・ブロック判定は端末内で行い、当社のサーバーを経由しません」**に差し替え済み（手元 fastlane 投入済み・同じ提出に載る）。
 
-**LP 側にも同じ文言が 2 箇所あり、そちらも是正して push 済み**
-（`/Users/oharakureho/claude/app-support/src/lib/products.ts` の worldSection と FAQ）。
+★**この差し替え文面は Claude の案で kureho 未承認**。8/26-27 の提出前に一度見てもらうこと
+（8/17 に承認をもらったのは「報告タブ」の行だけ）。
+
+**LP 側にも同じ主張が 4 箇所あり、そちらも是正済み**
+（`/Users/oharakureho/claude/app-support/src/lib/products.ts`: worldSection / FAQ / **プライバシーポリシー本文 2 箇所**）。
+ポリシー本文は Cloudflare fallback を元から明記していて事実としては正確だったが、
+同じ文の中で「判定もクエリも端末内で完結し」と書いていて**自己矛盾**していたため、
+「ブロック判定は端末内で完結し」に狭めた。加えて「報告タブを使わない場合、本アプリは引き続き外部通信を一切行いません
+（Content Blocker のフィルタ更新を除く）」の除外リストに **v4.0 の名前解決の転送**が入っていなかったので追記した。
+
 ★**app-support は Vercel 手動デプロイなので本番 kureho.app にはまだ旧文言が出ている**
-（`curl https://kureho.app/apps/adblock-keshi` で「外部サーバーは経由しません」6 ヒット）。
-**次に app-support をデプロイするときに一緒に反映される**。なお**プライバシーポリシー本文は元から正確**で
-（`products.ts` の privacy セクションが Cloudflare fallback を明記済み）、ずれていたのは要約側だけ。
+（`curl https://kureho.app/apps/adblock-keshi | grep -c 外部サーバーは経由しません` = **6**）。
+**ローカル `npm run build` の出力では 0 件**（新文言「当社のサーバーを経由しません」が同じ 6 箇所に入れ替わることを確認済み。
+6 = 2 ユニーク文字列 × HTML 本体 / JSON-LD / RSC payload の重複）。**デプロイ後に同じ curl を打って 0 になることを確認する**。
+なおデプロイすると **おたよりカレンダー LP の新学期シーズナル更新（`717ba5f`・8/15）も一緒に本番に出る**
+（未デプロイなのはこの 2 commit のみ＝ちりつも画像更新 `19a09bb` とミダシ LP 解除 `6b3ba31` は live 反映済みを curl で確認）。
