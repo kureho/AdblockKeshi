@@ -133,8 +133,7 @@ plan は `/Users/oharakureho/claude/AdblockKeshi/Shared/DNS/UpstreamPlanner.swif
 候補を作るため、`systemServers` が空 or 全て除外条件に該当すると先頭が Cloudflare になる）。
 → **「・ブロック判定は端末内で行い、当社のサーバーを経由しません」**に差し替え済み（手元 fastlane 投入済み・同じ提出に載る）。
 
-★**この差し替え文面は Claude の案で kureho 未承認**。8/26-27 の提出前に一度見てもらうこと
-（8/17 に承認をもらったのは「報告タブ」の行だけ）。
+**この差し替え文面は 2026-08-18 に kureho 承認済み**（8/17 の承認は「報告タブ」の行だけだったため、別途取り直した）。
 
 **LP 側にも同じ主張が 4 箇所あり、そちらも是正済み**
 （`/Users/oharakureho/claude/app-support/src/lib/products.ts`: worldSection / FAQ / **プライバシーポリシー本文 2 箇所**）。
