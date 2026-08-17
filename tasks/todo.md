@@ -123,3 +123,18 @@ live v4.0.3 の ja description:
 （フィルタを最新に保つためのダウンロードのみ行います）
 ```
 残タスクは **8/26-27 の ASO 判定後の提出に載せること**だけ（live 版の description は直接編集できないため）。
+
+### 追加検出（2026-08-18・同じ台帳監査で 2 件目）
+
+`audit_store_privacy_claims.py` が拾ったもう 1 つの主張 **「・端末内で処理し、外部サーバーは経由しません」も不正確**だった。
+ブロック判定が端末内なのは正しいが、**システム DNS が全滅すると Cloudflare 1.1.1.1 へ転送する**
+（`/Users/oharakureho/claude/AdblockKeshi/PacketTunnelExtension/PacketTunnelProvider.swift:52` の `fallbackUpstreams`・
+plan は `/Users/oharakureho/claude/AdblockKeshi/Shared/DNS/UpstreamPlanner.swift:8` で「システム DNS → fallback」の順）。
+→ **「・ブロック判定は端末内で行い、当社のサーバーを経由しません」**に差し替え済み（手元 fastlane 投入済み・同じ提出に載る）。
+
+**LP 側にも同じ文言が 2 箇所あり、そちらも是正して push 済み**
+（`/Users/oharakureho/claude/app-support/src/lib/products.ts` の worldSection と FAQ）。
+★**app-support は Vercel 手動デプロイなので本番 kureho.app にはまだ旧文言が出ている**
+（`curl https://kureho.app/apps/adblock-keshi` で「外部サーバーは経由しません」6 ヒット）。
+**次に app-support をデプロイするときに一緒に反映される**。なお**プライバシーポリシー本文は元から正確**で
+（`products.ts` の privacy セクションが Cloudflare fallback を明記済み）、ずれていたのは要約側だけ。
