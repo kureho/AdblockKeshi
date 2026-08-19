@@ -133,13 +133,25 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         engine = DNSEngine(blocklist: blocklist)
     }
 
-    /// 一時停止の期限が切れていたら保護を自動再開する（maintenance tick から毎 5 秒）。
+    /// 一時停止の状態を App Group の実体と突き合わせる（maintenance tick から毎 5 秒）。
+    /// 期限切れなら自動再開し、アプリからの reload 通知を取りこぼしていたらここで engine を組み直す。
+    /// ★通知（`sendProviderMessage`）は best-effort で落ちうる。それに依存したままだと
+    /// 「アプリでは停止中と出ているのに DNS はブロックし続ける」「解除したのに素通しのまま」が
+    /// 起きるので、実体を毎 tick 読んで回収する（誤差 ≤5 秒）。判定は DNSPauseSync（テスト済みの純ロジック）。
     /// clear() は best-effort（失敗しても readPausedUntil が期限切れ nil を返すので再開自体は成立する）。
-    private func resumeFromPauseIfExpired(now: TimeInterval) {
-        guard let deadline = pauseDeadline, now >= deadline.timeIntervalSince1970 else { return }
-        pauseDeadline = nil
-        try? DNSPauseStore.sharedAppGroup()?.clear()
-        reloadEngine()
+    private func syncPauseState(now: TimeInterval) {
+        let at = Date(timeIntervalSince1970: now)
+        let store = DNSPauseStore.sharedAppGroup()
+        switch DNSPauseSync.decide(current: pauseDeadline, stored: store?.readPausedUntil(now: at), now: at) {
+        case .none:
+            return
+        case .resumeExpired:
+            pauseDeadline = nil
+            try? store?.clear()
+            reloadEngine()
+        case .reload:
+            reloadEngine()   // reloadEngine が実体を読んで pauseDeadline を張り直す
+        }
     }
 
     // MARK: - network settings
@@ -309,7 +321,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             self.lastMaintenanceTick = now
             self.forwarding.expireAll(olderThan: now - 5)   // 応答なしは偽装せず捨てる
-            self.resumeFromPauseIfExpired(now: now)         // 時限一時停止の自動再開（誤差 ≤5 秒）
+            self.syncPauseState(now: now)                   // 時限一時停止の自動再開 + 取りこぼし回収（誤差 ≤5 秒）
             self.runWatchdog(now: now)
             self.runPrimaryRetryProbe(now: now)
         }

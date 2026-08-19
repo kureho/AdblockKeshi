@@ -105,6 +105,8 @@ final class TunnelManager {
               let session = managers.first?.connection as? NETunnelProviderSession,
               reloadableStatuses.contains(session.status)
         else { return }
+        // best-effort。ここが落ちても extension の maintenance tick（5 秒）が App Group の
+        // 実体と突き合わせて拾い直す（DNSPauseSync）ので、停止・解除が迷子にならない。
         try? session.sendProviderMessage(Data()) { _ in }
     }
 

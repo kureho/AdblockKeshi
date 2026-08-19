@@ -15,6 +15,10 @@ import UIKit
 /// Apple ガイドライン:
 /// - `AppStore.requestReview(in:)` は OS 側で年3回まで自動制御（呼んでも表示しないことがある）
 /// - 表示されたか・評価されたかは検知不可のため「発火を要求した日」をクールダウン基準にする
+/// - ★このアプリの本番経路では、ここでの「発火」= 自前の満足度カード表示であって
+///   `requestReview` ではない（`AdblockKeshiApp` が request を注入し、肯定回答時にだけ
+///   `SatisfactionPromptView` が公式 API を呼ぶ）。年3回の上限が効くのは肯定回答後の 1 段だけなので、
+///   発火回数が年3回を超えても「カードは出たのに OS に潰された」にはならない。
 @MainActor
 enum ReviewPrompt {
     /// 累計成功回数の発火閾値。5 の倍数を避けて広告サイクル (5枚ごと) との衝突確率を下げる。
@@ -117,8 +121,12 @@ enum ReviewPrompt {
 
         if let request {
             request()
-        } else {
-            requestSystemReview()
+        } else if !requestSystemReview() {
+            // 表示できる scene が無い＝プロンプトは出ていない。閾値も再依頼フラグも消費せず
+            // 次回の bump に持ち越す（機会だけ失うのを防ぐ）。
+            // ★このアプリの本番経路は満足度カード（AdblockKeshiApp が request を注入）なので
+            //   通常ここには来ない。将来 request 無しで呼ばれたときの保険。
+            return
         }
         defaults.set(now, forKey: kLast)
         defaults.set(defaults.integer(forKey: kRequested) + 1, forKey: kRequested)
@@ -129,12 +137,13 @@ enum ReviewPrompt {
         }
     }
 
-    private static func requestSystemReview() {
-        if let scene = UIApplication.shared.connectedScenes
+    /// - Returns: 表示要求を出せたか（foregroundActive な scene が無ければ false）
+    private static func requestSystemReview() -> Bool {
+        guard let scene = UIApplication.shared.connectedScenes
             .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene
-        {
-            AppStore.requestReview(in: scene)
-        }
+        else { return false }
+        AppStore.requestReview(in: scene)
+        return true
     }
 
     /// テスト用: 全状態をリセット（リリースビルドでは呼ばないこと）

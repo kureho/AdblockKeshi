@@ -6,7 +6,7 @@ import { checkRateLimit } from '../lib/rate-limit'
 import { sha256Hex } from '../lib/hash'
 import { isAdType, type AdType } from '../lib/ad-type'
 import { isSeenIn, type SeenIn } from '../lib/seen-in'
-import { isReportKind, type ReportKind } from '../lib/report-kind'
+import { isReportKind, hasUnknownReportKind, type ReportKind } from '../lib/report-kind'
 
 interface SubmitBody {
   token?: string
@@ -136,9 +136,11 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
   // 日時で切らないのは、D-lite 公開後も旧アプリから報告が届き続けるため。
   const seenIn: SeenIn | null = isSeenIn(body.seen_in) ? body.seen_in : null
   const blockerEnabled = toNullableFlag(body.blocker_enabled)
-  // v4.2.0: 未知値/未送信は NULL（= 広告扱い・seen_in と同じ前方互換方針）。
+  // v4.2.0: 未送信（旧クライアント）は NULL = 広告扱い。列には既知値だけを保存する。
   const reportKind: ReportKind | null = isReportKind(body.report_kind) ? body.report_kind : null
-  const status = reportStatus(reportKind, seenIn, blockerEnabled)
+  // 値は来ているが未知 = 改善の方向が判定できない → 集約に入れない（observation_unknown_kind）。
+  const unknownKind = hasUnknownReportKind(body.report_kind)
+  const status = reportStatus(reportKind, seenIn, blockerEnabled, unknownKind)
 
   await env.DB.prepare(`
     INSERT INTO reports (
@@ -202,12 +204,19 @@ async function insertAbuseLog(
  *
  * - `broken_site`            … v4.2.0 壊れ報告。**どんな診断値でも pending に入れない**
  *                                （壊れているサイトをさらにブロックする方向へ誤学習させない）
+ * - `observation_unknown_kind` … 未知の report_kind を送ってきた（新しい種別を知らない = 方向が判定できない）
  * - `observation_legacy`     … 旧クライアント（seen_in を送ってこない）
  * - `observation_out_of_scope` … Safari 以外で見た広告（Safari 用フィルタでは原理的に消せない）
  *                                / Content Blocker が無効だった or 状態不明（取りこぼしとは言えない）
  */
-function reportStatus(reportKind: ReportKind | null, seenIn: SeenIn | null, blockerEnabled: 1 | 0 | null): string {
+function reportStatus(
+  reportKind: ReportKind | null,
+  seenIn: SeenIn | null,
+  blockerEnabled: 1 | 0 | null,
+  unknownKind: boolean
+): string {
   if (reportKind === 'site_broken') return 'broken_site'
+  if (unknownKind) return 'observation_unknown_kind'
   if (seenIn === null) return 'observation_legacy'
   if (seenIn !== 'safari') return 'observation_out_of_scope'
   if (blockerEnabled !== 1) return 'observation_out_of_scope'

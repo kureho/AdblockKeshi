@@ -37,7 +37,14 @@ struct DNSPauseStore {
         return DNSPauseStore(fileURL: container.appendingPathComponent(filename))
     }
 
-    /// 有効な停止期限。期限切れ（now 以前）・未存在・不正 JSON は nil（= 停止していない）。
+    /// 選べる最長の停止時間 + 時計誤差マージン。これより遠い未来の期限は異常として捨てる。
+    /// 端末時計を巻き戻すと保存済みの絶対日時が「遠い未来」に化け、停止が解けないまま
+    /// 保護が戻らなくなるため（v4.2.0 の反証レビューで判明）。Duration から導出して二重管理を避ける。
+    private static var maxPauseWindow: TimeInterval {
+        (Duration.allCases.map(\.rawValue).max() ?? 3_600) + 60
+    }
+
+    /// 有効な停止期限。期限切れ（now 以前）・未存在・不正 JSON・上限超過は nil（= 停止していない）。
     /// 期限切れファイルの削除は行わない（読み手は extension のこともあるため書き込まない。
     /// 掃除は clear() / 次の pause() が担う）。
     func readPausedUntil(now: Date = Date()) -> Date? {
@@ -46,6 +53,7 @@ struct DNSPauseStore {
         decoder.dateDecodingStrategy = .iso8601
         guard let payload = try? decoder.decode(Payload.self, from: data) else { return nil }
         guard payload.pausedUntil > now else { return nil }
+        guard payload.pausedUntil <= now.addingTimeInterval(Self.maxPauseWindow) else { return nil }
         return payload.pausedUntil
     }
 

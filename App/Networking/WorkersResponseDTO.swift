@@ -24,7 +24,11 @@ struct SubmitRequestDTO: Encodable {
     let memo: String?
     let adType: String?
     /// v4.2.0: 報告種別（ad_not_blocked / site_broken）。新クライアントは常に送る。
-    /// 旧サーバは未知キーとして無視し、新サーバは未送信を ad_not_blocked として扱う。
+    /// 新サーバは未送信（旧クライアント）を広告扱いにする。
+    /// ★旧サーバはこのキーを**知らないので無視する**。それ自体は 200 で通るが、`site_broken` が
+    ///   無視されると status=pending に落ち、壊れているサイトをさらにブロックする方向へ誤学習する
+    ///   （= 静かなデータ破壊。エラーにならないので気づけない）。
+    ///   したがって **workers deploy（migration 0013 込み）→ iOS 提出**の順を必ず守る。
     let reportKind: String
     /// D-lite: どこで見た広告か。**有無が新旧クライアントの境界**でもある。
     let seenIn: String?

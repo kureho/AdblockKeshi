@@ -24,6 +24,29 @@ final class DNSPauseStoreTests: XCTestCase {
         XCTAssertEqual(read?.timeIntervalSince1970 ?? 0, until.timeIntervalSince1970, accuracy: 1)
     }
 
+    /// v4.2.0 fail-safe: 端末時計を巻き戻すと、保存済みの絶対日時が「遠い未来」になり
+    /// 停止が永久に解けなくなる（＝保護が戻らない）。選べる最長の停止時間を超える期限は
+    /// 異常とみなして無効にする。
+    func test_read_deadlineFartherThanLongestDuration_returnsNil() throws {
+        let url = tempURL(); defer { try? FileManager.default.removeItem(at: url) }
+        let store = DNSPauseStore(fileURL: url)
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        try store.pause(until: now.addingTimeInterval(86_400))   // 1 日先 = 選べない長さ
+        XCTAssertNil(store.readPausedUntil(now: now),
+                     "選べる最長（1時間）を超える期限は時計の巻き戻し等の異常 → 保護が生きる方向に倒す")
+    }
+
+    /// 上限ガードが正規の「1時間」停止を巻き添えにしないこと（境界）。
+    func test_read_longestDuration_isAccepted() throws {
+        let url = tempURL(); defer { try? FileManager.default.removeItem(at: url) }
+        let store = DNSPauseStore(fileURL: url)
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        let until = now.addingTimeInterval(DNSPauseStore.Duration.oneHour.rawValue)
+        try store.pause(until: until)
+        XCTAssertEqual(store.readPausedUntil(now: now)?.timeIntervalSince1970 ?? 0,
+                       until.timeIntervalSince1970, accuracy: 1)
+    }
+
     func test_read_expired_returnsNil() throws {
         let url = tempURL(); defer { try? FileManager.default.removeItem(at: url) }
         let store = DNSPauseStore(fileURL: url)

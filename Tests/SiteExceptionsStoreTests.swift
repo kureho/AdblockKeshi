@@ -79,4 +79,21 @@ final class SiteExceptionsStoreTests: XCTestCase {
         XCTAssertNoThrow(try store.remove("unknown.example.org"))
         XCTAssertEqual(store.readDomains(), ["a.example.com"])
     }
+
+    /// v4.2.0 の反証レビューで判明: 例外は combined 生成時に ReportedRuleBudget（予約 2,000 件）
+    /// の対象に入るため、無制限に積むと古い例外が silently drop され「管理画面には停止中と
+    /// 出ているのにブロックが効く」不整合になる。store 側で上限を持ち、実体と表示を一致させる。
+    func test_add_keepsOnlyMostRecentUpToCap() throws {
+        let url = tempURL(); defer { try? FileManager.default.removeItem(at: url) }
+        let store = SiteExceptionsStore(fileURL: url)
+        let cap = SiteExceptionsStore.maxDomains
+        for i in 0..<(cap + 5) {
+            try store.add("example\(i).test")
+        }
+        let domains = store.readDomains()
+        XCTAssertEqual(domains.count, cap, "上限を超えて保存しない")
+        XCTAssertEqual(domains.first, "example5.test", "古い方から落ちる")
+        XCTAssertEqual(domains.last, "example\(cap + 4).test", "最新は必ず残る")
+    }
+
 }

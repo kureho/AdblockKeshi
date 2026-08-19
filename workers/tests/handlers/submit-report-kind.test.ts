@@ -83,17 +83,45 @@ describe('POST /v1/reports/submit report_kind', () => {
     expect(row.report_kind).toBeNull()
   })
 
-  it('未知の report_kind 値 → NULL 保存・広告扱い（seen_in 未知値と同じ前方互換方針）', async () => {
+  /**
+   * ★2026-08-19 の反証レビューで仕様変更。
+   * 旧仕様は「未知の report_kind → NULL 保存・広告扱い（= pending）」だったが、
+   * 知らない種別名を送ってくるクライアントは「この サーバが知らない改善方向」を持っている。
+   * それを広告集約（ブロックを強める方向）に入れると、壊れ報告系の新種別が増えたときに
+   * 真逆へ誤学習する。方向が判定できないものは集約に入れず observation として保持する。
+   * ★未送信（旧クライアント = 4.1.0 以前）は従来どおり広告扱いのまま（下のテスト）。
+   */
+  it('未知の report_kind 値 → 集約に入れず observation_unknown_kind へ隔離', async () => {
     const res = await submit(HEX64('e'), {
       report_kind: 'future_kind', seen_in: 'safari', blocker_enabled: true,
     })
     expect(res.status).toBe(200)
+    const body = await res.json() as any
+    expect(body.status).toBe('observation_unknown_kind')
+    expect(body.status).not.toBe('pending')
+
+    const row = await env.DB.prepare('SELECT report_kind, status FROM reports WHERE id = ?')
+      .bind(body.id).first<any>()
+    expect(row.report_kind).toBeNull()   // 既知値だけを列に保存する（生値は残さない）
+    expect(row.status).toBe('observation_unknown_kind')
+  })
+
+  it('report_kind 未送信（旧クライアント）→ 従来どおり広告扱い（pending）', async () => {
+    const res = await submit(HEX64('9'), { seen_in: 'safari', blocker_enabled: true })
     const body = await res.json() as any
     expect(body.status).toBe('pending')
 
     const row = await env.DB.prepare('SELECT report_kind FROM reports WHERE id = ?')
       .bind(body.id).first<any>()
     expect(row.report_kind).toBeNull()
+  })
+
+  it('型違いの report_kind（数値）も集約に入れない', async () => {
+    const res = await submit(HEX64('8'), {
+      report_kind: 42, seen_in: 'safari', blocker_enabled: true,
+    })
+    const body = await res.json() as any
+    expect(body.status).toBe('observation_unknown_kind')
   })
 
   it('site_broken は旧クライアント相当（seen_in なし）でも broken_site', async () => {

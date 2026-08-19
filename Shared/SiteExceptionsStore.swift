@@ -10,6 +10,9 @@ import Foundation
 struct SiteExceptionsStore {
     static let filename = "site-exceptions.json"
 
+    /// 保持する例外の上限（超過分は古い方から落とす）。
+    static let maxDomains = 200
+
     let fileURL: URL
 
     init(fileURL: URL) {
@@ -35,12 +38,19 @@ struct SiteExceptionsStore {
     }
 
     /// ドメインを1件追加する（小文字化・末尾ドット除去・重複排除・atomic）。空文字は無視。
+    /// 上限（`maxDomains`）を超えたら古い方から落とす。combined 生成時に例外は
+    /// `ReportedRuleBudget` の予約枠（2,000 件）を共有するので、無制限に積むと予算超過で
+    /// 例外自体が silently drop され「管理画面には停止中と出ているのにブロックが効く」ことになる。
+    /// store 側で切っておけば、管理画面（readDomains）と実際に効くルールが常に一致する。
     func add(_ domain: String) throws {
         let normalized = Self.normalize(domain)
         guard !normalized.isEmpty else { return }
         var domains = readDomains()
         guard !domains.contains(normalized) else { return }
         domains.append(normalized)
+        if domains.count > Self.maxDomains {
+            domains = Array(domains.suffix(Self.maxDomains))
+        }
         try write(domains)
     }
 

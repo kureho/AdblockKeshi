@@ -72,7 +72,8 @@ final class SubmitRequestDTOEncodingTests: XCTestCase {
         let json = try encode(dto)
 
         XCTAssertEqual(Set(json.keys), ["token", "uuid_hash", "url", "report_kind", "seen_in"],
-                       "report_kind は新クライアントでは常に送る（旧サーバは未知キーを無視する）")
+                       "report_kind は新クライアントでは常に送る（旧サーバは無視するので、"
+                       + "site_broken を誤学習させないために workers deploy を先に済ませる）")
         for omitted in ["memo", "ad_type", "blocker_enabled", "dns_enabled",
                         "app_version", "app_build", "filter_version"] {
             XCTAssertNil(json[omitted], "\(omitted) は nil ならキーごと省略する")
