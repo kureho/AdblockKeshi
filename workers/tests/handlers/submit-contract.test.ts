@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { SELF, env } from 'cloudflare:test'
 import { signToken } from '../../src/lib/hmac'
 import { SEEN_IN_VALUES } from '../../src/lib/seen-in'
+import { REPORT_KINDS } from '../../src/lib/report-kind'
 // workerd 上で動くので fs は使えない。Vite に JSON をバンドルさせて読み込む。
 import contractJSON from '../../../contracts/submit-request.json'
 
@@ -58,10 +59,35 @@ describe('submit contract (contracts/submit-request.json)', () => {
     expect(row.app_version).toBe(contract.app_version)
     expect(row.app_build).toBe(contract.app_build)
     expect(row.filter_version).toBe(contract.filter_version)
+    expect(row.report_kind).toBe(contract.report_kind)
   })
 
   it('uses a seen_in value that the server recognises', () => {
     expect(SEEN_IN_VALUES).toContain(contract.seen_in)
+  })
+
+  /**
+   * report_kind は v4.2.0 の新キー。未知の値はサーバが NULL（＝広告扱い）に落とすので、
+   * 契約ファイル側の綴りが崩れても 200 は返ってしまう。ここで既知値であることを固定する。
+   */
+  it('uses a report_kind value that the server recognises', () => {
+    expect(REPORT_KINDS).toContain(contract.report_kind)
+  })
+
+  /**
+   * site_broken は改善の方向が真逆なので、広告集約の母集団（status='pending'）に
+   * 入ってはいけない。契約ファイル経由でも隔離されることを確かめる。
+   */
+  it('quarantines a site_broken report out of the ad aggregation pool', async () => {
+    const { response } = await postContract({ report_kind: 'site_broken' })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as any
+    expect(body.status).toBe('broken_site')
+
+    const row = await env.DB.prepare('SELECT report_kind, status FROM reports WHERE id = ?')
+      .bind(body.id).first<any>()
+    expect(row.report_kind).toBe('site_broken')
+    expect(row.status).not.toBe('pending')
   })
 
   /** Content Blocker OFF の報告も通り、blocker_enabled=0 として残る。 */
