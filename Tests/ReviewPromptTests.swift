@@ -120,9 +120,13 @@ final class ReviewPromptTests: XCTestCase {
         // 直後の bump（通過済み閾値は消化済み）では発火しない
         bump(times: 1, at: base + 100 * day, fired: &fired)
         XCTAssertEqual(fired, 1)
-        // 最上位閾値(34)も既に消化済みなので、クールダウン経過後でも二度と発火しない
+        // ★v3 (2026-08) で意図的に変更: 全閾値消化済みのこの層こそ「評価リセット後の再依頼」の
+        // 対象なので、クールダウン明けに一度だけ発火する（v2 では「二度と発火しない」だった）。
         bump(times: 10, at: base + 300 * day, fired: &fired)
-        XCTAssertEqual(fired, 1)
+        XCTAssertEqual(fired, 2, "リセット後の再依頼が 1 回だけ乗る")
+        // その先は一回限りフラグが効いて二度と出ない
+        bump(times: 10, at: base + 500 * day, fired: &fired)
+        XCTAssertEqual(fired, 2)
     }
 
     // 9. 境界値: 初回起動からちょうど 3 日で発火する（>= 判定）
@@ -195,5 +199,74 @@ final class ReviewPromptTests: XCTestCase {
     func test_migration_noFired_isNoop() {
         ReviewPrompt.migrateThresholdsIfNeeded(defaults: defaults)
         XCTAssertNil(defaults.array(forKey: kFired))
+    }
+
+    // MARK: - v3: 評価リセット後の一回限り再依頼（reviewPrompt.postResetReask2026）
+
+    /// 全閾値 [3,13,34] を消化し、「通常発火の余地が無い」状態を作る。
+    /// 4.1.0 の評価リセットで★が消えた既存ユーザーがこの状態にいる。
+    /// - Returns: 最後の通常発火が起きた時刻
+    @discardableResult
+    private func consumeAllThresholds() -> Date {
+        ReviewPrompt.recordFirstLaunchIfNeeded(defaults: defaults, now: base)
+        var fired = 0
+        bump(times: 3, at: base + 10 * day, fired: &fired)    // 閾値 3
+        bump(times: 10, at: base + 110 * day, fired: &fired)  // 閾値 13（クールダウン明け）
+        bump(times: 21, at: base + 210 * day, fired: &fired)  // 閾値 34
+        XCTAssertEqual(fired, 3, "前提: 通常発火が 3 回とも起きていること")
+        return base + 210 * day
+    }
+
+    // v3-1. 全閾値消化済みでも、クールダウン明けに一度だけ再依頼が発火する
+    func test_postResetReask_firesOnce_afterAllThresholdsConsumed() {
+        let last = consumeAllThresholds()
+        var fired = 0
+        bump(times: 1, at: last + 100 * day, fired: &fired)
+        XCTAssertEqual(fired, 1, "リセット後の再依頼が 1 回発火する")
+    }
+
+    // v3-2. 再依頼は一回限り（フラグ永続）。さらに 90 日経っても 2 回目は無い
+    func test_postResetReask_doesNotFireTwice() {
+        let last = consumeAllThresholds()
+        var fired = 0
+        bump(times: 1, at: last + 100 * day, fired: &fired)
+        XCTAssertEqual(fired, 1)
+
+        var again = 0
+        bump(times: 5, at: last + 300 * day, fired: &again)
+        XCTAssertEqual(again, 0, "一回限りフラグが永続するので 2 回目は発火しない")
+    }
+
+    // v3-3. 90 日クールダウン中は再依頼も発火しない（既存ガードを迂回しない）
+    func test_postResetReask_respectsCooldown() {
+        let last = consumeAllThresholds()
+        var fired = 0
+        bump(times: 3, at: last + 10 * day, fired: &fired)
+        XCTAssertEqual(fired, 0, "クールダウン中は再依頼も出さない")
+    }
+
+    // v3-4. ネガティブ体験から 7 日以内は再依頼も発火しない
+    func test_postResetReask_respectsNegativeSuppression() {
+        let last = consumeAllThresholds()
+        ReviewPrompt.recordNegativeEvent(defaults: defaults, now: last + 98 * day)
+        var fired = 0
+        bump(times: 3, at: last + 100 * day, fired: &fired)
+        XCTAssertEqual(fired, 0, "ネガティブ抑止中は再依頼も出さない")
+    }
+
+    // v3-5. 通常発火がまだ残っている段階では再依頼フラグを消費しない
+    func test_postResetReask_doesNotConsumeFlag_whileNormalThresholdsRemain() {
+        ReviewPrompt.recordFirstLaunchIfNeeded(defaults: defaults, now: base)
+        var fired = 0
+        bump(times: 3, at: base + 10 * day, fired: &fired)    // 閾値 3 で通常発火
+        XCTAssertEqual(fired, 1)
+        // ここで再依頼フラグが消費されていたら、全閾値消化後の再依頼が出なくなる
+        bump(times: 10, at: base + 110 * day, fired: &fired)  // 閾値 13
+        bump(times: 21, at: base + 210 * day, fired: &fired)  // 閾値 34
+        XCTAssertEqual(fired, 3)
+
+        var reask = 0
+        bump(times: 1, at: base + 310 * day, fired: &reask)
+        XCTAssertEqual(reask, 1, "通常発火はフラグを消費しないので再依頼が残っている")
     }
 }

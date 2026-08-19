@@ -36,6 +36,8 @@ enum ReviewPrompt {
     private static let kFired = "reviewPrompt.firedThresholds"
     private static let kNegative = "reviewPrompt.lastNegativeDate"
     private static let kThresholdMigratedV2 = "reviewPrompt.thresholdMigratedV2"
+    /// v3: 評価リセット後の一回限り再依頼を消費済みか（永続・一度 true になったら戻さない）
+    private static let kPostResetReask = "reviewPrompt.postResetReask2026"
 
     /// 旧閾値 [7,23,58] → 新閾値 [3,13,34] の移行（1回だけ）。
     /// 発火済みの旧値を「同じ順番の新閾値」に置換し、既発火ユーザーへの重複プロンプトを防ぐ。
@@ -99,7 +101,19 @@ enum ReviewPrompt {
 
         let fired = Set(defaults.array(forKey: kFired) as? [Int] ?? [])
         let pending = thresholds.filter { $0 <= count && !fired.contains($0) }
-        guard !pending.isEmpty else { return }
+
+        // v3 (2026-08): 閾値を使い切った既存ユーザーへの一回限り再依頼。
+        // 4.1.0 の評価リセットで★が消えた層が対象で、通常発火の余地が無い時だけ使う
+        // （pending が残っている間はフラグを消費しない）。既存ガードは上でそのまま効いている。
+        var usesPostResetReask = false
+        if pending.isEmpty {
+            // 対象は「全閾値を使い切った」層だけ。まだ届いていない閾値が残る間（例: fired=[3] で
+            // count 4〜12）は通常発火の途中なので、ここで先に消費してはいけない。
+            // 全閾値消化済みなら count >= 34 なので、設計書の「count≥3」も自動的に満たす。
+            guard Set(thresholds).isSubset(of: fired),
+                  !defaults.bool(forKey: kPostResetReask) else { return }
+            usesPostResetReask = true
+        }
 
         if let request {
             request()
@@ -108,7 +122,11 @@ enum ReviewPrompt {
         }
         defaults.set(now, forKey: kLast)
         defaults.set(defaults.integer(forKey: kRequested) + 1, forKey: kRequested)
-        defaults.set(fired.union(pending).sorted(), forKey: kFired)
+        if usesPostResetReask {
+            defaults.set(true, forKey: kPostResetReask)
+        } else {
+            defaults.set(fired.union(pending).sorted(), forKey: kFired)
+        }
     }
 
     private static func requestSystemReview() {
@@ -121,7 +139,7 @@ enum ReviewPrompt {
 
     /// テスト用: 全状態をリセット（リリースビルドでは呼ばないこと）
     static func resetForDebug(defaults: UserDefaults = .standard) {
-        for key in [kSuccess, kLast, kFirst, kRequested, kFired, kNegative] {
+        for key in [kSuccess, kLast, kFirst, kRequested, kFired, kNegative, kPostResetReask] {
             defaults.removeObject(forKey: key)
         }
     }
