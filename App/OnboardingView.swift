@@ -202,7 +202,7 @@ struct FilterInfoSheet: View {
                     FilterDescriptionCard(
                         iconName: "shield.fill",
                         title: "基本保護",
-                        detail: "一般的な広告やトラッカーを、安定したルールでブロックします（EasyList・AdGuard 等の公式リスト採用）。他のブロッカーで消えない広告をユーザー報告で取り込む自己学習も内蔵しています。"
+                        detail: "一般的な広告やトラッカーを、安定したルールでブロックします（EasyList・AdGuard 等の公式リスト採用）。他のブロッカーで消えない広告は、利用者からの報告を参考にフィルタを改善しています。"
                     )
 
                     FilterDescriptionCard(

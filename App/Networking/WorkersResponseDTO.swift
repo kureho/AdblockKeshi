@@ -14,18 +14,43 @@ struct TokenRequestDTO: Encodable {
     }
 }
 
+/// Workers の `SubmitBody`（`workers/src/handlers/submit.ts`）と 1:1 対応。
+/// Optional は synthesized encoder が `encodeIfPresent` するのでキーごと省略され、
+/// サーバ側では未指定 = NULL として扱われる。
 struct SubmitRequestDTO: Encodable {
     let token: String
     let uuidHash: String
     let url: String
     let memo: String?
     let adType: String?
+    /// v4.2.0: 報告種別（ad_not_blocked / site_broken）。新クライアントは常に送る。
+    /// 新サーバは未送信（旧クライアント）を広告扱いにする。
+    /// ★旧サーバはこのキーを**知らないので無視する**。それ自体は 200 で通るが、`site_broken` が
+    ///   無視されると status=pending に落ち、壊れているサイトをさらにブロックする方向へ誤学習する
+    ///   （= 静かなデータ破壊。エラーにならないので気づけない）。
+    ///   したがって **workers deploy（migration 0013 込み）→ iOS 提出**の順を必ず守る。
+    let reportKind: String
+    /// D-lite: どこで見た広告か。**有無が新旧クライアントの境界**でもある。
+    let seenIn: String?
+    /// 以下は診断用の自動添付。取得できなくても報告を失敗させないため全て任意。
+    let blockerEnabled: Bool?
+    let dnsEnabled: Bool?
+    let appVersion: String?
+    let appBuild: String?
+    let filterVersion: String?
 
     enum CodingKeys: String, CodingKey {
         case token
         case uuidHash = "uuid_hash"
         case url, memo
         case adType = "ad_type"
+        case reportKind = "report_kind"
+        case seenIn = "seen_in"
+        case blockerEnabled = "blocker_enabled"
+        case dnsEnabled = "dns_enabled"
+        case appVersion = "app_version"
+        case appBuild = "app_build"
+        case filterVersion = "filter_version"
     }
 }
 

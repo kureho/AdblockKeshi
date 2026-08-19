@@ -22,13 +22,20 @@ enum CombinedRuleListCoordinator {
     }
 
     /// 報告反映(popunder)の combined を必要時のみ再生成し、変化時だけ報告反映 ContentBlocker を reload。
-    /// あわせて、基本保護からは報告ルールを外し（combined を持たず bundle variant へ戻す）旧 combined を一掃する。
+    /// v4.2.0: per-site 例外（このサイトで一時オフ）があるときは、基本保護も
+    /// `combined-<variant>` = 標準 + 例外ルール を生成する（無ければ従来どおり bundle variant へ戻す）。
     /// **off-main 前提**（compile-verify が semaphore で待つため main で呼ぶと deadlock）。
     static func regenerateIfNeeded() {
         guard let store = SelfReportedRulesStore(),
               let builder = CombinedRuleListBuilder(appBuildVersion: appBuildVersion()) else { return }
 
-        // 1) 報告反映(popunder)= popunder L1+L2（base）+ 安全化 reported（最後尾）。
+        // v4.2.0: per-site 例外ルール（ignore-previous-rules のみ）。
+        // ★必ず各リストの最後尾に置く（ignore-previous-rules は「それ以前」にしか効かない）。
+        // 予算超過時も ReportedRuleBudget は末尾（=新しい方）を保持するので例外は切られない。
+        let exceptionRules = SiteExceptionRules.rules(
+            for: SiteExceptionsStore.sharedAppGroup()?.readDomains() ?? [])
+
+        // 1) 報告反映(popunder)= popunder L1+L2（base）+ 安全化 reported + 例外（最後尾）。
         //    base は App 同梱/CDN の popunder-rules.json（combined ではない）。
         //    base が取れなければ報告反映を更新できないので、basic にも触らず終了する
         //    （popunder 不在時に basic を bundle へ剥がして防御を一時消失させない）。
@@ -43,8 +50,8 @@ enum CombinedRuleListCoordinator {
         let outcome = try? builder.rebuildIfNeeded(
             variantFilename: PopunderRulesResolver.filename,
             standardRulesURL: popunderBase,
-            mayTruncate: false,                 // popunder+reported ≪ 150,000・truncation 不要
-            reportedSafe: reportedForPopunder,
+            mayTruncate: false,                 // popunder+reported+例外 ≪ 150,000・truncation 不要
+            reportedSafe: reportedForPopunder + exceptionRules,
             compileVerify: compileVerify
         )
         if outcome?.rebuilt == true {
@@ -54,9 +61,30 @@ enum CombinedRuleListCoordinator {
             }
         }
 
-        // 2) 基本保護は報告ルールを持たない → 旧 combined-<state> を一掃し bundle variant に戻す。
+        // 2) 基本保護:
+        //    - 例外あり → combined-<activeVariant> = 標準 + 例外ルール（resolver の combined 最優先で拾われる）
+        //    - 例外なし → 従来どおり combined を持たず bundle variant に戻す（旧 combined を一掃）
         //    popunder base が取れている＝報告反映が機能する状態（combined or 直 base）なので安全。
-        if builder.removeBasicCombined() {
+        let togglesState = StateStore.sharedAppGroup()?.read() ?? .default
+        if let plan = BasicExceptionRegenPlan.plan(state: togglesState,
+                                                   hasExceptions: !exceptionRules.isEmpty),
+           let standardURL = BlockerListResolver().standardRulesURL(for: togglesState) {
+            // 非アクティブ variant の孤児 combined を消してから、アクティブだけ再生成する。
+            builder.cleanupCombined(except: plan.variantFilename)
+            let basicOutcome = try? builder.rebuildIfNeeded(
+                variantFilename: plan.variantFilename,
+                standardRulesURL: standardURL,
+                mayTruncate: plan.mayTruncate,   // ad-only は標準が上限ちょうど（budget 必須）
+                reportedSafe: exceptionRules,
+                compileVerify: compileVerify
+            )
+            if basicOutcome?.rebuilt == true {
+                DispatchQueue.main.async {
+                    SFContentBlockerManager.reloadContentBlocker(
+                        withIdentifier: SFContentBlockerStateChecker.baseID) { _ in }
+                }
+            }
+        } else if builder.removeBasicCombined() {
             DispatchQueue.main.async {
                 SFContentBlockerManager.reloadContentBlocker(
                     withIdentifier: SFContentBlockerStateChecker.baseID) { _ in }

@@ -42,7 +42,8 @@ final class LocalReportHistoryStore: ObservableObject {
             status: status,
             createdAt: Date(),
             validatedAt: nil,
-            appliedAt: status == .appliedLocally ? Date() : nil
+            // D-lite: 送信直後に端末へ反映されることはないので、appliedAt は常に nil で始まる。
+            appliedAt: nil
         )
         items.insert(item, at: 0)
         persist()

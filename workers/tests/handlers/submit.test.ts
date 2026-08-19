@@ -23,7 +23,7 @@ describe('POST /v1/reports/submit', () => {
     const token = await makeToken(uuid, 'submit')
     const response = await SELF.fetch('https://test/v1/reports/submit', {
       method: 'POST',
-      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://example.com/article', memo: 'overlay ad' }),
+      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://example.com/article', memo: 'overlay ad', seen_in: 'safari', blocker_enabled: true }),
       headers: { 'Content-Type': 'application/json' },
     })
     expect(response.status).toBe(200)
@@ -69,28 +69,47 @@ describe('POST /v1/reports/submit', () => {
     expect(response.status).toBe(400)
   })
 
-  it('rejects critical domain (apple.com)', async () => {
+  // D-lite: 報告は「ブロック対象の指定」ではなく「広告が消えなかったページ」の改善用データ。
+  // 保護ドメインでも報告自体は正常に受け付ける（自動でブロックルールにはしない）。
+  it('accepts critical domain as improvement data (apple.com)', async () => {
     const uuid = HEX64('d')
     const token = await makeToken(uuid, 'submit')
     const response = await SELF.fetch('https://test/v1/reports/submit', {
       method: 'POST',
-      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://apple.com/support' }),
+      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://apple.com/support', seen_in: 'safari', blocker_enabled: true }),
       headers: { 'Content-Type': 'application/json' },
     })
-    expect(response.status).toBe(400)
+    expect(response.status).toBe(200)
     const body = await response.json() as any
-    expect(body.message).toContain('critical')
+    const row = await env.DB.prepare('SELECT domain, status FROM reports WHERE id = ?').bind(body.id).first<any>()
+    expect(row.domain).toBe('apple.com')
+    // 保護ドメインでも他と同じ扱いで受理する（自動昇格を止めるのは L3 の責務）
+    expect(row.status).toBe('pending')
   })
 
-  it('rejects critical subdomain (developer.apple.com)', async () => {
+  it('accepts critical subdomain as improvement data (developer.apple.com)', async () => {
     const uuid = HEX64('e')
     const token = await makeToken(uuid, 'submit')
     const response = await SELF.fetch('https://test/v1/reports/submit', {
       method: 'POST',
-      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://developer.apple.com/docs' }),
+      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://developer.apple.com/docs', seen_in: 'safari' }),
       headers: { 'Content-Type': 'application/json' },
     })
-    expect(response.status).toBe(400)
+    expect(response.status).toBe(200)
+  })
+
+  it('does not log critical_domain abuse anymore', async () => {
+    const uuid = HEX64('1')
+    const token = await makeToken(uuid, 'submit')
+    await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://yahoo.co.jp/', seen_in: 'safari' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    const abuse = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM abuse_log WHERE identifier_hash = ? AND reason = 'critical_domain'"
+    ).bind(uuid).first<any>()
+    expect(abuse.n).toBe(0)
   })
 
   it('rejects with 401 for invalid token', async () => {
@@ -184,18 +203,18 @@ describe('POST /v1/reports/submit', () => {
     expect(row?.identifier_type).toBe('uuid')
   })
 
-  it('logs critical_domain to abuse_log when reporting a protected host', async () => {
+  // D-lite: 保護ドメインの報告は誤操作ではなく正常な操作になったので abuse_log に記録しない。
+  it('does not log abuse when reporting a protected host', async () => {
     const uuid = HEX64('k')
     const token = await makeToken(uuid, 'submit')
     const res = await SELF.fetch('https://test/v1/reports/submit', {
       method: 'POST',
-      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://apple.com/' }),
+      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://apple.com/', seen_in: 'safari' }),
       headers: { 'Content-Type': 'application/json' },
     })
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(200)
     const row = await abuseRow(uuid)
-    expect(row?.reason).toBe('critical_domain')
-    expect(row?.identifier_type).toBe('uuid')
+    expect(row).toBeNull()
   })
 
   it('logs spam_memo to abuse_log when memo validation fails', async () => {
@@ -290,5 +309,154 @@ describe('POST /v1/reports/submit', () => {
     const row = await abuseRow(uuid)
     expect(row?.reason).toBe('rate_limit')
     expect(row?.identifier_type).toBe('uuid')
+  })
+})
+
+// D-lite: 診断情報の自動添付と、新旧クライアントの境界（seen_in の有無）。
+// 設計: tasks/dlite-design-2026-08-11.md §5
+describe('POST /v1/reports/submit — D-lite 診断情報', () => {
+  beforeEach(async () => {
+    await env.DB.prepare('DELETE FROM reports').run()
+    await env.DB.prepare('DELETE FROM abuse_log').run()
+    await env.DB.prepare('DELETE FROM bans').run()
+  })
+
+  async function submit(uuid: string, extra: Record<string, unknown>) {
+    const token = await makeToken(uuid, 'submit')
+    const response = await SELF.fetch('https://test/v1/reports/submit', {
+      method: 'POST',
+      body: JSON.stringify({ token, uuid_hash: uuid, url: 'https://news.example.com/a', ...extra }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    return response
+  }
+
+  it('Safari かつ Content Blocker 有効の報告だけが pending になる', async () => {
+    const uuid = HEX64('2')
+    const res = await submit(uuid, { seen_in: 'safari', blocker_enabled: true })
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    const row = await env.DB.prepare('SELECT status, seen_in FROM reports WHERE id = ?').bind(body.id).first<any>()
+    expect(row.status).toBe('pending')
+    expect(row.seen_in).toBe('safari')
+  })
+
+  it('seen_in なしの旧クライアントは observation_legacy で保存される', async () => {
+    const uuid = HEX64('3')
+    const res = await submit(uuid, {})
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    const row = await env.DB.prepare('SELECT status, seen_in FROM reports WHERE id = ?').bind(body.id).first<any>()
+    expect(row.status).toBe('observation_legacy')
+    expect(row.seen_in).toBeNull()
+  })
+
+  // ★pending = 自動改善パイプラインが必ず消費する母集団、という不変条件を守る。
+  // 集約は `status='pending' AND seen_in='safari' AND blocker_enabled=1` しか取らないので、
+  // 条件を満たさない報告を pending で入れると **どのランでも消費されず滞留し続ける**。
+  // 集約 SQL は古い順 LIMIT 10000 なので、滞留が上限を超えると新しい報告が
+  // 14 日窓の外の古い行に押し出されて永久に集約されなくなる。
+  it('other_app は受け付けるが pending にはしない（Safari フィルタでは消せないため）', async () => {
+    const uuid = HEX64('4')
+    const res = await submit(uuid, { seen_in: 'other_app', blocker_enabled: true })
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    const row = await env.DB.prepare('SELECT status, seen_in FROM reports WHERE id = ?').bind(body.id).first<any>()
+    expect(row.status).toBe('observation_out_of_scope')
+    expect(row.seen_in).toBe('other_app')
+  })
+
+  it('Content Blocker が無効だった報告は pending にしない（フィルタの取りこぼしではない）', async () => {
+    const uuid = HEX64('8')
+    const res = await submit(uuid, { seen_in: 'safari', blocker_enabled: false })
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    const row = await env.DB.prepare('SELECT status, blocker_enabled FROM reports WHERE id = ?').bind(body.id).first<any>()
+    expect(row.status).toBe('observation_out_of_scope')
+    expect(row.blocker_enabled).toBe(0)
+  })
+
+  it('blocker_enabled が取得できなかった報告も pending にしない（集約が NULL を拾わないため）', async () => {
+    const uuid = HEX64('9')
+    const res = await submit(uuid, { seen_in: 'safari' })
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    const row = await env.DB.prepare('SELECT status, blocker_enabled FROM reports WHERE id = ?').bind(body.id).first<any>()
+    expect(row.status).toBe('observation_out_of_scope')
+    expect(row.blocker_enabled).toBeNull()
+  })
+
+  it('保存された pending は例外なく集約クエリの条件を満たす', async () => {
+    await submit(HEX64('a'), { seen_in: 'safari', blocker_enabled: true })
+    await submit(HEX64('b'), { seen_in: 'safari', blocker_enabled: false })
+    await submit(HEX64('c'), { seen_in: 'other_app', blocker_enabled: true })
+    await submit(HEX64('d'), { seen_in: 'safari' })
+    await submit(HEX64('e'), {})
+
+    const stray = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM reports
+        WHERE status = 'pending'
+          AND NOT (seen_in = 'safari' AND blocker_enabled = 1)`
+    ).first<any>()
+    expect(stray.n, 'pending に集約対象外の報告が混ざると永久に滞留する').toBe(0)
+
+    const pending = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM reports WHERE status = 'pending'`
+    ).first<any>()
+    expect(pending.n, '対象の報告は pending として残る').toBe(1)
+  })
+
+  it('診断情報が保存される', async () => {
+    const uuid = HEX64('5')
+    const res = await submit(uuid, {
+      seen_in: 'safari',
+      blocker_enabled: true,
+      dns_enabled: false,
+      app_version: '4.1.0',
+      app_build: '10004',
+      filter_version: '2026-08-01T00:00:00Z',
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    const row = await env.DB.prepare(
+      'SELECT blocker_enabled, dns_enabled, app_version, app_build, filter_version FROM reports WHERE id = ?'
+    ).bind(body.id).first<any>()
+    expect(row.blocker_enabled).toBe(1)
+    expect(row.dns_enabled).toBe(0)
+    expect(row.app_version).toBe('4.1.0')
+    expect(row.app_build).toBe('10004')
+    expect(row.filter_version).toBe('2026-08-01T00:00:00Z')
+  })
+
+  it('診断情報が取得できなかった場合も送信は成功する（すべて nullable）', async () => {
+    const uuid = HEX64('6')
+    const res = await submit(uuid, { seen_in: 'safari' })
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    const row = await env.DB.prepare(
+      'SELECT blocker_enabled, dns_enabled, app_version FROM reports WHERE id = ?'
+    ).bind(body.id).first<any>()
+    expect(row.blocker_enabled).toBeNull()
+    expect(row.dns_enabled).toBeNull()
+    expect(row.app_version).toBeNull()
+  })
+
+  it('診断が取れなくても報告は保持される（削除も 4xx もしない）', async () => {
+    const uuid = HEX64('f')
+    const res = await submit(uuid, { seen_in: 'safari' })
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    const row = await env.DB.prepare('SELECT id, url FROM reports WHERE id = ?').bind(body.id).first<any>()
+    expect(row.url).toBe('https://news.example.com/a')
+  })
+
+  it('未知の seen_in 値は拒否せず null として扱う（旧扱いで隔離）', async () => {
+    const uuid = HEX64('7')
+    const res = await submit(uuid, { seen_in: 'telepathy' })
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    const row = await env.DB.prepare('SELECT status, seen_in FROM reports WHERE id = ?').bind(body.id).first<any>()
+    expect(row.seen_in).toBeNull()
+    expect(row.status).toBe('observation_legacy')
   })
 })

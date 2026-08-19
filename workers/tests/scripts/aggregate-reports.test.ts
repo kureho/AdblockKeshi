@@ -50,6 +50,18 @@ describe('runAggregation', () => {
     expect(calls[0].body.sql).toMatch(/status\s*=\s*'pending'/i)
   })
 
+  // D-lite: 自動改善パイプラインに乗せるのは「Safari で見た かつ Content Blocker が有効だった」
+  // 報告だけ。other_app は Safari 用フィルタで原理的に消せず、blocker OFF は取りこぼしではない。
+  // 旧クライアントの報告は status='observation_legacy' で入るので status 条件でも除外されるが、
+  // seen_in / blocker_enabled の条件を入れて二重に塞ぐ。
+  test('D-lite: Safari かつ Content Blocker 有効の報告のみを母集団にする', async () => {
+    const { fetch, calls } = makeFetchMock([{ rows: [] }])
+    await runAggregation(ENV, { fetch, uuidv4: () => 'rc1', now: () => NOW })
+    const sql = calls[0].body.sql
+    expect(sql).toMatch(/seen_in\s*=\s*'safari'/i)
+    expect(sql).toMatch(/blocker_enabled\s*=\s*1/i)
+  })
+
   test('below threshold → no candidates created (no writes)', async () => {
     const rows = [
       { id: 'r1', uuid_hash: 'u1', ip_hash: 'i1', domain: 'ex.com', url: 'https://ex.com/a', url_path_hash: 'p1', memo: null, created_at: NOW - 100 },

@@ -12,7 +12,8 @@
     "db:migrate:local": "wrangler d1 migrations apply adblockkeshi-reports --local",
     "db:migrate:prod": "wrangler d1 migrations apply adblockkeshi-reports --remote",
     "db:exec:local": "wrangler d1 execute adblockkeshi-reports --local --command",
-    "db:exec:prod": "wrangler d1 execute adblockkeshi-reports --remote --command"
+    "db:exec:prod": "wrangler d1 execute adblockkeshi-reports --remote --command",
+    "db:cleanup-legacy:prod": "wrangler d1 execute adblockkeshi-reports --remote --command \"UPDATE reports SET status = 'observation_legacy' WHERE status = 'pending' AND seen_in IS NULL\""
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.5.0",

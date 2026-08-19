@@ -15,6 +15,10 @@ import UIKit
 /// Apple ガイドライン:
 /// - `AppStore.requestReview(in:)` は OS 側で年3回まで自動制御（呼んでも表示しないことがある）
 /// - 表示されたか・評価されたかは検知不可のため「発火を要求した日」をクールダウン基準にする
+/// - ★このアプリの本番経路では、ここでの「発火」= 自前の満足度カード表示であって
+///   `requestReview` ではない（`AdblockKeshiApp` が request を注入し、肯定回答時にだけ
+///   `SatisfactionPromptView` が公式 API を呼ぶ）。年3回の上限が効くのは肯定回答後の 1 段だけなので、
+///   発火回数が年3回を超えても「カードは出たのに OS に潰された」にはならない。
 @MainActor
 enum ReviewPrompt {
     /// 累計成功回数の発火閾値。5 の倍数を避けて広告サイクル (5枚ごと) との衝突確率を下げる。
@@ -36,6 +40,8 @@ enum ReviewPrompt {
     private static let kFired = "reviewPrompt.firedThresholds"
     private static let kNegative = "reviewPrompt.lastNegativeDate"
     private static let kThresholdMigratedV2 = "reviewPrompt.thresholdMigratedV2"
+    /// v3: 評価リセット後の一回限り再依頼を消費済みか（永続・一度 true になったら戻さない）
+    private static let kPostResetReask = "reviewPrompt.postResetReask2026"
 
     /// 旧閾値 [7,23,58] → 新閾値 [3,13,34] の移行（1回だけ）。
     /// 発火済みの旧値を「同じ順番の新閾値」に置換し、既発火ユーザーへの重複プロンプトを防ぐ。
@@ -99,29 +105,50 @@ enum ReviewPrompt {
 
         let fired = Set(defaults.array(forKey: kFired) as? [Int] ?? [])
         let pending = thresholds.filter { $0 <= count && !fired.contains($0) }
-        guard !pending.isEmpty else { return }
+
+        // v3 (2026-08): 閾値を使い切った既存ユーザーへの一回限り再依頼。
+        // 4.1.0 の評価リセットで★が消えた層が対象で、通常発火の余地が無い時だけ使う
+        // （pending が残っている間はフラグを消費しない）。既存ガードは上でそのまま効いている。
+        var usesPostResetReask = false
+        if pending.isEmpty {
+            // 対象は「全閾値を使い切った」層だけ。まだ届いていない閾値が残る間（例: fired=[3] で
+            // count 4〜12）は通常発火の途中なので、ここで先に消費してはいけない。
+            // 全閾値消化済みなら count >= 34 なので、設計書の「count≥3」も自動的に満たす。
+            guard Set(thresholds).isSubset(of: fired),
+                  !defaults.bool(forKey: kPostResetReask) else { return }
+            usesPostResetReask = true
+        }
 
         if let request {
             request()
-        } else {
-            requestSystemReview()
+        } else if !requestSystemReview() {
+            // 表示できる scene が無い＝プロンプトは出ていない。閾値も再依頼フラグも消費せず
+            // 次回の bump に持ち越す（機会だけ失うのを防ぐ）。
+            // ★このアプリの本番経路は満足度カード（AdblockKeshiApp が request を注入）なので
+            //   通常ここには来ない。将来 request 無しで呼ばれたときの保険。
+            return
         }
         defaults.set(now, forKey: kLast)
         defaults.set(defaults.integer(forKey: kRequested) + 1, forKey: kRequested)
-        defaults.set(fired.union(pending).sorted(), forKey: kFired)
+        if usesPostResetReask {
+            defaults.set(true, forKey: kPostResetReask)
+        } else {
+            defaults.set(fired.union(pending).sorted(), forKey: kFired)
+        }
     }
 
-    private static func requestSystemReview() {
-        if let scene = UIApplication.shared.connectedScenes
+    /// - Returns: 表示要求を出せたか（foregroundActive な scene が無ければ false）
+    private static func requestSystemReview() -> Bool {
+        guard let scene = UIApplication.shared.connectedScenes
             .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene
-        {
-            AppStore.requestReview(in: scene)
-        }
+        else { return false }
+        AppStore.requestReview(in: scene)
+        return true
     }
 
     /// テスト用: 全状態をリセット（リリースビルドでは呼ばないこと）
     static func resetForDebug(defaults: UserDefaults = .standard) {
-        for key in [kSuccess, kLast, kFirst, kRequested, kFired, kNegative] {
+        for key in [kSuccess, kLast, kFirst, kRequested, kFired, kNegative, kPostResetReask] {
             defaults.removeObject(forKey: key)
         }
     }

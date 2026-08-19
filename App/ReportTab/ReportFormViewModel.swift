@@ -10,26 +10,31 @@ enum ReportFormState: Equatable {
 
 @MainActor
 final class ReportFormViewModel: ObservableObject {
+    /// 問題が起きた **閲覧ページ** の URL（広告の配信元ではない）。
     @Published var urlInput: String = ""
     @Published var memoInput: String = ""
-    /// ユーザーが選択した広告タイプ。nil = 未選択 (送信不可)。
+    /// v4.2.0: 報告種別。既定は従来の広告報告（主用途を変えない）。
+    @Published var selectedKind: ReportKind = .adNotBlocked
+    /// ユーザーが選択した広告タイプ。nil = 未選択（広告報告では送信不可）。
+    /// 壊れ報告では使わない（送信時も nil を送る）。
     @Published var selectedAdType: AdType?
+    /// どこで広告を見たか。nil = 未選択 (送信不可)。サーバの `seen_in` と同期。
+    @Published var selectedSeenIn: SeenIn?
     @Published private(set) var state: ReportFormState = .idle
 
     private let apiClient: ReportAPIClientProtocol
     private let historyStore: LocalReportHistoryStore?
-    private let onSuccess: () -> Void
-    /// 自己報告ファストレーン。報告成功時に報告URLを端末で即ブロック反映する。
-    /// テストでは nil（no-op）、本番では SelfReportApplier を注入する。
-    private let selfReportApplier: SelfReportApplying?
+    private let onSuccess: (ReportSuccess) -> Void
+    /// 診断情報の自動取得。nil なら添付なしで送る（テスト既定）。
+    private let diagnosticsCollector: ReportDiagnosticsCollecting?
 
     init(apiClient: ReportAPIClientProtocol,
          historyStore: LocalReportHistoryStore? = nil,
-         selfReportApplier: SelfReportApplying? = nil,
-         onSuccess: @escaping () -> Void) {
+         diagnosticsCollector: ReportDiagnosticsCollecting? = nil,
+         onSuccess: @escaping (ReportSuccess) -> Void) {
         self.apiClient = apiClient
         self.historyStore = historyStore
-        self.selfReportApplier = selfReportApplier
+        self.diagnosticsCollector = diagnosticsCollector
         self.onSuccess = onSuccess
     }
 
@@ -38,17 +43,14 @@ final class ReportFormViewModel: ObservableObject {
         return nil
     }
 
-    /// 保護ドメイン（サーバ critical-list と同期）の説明文言。
-    /// サーバに投げても critical_domain 400 で必ず失敗するため、送信前に理由を示す。
-    static let criticalDomainMessage = "このサイトは主要サービス保護のため報告できません（誤ブロック防止）"
-
+    /// D-lite: 保護ドメイン（yahoo.co.jp / apple.com 等）の送信前ガードは撤去した。
+    /// 報告は「ブロック対象の指定」ではなく「広告が消えなかったページ」の改善用データなので、
+    /// 大手サイトを報告するのは**正常な操作**。サーバも受理する。
+    /// 自動でブロックルールへ昇格させないのはサーバ側 safety gate（L3）の責務。
     var urlError: String? {
         guard !urlInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         if case .invalid(let reason) = URLValidator.validate(urlInput) {
             return reason.userMessage
-        }
-        if let host = validatedURL?.host, CriticalDomainGuard.isCritical(host) {
-            return Self.criticalDomainMessage
         }
         return nil
     }
@@ -62,9 +64,10 @@ final class ReportFormViewModel: ObservableObject {
     }
 
     var canSubmit: Bool {
-        guard let url = validatedURL else { return false }
-        if let host = url.host, CriticalDomainGuard.isCritical(host) { return false }
-        guard selectedAdType != nil else { return false }
+        guard validatedURL != nil else { return false }
+        // 広告の種類は広告報告のみ必須（壊れ報告は広告タイプでは表せない）。
+        if selectedKind.requiresAdType, selectedAdType == nil { return false }
+        guard selectedSeenIn != nil else { return false }
         if !memoInput.isEmpty, case .invalid = MemoValidator.validate(memoInput) { return false }
         if case .submitting = state { return false }
         if case .awaitingTurnstile = state { return false }
@@ -94,23 +97,33 @@ final class ReportFormViewModel: ObservableObject {
     /// Turnstile widget produced a response token. Exchange it for an HMAC
     /// token, then send the report.
     func completeSubmit(turnstileResponse: String) async {
-        guard let url = validatedURL else { state = .idle; return }
+        guard let url = validatedURL, let seenIn = selectedSeenIn else { state = .idle; return }
         state = .submitting
         do {
             try await apiClient.requestToken(turnstileResponse: turnstileResponse, scope: .submit)
             let memo = memoInput.isEmpty ? nil : memoInput
-            try await apiClient.submitReport(url: url, memo: memo, adType: selectedAdType)
-            // 自己報告ファストレーン: 自分の端末で即ブロック反映（サーバ3人閾値を待たない）。
-            // 端末で即反映できる広告URLか（重要ドメイン等は対象外）で履歴の表示を分ける。
-            let appliedLocally = selfReportApplier != nil
-                && ReportedRuleBuilder.blockRule(forURL: url.absoluteString) != nil
-            selfReportApplier?.apply(reportedURL: url)
-            historyStore?.append(url: url, memo: memo, status: appliedLocally ? .appliedLocally : .pending)
+            // 診断情報は best-effort。取れなくても（collector 未注入でも）送信は続行する。
+            // 失敗はユーザーへ一切見せない（診断が取れないから報告できない、は本末転倒）。
+            let diagnostics = await diagnosticsCollector?.collect() ?? .unavailable
+            let kind = selectedKind
+            try await apiClient.submitReport(
+                url: url, memo: memo,
+                // 壊れ報告に広告タイプを混ぜない（種別切替前の選択残骸がサーバの解釈を汚す）。
+                adType: kind.requiresAdType ? selectedAdType : nil,
+                reportKind: kind,
+                seenIn: seenIn, diagnostics: diagnostics
+            )
+            // D-lite: 報告は改善用データであり、その端末で即ブロックはしない。
+            // したがって履歴は常に「受付済」から始まる。
+            historyStore?.append(url: url, memo: memo, status: .pending)
             state = .idle
             urlInput = ""
             memoInput = ""
+            selectedKind = .adNotBlocked
             selectedAdType = nil
-            onSuccess()
+            selectedSeenIn = nil
+            onSuccess(ReportSuccess(kind: kind, seenIn: seenIn,
+                                    host: url.host?.lowercased() ?? ""))
             // 発火カウントは日数ベース（AdblockKeshiApp.bumpDailyUsageIfNeeded）に統一したため
             // 報告成功での bump は行わない（2026-06-11 kureho 判断）
         } catch let err as APIError {

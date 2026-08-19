@@ -1,8 +1,13 @@
 import SwiftUI
 
 struct ReportSentView: View {
+    /// 直前の報告の結果（種別・どこで見たか・host）。文言と一時オフ提示の出し分けに使う。
+    let success: ReportSuccess
     let onAgainTap: () -> Void
     let onCloseTap: () -> Void
+
+    /// 「このサイトで一時オフ」を押したか（押したら確認表示に切り替える）。
+    @State private var exceptionAdded = false
 
     var body: some View {
         VStack(spacing: 28) {
@@ -15,13 +20,19 @@ struct ReportSentView: View {
                 .foregroundStyle(.green)
 
             VStack(spacing: 12) {
-                Text("報告を受け付けました")
+                Text(ReportSentMessage.title)
                     .font(.title2.bold())
 
-                Text("安全に反映できる広告は、この端末の保護へ追加されます。\n複数の利用者から届いた報告は、確認後に全体の保護へ反映されることがあります。")
+                Text(ReportSentMessage.body(for: success))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+            }
+
+            if success.offersSiteException {
+                siteExceptionCard
+                    .padding(.horizontal, 20)
             }
 
             Spacer()
@@ -68,10 +79,62 @@ struct ReportSentView: View {
         }
         .navigationBarBackButtonHidden(true)
     }
+
+    /// v4.2.0: Safari の壊れ報告のみ。「このサイトで一時オフ」＝per-site 例外を今すぐ効かせる。
+    private var siteExceptionCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if exceptionAdded {
+                Label("\(success.host) ではブロックを停止しました", systemImage: "checkmark.circle")
+                    .font(.footnote.weight(.semibold))
+                Text("停止中のサイトは、ブロッカータブの「ブロック停止中のサイト」からいつでも戻せます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("このサイトの表示が直るまで、ブロックをオフにしておけます。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Button {
+                    guard let store = SiteExceptionsStore.sharedAppGroup(),
+                          (try? store.add(success.host)) != nil else { return }
+                    CombinedRuleListCoordinator.scheduleRegenerate()
+                    exceptionAdded = true
+                } label: {
+                    Label("このサイトでブロックを一時オフ", systemImage: "pause.circle")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color(uiColor: .secondarySystemBackground))
+        )
+    }
 }
 
-#Preview {
+#Preview("広告報告 (Safari)") {
     NavigationStack {
-        ReportSentView(onAgainTap: {}, onCloseTap: {})
+        ReportSentView(
+            success: ReportSuccess(kind: .adNotBlocked, seenIn: .safari, host: "example.com"),
+            onAgainTap: {}, onCloseTap: {})
+    }
+}
+
+#Preview("壊れ報告 (Safari)") {
+    NavigationStack {
+        ReportSentView(
+            success: ReportSuccess(kind: .siteBroken, seenIn: .safari, host: "news.example.com"),
+            onAgainTap: {}, onCloseTap: {})
+    }
+}
+
+#Preview("壊れ報告 (アプリ内)") {
+    NavigationStack {
+        ReportSentView(
+            success: ReportSuccess(kind: .siteBroken, seenIn: .otherApp, host: "example.com"),
+            onAgainTap: {}, onCloseTap: {})
     }
 }

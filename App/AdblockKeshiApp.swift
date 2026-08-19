@@ -109,13 +109,15 @@ extension AdblockKeshiApp {
 }
 
 extension AdblockKeshiApp {
-    /// 起動時: ①既存端末治癒（旧版の document 遮断 self-rule を purge）②報告反映(popunder)の
+    /// 起動時: ①既存端末治癒（旧版の自己報告 self-rule を全消し）②報告反映(popunder)の
     /// combined を必要時のみ再生成して報告反映 ContentBlocker を reload（基本保護は bundle variant へ戻す）。
-    /// 自己学習は「報告反映」拡張に統合（旧 reportedblocker 廃止・名称整合で popunder へ再配置）。
+    /// サーバ検証済みの global ルールは「報告反映」拡張に統合（旧 reportedblocker 廃止・名称整合で popunder へ再配置）。
     /// 重い処理は coordinator が off-main で行う（起動フリーズ回避）。
     /// 初回アップデート起動時はここで初めて combined-popunder が生成される。
     private func migrateReportedRulesIfNeeded() {
-        if let store = SelfReportedRulesStore() { _ = try? store.sanitizeStoredSelfRules() }
+        // D-lite: 自己報告ファストレーンを廃止したので、既存端末に残る rules-self.json を消す。
+        // global（CDN 由来）は触らないので、サーバ検証済みの保護は落ちない。
+        if let store = SelfReportedRulesStore() { _ = try? store.purgeSelfRules() }
         CombinedRuleListCoordinator.scheduleRegenerate()
         // v4.0.3: DNS 自己報告ファストレーンの残骸(dns-self.json)を削除する。
         // 報告した host が DNS でブロックされ、そのサイトが開けなくなっていた（4.0.2 までの不具合）。

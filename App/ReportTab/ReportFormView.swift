@@ -66,17 +66,33 @@ struct ReportFormView: View {
 
     init(apiClient: ReportAPIClientProtocol,
          historyStore: LocalReportHistoryStore,
-         onSubmitSuccess: @escaping () -> Void) {
+         onSubmitSuccess: @escaping (ReportSuccess) -> Void) {
         _viewModel = StateObject(wrappedValue: ReportFormViewModel(
             apiClient: apiClient,
             historyStore: historyStore,
-            selfReportApplier: SelfReportApplier(),
+            diagnosticsCollector: ReportDiagnosticsCollector(),
             onSuccess: onSubmitSuccess
         ))
     }
 
     var body: some View {
         Form {
+            // v4.2.0: 報告種別。「広告が消えない」(強める) と「サイトが壊れた」(弱める) は
+            // 改善の方向が真逆なので入口で分ける。
+            Section {
+                Picker("なにを報告しますか？", selection: $viewModel.selectedKind) {
+                    ForEach(ReportKind.allCases) { kind in
+                        Text(kind.title).tag(kind)
+                    }
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("なにを報告しますか？")
+            } footer: {
+                Text(viewModel.selectedKind.detail)
+                    .font(.caption2)
+            }
+
             Section {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
@@ -102,35 +118,55 @@ struct ReportFormView: View {
                     }
                 }
             } header: {
-                Text("広告があった URL")
+                Text(isBroken ? "問題が起きたページの URL" : "広告が消えなかったページの URL")
             } footer: {
-                Text("Safari のアドレスバーからコピーして貼り付けてください")
+                Text(isBroken ? "表示や操作がおかしかったページを、そのまま貼り付けてください。"
+                              : "広告が表示されていたページを、そのまま貼り付けてください。")
                     .font(.caption2)
             }
 
             Section {
-                NavigationLink {
-                    AdTypePickerList(selection: $viewModel.selectedAdType)
-                } label: {
-                    HStack {
-                        Text("広告のタイプ")
-                        Spacer()
-                        Text(viewModel.selectedAdType?.label ?? "選択してください")
-                            .foregroundStyle(viewModel.selectedAdType == nil ? .secondary : .primary)
-                            .multilineTextAlignment(.trailing)
-                            .lineLimit(2)
+                Picker(seenInQuestionText, selection: $viewModel.selectedSeenIn) {
+                    Text("選択してください").tag(SeenIn?.none)
+                    ForEach(SeenIn.allCases) { value in
+                        Label(value.title, systemImage: value.iconSystemName)
+                            .tag(SeenIn?.some(value))
                     }
                 }
+                .pickerStyle(.menu)
             } header: {
-                Text("広告のタイプ")
+                Text(seenInQuestionText)
             } footer: {
-                Text("該当するパターンを 1 つ選んでください。当てはまるものが無ければ「その他」を選び、メモ欄に状況を記入してください。")
+                Text(seenInFooterText)
                     .font(.caption2)
+            }
+
+            if !isBroken {
+                Section {
+                    NavigationLink {
+                        AdTypePickerList(selection: $viewModel.selectedAdType)
+                    } label: {
+                        HStack {
+                            Text("広告のタイプ")
+                            Spacer()
+                            Text(viewModel.selectedAdType?.label ?? "選択してください")
+                                .foregroundStyle(viewModel.selectedAdType == nil ? .secondary : .primary)
+                                .multilineTextAlignment(.trailing)
+                                .lineLimit(2)
+                        }
+                    }
+                } header: {
+                    Text("広告のタイプ")
+                } footer: {
+                    Text("該当するパターンを 1 つ選んでください。当てはまるものが無ければ「その他」を選び、メモ欄に状況を記入してください。")
+                        .font(.caption2)
+                }
             }
 
             Section {
                 VStack(alignment: .leading, spacing: 4) {
-                    TextField("例: 動画上のオーバーレイ", text: $viewModel.memoInput, axis: .vertical)
+                    TextField(isBroken ? "例: 記事の画像が表示されない" : "例: 動画上のオーバーレイ",
+                              text: $viewModel.memoInput, axis: .vertical)
                         .lineLimit(5, reservesSpace: true)
                         .focused($focusedField, equals: .memo)
                     HStack {
@@ -207,6 +243,28 @@ struct ReportFormView: View {
                 secondaryButton: .cancel(Text("OK")) { viewModel.dismissError() }
             )
         }
+    }
+
+    private var isBroken: Bool { viewModel.selectedKind == .siteBroken }
+
+    private var seenInQuestionText: String {
+        isBroken ? "どこで起きましたか？" : "どこで広告を見ましたか？"
+    }
+
+    /// 選択中の項目に応じて補足を出し分ける。Safari 以外を選んだ時点で
+    /// 「Safari 用フィルタでは消せない」と伝えておく（送信後にも同じ趣旨を出す）。
+    private var seenInFooterText: String {
+        guard let seenIn = viewModel.selectedSeenIn else {
+            return "Safari でウェブページを見ていたのか、他のアプリの中だったのかを選んでください。"
+        }
+        guard !isBroken else {
+            // SeenIn.detail は広告文脈の文（「〜広告が出た」）なので、壊れ報告では言い換える。
+            switch seenIn {
+            case .safari:   return "Safari でウェブページを見ているときに起きた"
+            case .otherApp: return "ゲーム・SNS・動画アプリなど、アプリの中で起きた"
+            }
+        }
+        return seenIn.detail
     }
 
     private var turnstileBinding: Binding<Bool> {

@@ -39,6 +39,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var nextRewriteID: UInt16 = 1
     private var maintenanceTimer: DispatchSourceTimer?
     private var selfFetchTimer: DispatchSourceTimer?
+    /// 時限一時停止の期限（素通し運転中のみ非 nil）。maintenance tick が期限超過で自動再開する。
+    private var pauseDeadline: Date?
 
     /// sentinel = RFC 2544 予約帯（198.18.0.0/15）。tunnel が DNS を吸い込むための擬似 DNS サーバ IP。
     private enum Net {
@@ -113,6 +115,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     // MARK: - エンジン（curated ∪ self をロード）
 
     private func reloadEngine() {
+        // v4.2.0 時限一時停止: 期限内なら素通しエンジン（全ドメイン forward）で運転する。
+        // トンネルは止めない＝このプロセスが生き続けるので、アプリが suspend されていても
+        // maintenance tick（5秒）が期限超過を検知して確実に自動再開できる。
+        if let pausedUntil = DNSPauseStore.sharedAppGroup()?.readPausedUntil() {
+            pauseDeadline = pausedUntil
+            engine = DNSEngine(blocklist: DNSBlocklist(domains: []))
+            return
+        }
+        pauseDeadline = nil
         let curated = BlocklistStore.shared().loadDomains()
         // ★自己報告ファストレーン(dns-self.json)は v4.0.3 で廃止したので読まない。
         // DNS には first-party / third-party の区別が無く、「広告が消えなかったページ」を
@@ -120,6 +131,27 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // 旧版で書き込まれたファイルが端末に残っていても、ここで読まないので実害は生じない。
         let blocklist = DNSBlocklistLoader.effectiveBlocklist(curated: curated, selfReported: [])
         engine = DNSEngine(blocklist: blocklist)
+    }
+
+    /// 一時停止の状態を App Group の実体と突き合わせる（maintenance tick から毎 5 秒）。
+    /// 期限切れなら自動再開し、アプリからの reload 通知を取りこぼしていたらここで engine を組み直す。
+    /// ★通知（`sendProviderMessage`）は best-effort で落ちうる。それに依存したままだと
+    /// 「アプリでは停止中と出ているのに DNS はブロックし続ける」「解除したのに素通しのまま」が
+    /// 起きるので、実体を毎 tick 読んで回収する（誤差 ≤5 秒）。判定は DNSPauseSync（テスト済みの純ロジック）。
+    /// clear() は best-effort（失敗しても readPausedUntil が期限切れ nil を返すので再開自体は成立する）。
+    private func syncPauseState(now: TimeInterval) {
+        let at = Date(timeIntervalSince1970: now)
+        let store = DNSPauseStore.sharedAppGroup()
+        switch DNSPauseSync.decide(current: pauseDeadline, stored: store?.readPausedUntil(now: at), now: at) {
+        case .none:
+            return
+        case .resumeExpired:
+            pauseDeadline = nil
+            try? store?.clear()
+            reloadEngine()
+        case .reload:
+            reloadEngine()   // reloadEngine が実体を読んで pauseDeadline を張り直す
+        }
     }
 
     // MARK: - network settings
@@ -289,6 +321,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             self.lastMaintenanceTick = now
             self.forwarding.expireAll(olderThan: now - 5)   // 応答なしは偽装せず捨てる
+            self.syncPauseState(now: now)                   // 時限一時停止の自動再開 + 取りこぼし回収（誤差 ≤5 秒）
             self.runWatchdog(now: now)
             self.runPrimaryRetryProbe(now: now)
         }

@@ -87,3 +87,64 @@ Wi-Fi(デュアルスタック)では正常 = 7/15 E2E が Wi-Fi のみだった
 5. [x] 末尾上流の範囲外 rotate（no-op で DNS 握り続け）→ startUpstream をラップアラウンド化（monitor の rotation 予算と意味論一致）
 6. [x] Cloudflare 固定化（NAT64 で部分全断が無期限化・watchdog では検知不能）→ ①サスペンドギャップで health.reset() ②電波 unsatisfied 中は watchdog 停止+reset ③60s ごとの index 0 復帰プローブ（example.com A クエリ・本線非干渉）
 7. [x] reassert 中の path 変化握りつぶし → pendingReassert で消化 / UI 文言の fallback 整合
+
+## ⚠️ description の「報告タブを使わない限り外部通信しない」が不正確（2026-08-17 検出・**文面確定済み / 8-26-27 提出待ち**）
+
+live v4.0.3 の ja description:
+
+> 【データの取り扱い】
+> 報告タブを使わない限り、本アプリは外部通信を行いません。
+
+実際にはフィルタ更新のための通信が、報告タブに触れなくても走る:
+
+- `App/AdblockKeshiApp.swift:81` — 起動時に `Task.detached { await DNSListUpdater.shared()?.updateIfNeeded() }`
+- `App/ContentView.swift:94` — 起動時に `RuleUpdater`（CDN = GitHub Pages からルール DL）
+- `App/BackgroundTaskManager.swift:43` — バックグラウンド更新でも同じ経路
+
+同段落の後半「報告タブから送信されるデータは、URL とメモのみ。閲覧履歴・氏名・連絡先・位置情報は
+一切送信しません」は**正しい**（更新はダウンロードのみで個人データを送らない）。誤っているのは
+「外部通信を行いません」という言い切りだけ。育つフィルタが売りである以上、更新 DL があること自体は
+むしろ訴求になるので、隠す理由がない。
+
+★**2026-08-18 追記: 4.1.0 は 8/17 22:59 JST に配信済み（`appStoreState=READY_FOR_SALE` / itunes lookup で
+実配信を確認）。「審査中だから触らない」という下の前提はもう成立しない。** ただし description は live 版を
+直接編集できない項目なので、**次の提出（8/26-27 の ASO 判定後）に載せる**のは変わらない。
+★**live 4.1.0 の description にも「報告タブを使わない限り、本アプリは外部通信を行いません。」はそのまま残っている**
+（4.1.0 提出時に直したのは別の 2 行 = 診断情報の明記と報告の反映経路）。**是正は未消化**。
+
+★**手元 `fastlane/metadata/ja/description.txt` は 2026-08-18 に live 値へ同期し、そのうえで下の是正文面を投入済み。**
+同期前は 2026-07-15 の版で、`upload_to_app_store`（`skip_metadata: false`）を回すと live の 4.1.0 文面を
+巻き戻す状態だった。**現在の手元は「live 4.1.0 + 是正 1 箇所」＝次の提出で出したい値**なので、
+ちりつも・StillCam と同じ「手元が新しい」状態。deliver しても巻き戻らない。
+
+→ 差し替え文面（**2026-08-18 kureho 承認済み**・投入済み）:
+```
+報告タブを使わない限り、あなたのデータが外部へ送信されることはありません。
+（フィルタを最新に保つためのダウンロードのみ行います）
+```
+残タスクは **8/26-27 の ASO 判定後の提出に載せること**だけ（live 版の description は直接編集できないため）。
+
+### 追加検出（2026-08-18・同じ台帳監査で 2 件目）
+
+`audit_store_privacy_claims.py` が拾ったもう 1 つの主張 **「・端末内で処理し、外部サーバーは経由しません」も不正確**だった。
+ブロック判定が端末内なのは正しいが、**回線の DNS を取得できない場合は Cloudflare 1.1.1.1 へ転送する**
+（`/Users/oharakureho/claude/AdblockKeshi/PacketTunnelExtension/PacketTunnelProvider.swift:52` の `fallbackUpstreams`・
+plan は `/Users/oharakureho/claude/AdblockKeshi/Shared/DNS/UpstreamPlanner.swift:8` が `systemServers + fallbacks` の順で
+候補を作るため、`systemServers` が空 or 全て除外条件に該当すると先頭が Cloudflare になる）。
+→ **「・ブロック判定は端末内で行い、当社のサーバーを経由しません」**に差し替え済み（手元 fastlane 投入済み・同じ提出に載る）。
+
+**この差し替え文面は 2026-08-18 に kureho 承認済み**（8/17 の承認は「報告タブ」の行だけだったため、別途取り直した）。
+
+**LP 側にも同じ主張が 4 箇所あり、そちらも是正済み**
+（`/Users/oharakureho/claude/app-support/src/lib/products.ts`: worldSection / FAQ / **プライバシーポリシー本文 2 箇所**）。
+ポリシー本文は Cloudflare fallback を元から明記していて事実としては正確だったが、
+同じ文の中で「判定もクエリも端末内で完結し」と書いていて**自己矛盾**していたため、
+「ブロック判定は端末内で完結し」に狭めた。加えて「報告タブを使わない場合、本アプリは引き続き外部通信を一切行いません
+（Content Blocker のフィルタ更新を除く）」の除外リストに **v4.0 の名前解決の転送**が入っていなかったので追記した。
+
+★**app-support は Vercel 手動デプロイなので本番 kureho.app にはまだ旧文言が出ている**
+（`curl https://kureho.app/apps/adblock-keshi | grep -c 外部サーバーは経由しません` = **6**）。
+**ローカル `npm run build` の出力では 0 件**（新文言「当社のサーバーを経由しません」が同じ 6 箇所に入れ替わることを確認済み。
+6 = 2 ユニーク文字列 × HTML 本体 / JSON-LD / RSC payload の重複）。**デプロイ後に同じ curl を打って 0 になることを確認する**。
+なおデプロイすると **おたよりカレンダー LP の新学期シーズナル更新（`717ba5f`・8/15）も一緒に本番に出る**
+（未デプロイなのはこの 2 commit のみ＝ちりつも画像更新 `19a09bb` とミダシ LP 解除 `6b3ba31` は live 反映済みを curl で確認）。

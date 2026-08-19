@@ -75,7 +75,7 @@ struct PaywallView: View {
                 Image(systemName: "sparkles")
                     .foregroundStyle(Color.accentColor)
             }
-            Text("報告した広告ドメインは、その端末で即ブロック対象に。日本のアプリに強い、育つフィルタ。")
+            Text("届いた報告をもとにフィルタを改善しています。日本のアプリに強い、育つフィルタ。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

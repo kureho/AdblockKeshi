@@ -102,7 +102,10 @@ platform :ios do
     upload_to_testflight(
       api_key: asc_api_key,
       skip_waiting_for_build_processing: false,
-      changelog: "v4.0.2 build 10002: ストア掲載情報（スクリーンショット）更新のためのビルド。機能は 4.0.1 と同一。"
+      # ★この changelog は lane にハードコードされている。版を上げるたびに必ず書き換える
+      #   （2026-08-13: v4.0.2 のまま 4.1.0 を出しかけた。ちりつも setup_metadata.py の
+      #    reviewNotes 固定文と同じ罠）
+      changelog: "v4.2.0 build 10200: Safari で表示が崩れたときに「サイトが壊れた」として報告でき、そのサイトだけブロックを一時オフにできます。アプリ内広告ブロックは 15 分・1 時間の一時停止（自動再開）に対応しました。"
     )
   end
 

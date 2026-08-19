@@ -63,7 +63,8 @@ describe('runTrancoCheck', () => {
     expect(updateCall!.body.params[1]).toBe('pass')
   })
 
-  test('critical-list hit → rejected_critical', async () => {
+  // D-lite: critical も自動却下せず kureho_queue へ（rejected は常に 0 になる）。
+  test('critical-list hit → kureho_queue', async () => {
     const candidates = [{ id: 'c1', domain: 'apple.com' }]
     const { fetch, calls } = makeFetchMock([
       { rows: candidates },
@@ -71,10 +72,11 @@ describe('runTrancoCheck', () => {
       { rows: [] }, // UPDATE
     ])
     const r = await runTrancoCheck(ENV, { fetch })
-    expect(r.rejected).toBe(1)
+    expect(r.queued).toBe(1)
+    expect(r.rejected).toBe(0)
     expect(r.passed).toBe(0)
     const updateCall = calls.find((c) => /UPDATE rule_candidates/i.test(c.body.sql))
-    expect(updateCall!.body.params[0]).toBe('rejected_critical')
+    expect(updateCall!.body.params[0]).toBe('kureho_queue')
     expect(updateCall!.body.params[1]).toBe('fail')
   })
 
@@ -101,12 +103,12 @@ describe('runTrancoCheck', () => {
     const { fetch } = makeFetchMock([
       { rows: candidates },
       { rows: [{ domain: 'big-portal.com' }] },
-      { rows: [] }, // UPDATE rejected
-      { rows: [] }, // UPDATE queued
+      { rows: [] }, // UPDATE queued (critical + tranco が同じ status になる)
       { rows: [] }, // UPDATE passed
     ])
     const r = await runTrancoCheck(ENV, { fetch })
-    expect(r).toEqual({ passed: 1, queued: 1, rejected: 1 })
+    // D-lite: critical も tranco も kureho_queue へ入るので queued=2 / rejected=0
+    expect(r).toEqual({ passed: 1, queued: 2, rejected: 0 })
   })
 
   test('D1 error propagates', async () => {

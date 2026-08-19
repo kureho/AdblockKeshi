@@ -93,8 +93,8 @@ final class PopunderRuleCompileTests: XCTestCase {
             .appendingPathComponent("PopunderBlockerExtension/Resources/popunder-rules.json")
         let baseData = try Data(contentsOf: baseURL)
         let reported = [
-            try XCTUnwrap(ReportedRuleBuilder.blockRule(forURL: "https://ads.example.com/")),
-            try XCTUnwrap(ReportedRuleBuilder.blockRule(forURL: "https://tracker.test/")),
+            TestRuleFactory.hostBlockRule("ads.example.com"),
+            TestRuleFactory.hostBlockRule("tracker.test"),
         ]
         let combined = try CombinedRuleListMerge.splice(standardJSON: baseData, appending: reported)
         let json = String(data: combined, encoding: .utf8)!
