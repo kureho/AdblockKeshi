@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 広告 SDK なし・トラッキングなし。 -->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<!-- アプリ本体はデータを端末内にのみ保存し、当社サーバーへ送信しない。
+	     SDK が収集する分は SDK 自身の privacy manifest が申告する（GenbaCamera と同構成）。 -->
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<!-- 実測で「アプリ本体が実際に使う」ものだけを宣言する（2026-08-24 A-17 横断監査で grep 確認）。 -->
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<!-- 設定・アプリ内状態の保存に UserDefaults を使用。 -->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
