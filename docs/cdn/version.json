@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-08-01T05:48:53Z",
+  "generated_at": "2026-09-01T08:10:45Z",
   "rule_count": 150000,
-  "size_bytes": 22374833,
-  "blocker_list_sha256": "9a8405b286fcd542043d94c1dd450c99d7333e14df13cbdc49caf3c10d09d162",
+  "size_bytes": 22547840,
+  "blocker_list_sha256": "18a2cadadb66e06d7ee3322cd8038f9c340357fceb8d4a029b0408d433b5f288",
   "filters": [
     {
       "name": "easyprivacy",
