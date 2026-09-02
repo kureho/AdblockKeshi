@@ -113,3 +113,7 @@ D1 実測で確定: 問い合わせ主は `apps.apple.com`（広告のリンク�
 - **「サーバが拒否した」と「ユーザーに悪意がある」は別物**。ペナルティ集計に入れてよいのは「正直なクライアント UI からは物理的に発生しない」失敗だけ（例: クライアント検証を通らない invalid_url）。クライアントから普通に発生し得る拒否を ban 材料にすると、機能を熱心に使うユーザーから順に封じられる
 - 検証・拒否ルールはクライアントとサーバで**同じリストを送信前に効かせる**（サーバだけにあると失敗往復 + abuse 加算だけが残る）
 - 問い合わせフォームのメール任意入力は「返信不可」問い合わせを生む。原因を運営側データで特定できる設計（今回は D1 の abuse_log）が命綱
+
+## 2026-09-02 4.2.0 提出
+- `fastlane beta` の archive が「No Accounts: Add a new account in Accounts settings」／「provisioning profile に Apple Development: Created via API (8AQ38HX67R) が無い」で落ちる → Xcode にログインするのではなく、`build_app` の `xcargs` に `-allowProvisioningUpdates -authenticationKeyPath <p8> -authenticationKeyID 8AQ38HX67R -authenticationKeyIssuerID <issuer>` を渡す（`4fef73f`・GenbaCamera/oshilog と同型）。署名は API キーで cloud signing させる
+- 4.2.0 は実機確認をスキップして出した（kureho 判断）。配信後に「壊れ報告が効かない」「一時停止が戻らない」が来たら、end-to-end の報告経路・per-site 例外の Safari 反映・DNS 一時停止の自動再開を最初に疑う
