@@ -96,7 +96,15 @@ platform :ios do
       export_method: "app-store",
       output_directory: "build",
       clean: true,
-      xcargs: "-allowProvisioningUpdates"
+      # 2026-09-02: Xcode にアカウントが無い環境では API キーを xcodebuild へ渡さないと
+      # 「No Accounts」で provisioning 更新に失敗する（GenbaCamera / oshilog と同じ形に統一）
+      xcargs: [
+        "-allowProvisioningUpdates",
+        "-authenticationKeyPath", API_KEY_PATH,
+        "-authenticationKeyID", KEY_ID,
+        "-authenticationKeyIssuerID", ISSUER_ID
+      ].join(" "),
+      export_xcargs: "-allowProvisioningUpdates"
     )
 
     upload_to_testflight(
