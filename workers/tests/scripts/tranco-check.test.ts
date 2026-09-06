@@ -1,4 +1,5 @@
 // Plan B Task 1.3 orchestrator test.
+// 2026-09-06: Tranco 判定を D1 テーブルから in-memory Set へ移行（D1 rows_written 超過対策）。
 
 import { describe, expect, test } from 'vitest'
 import { runTrancoCheck } from '../../../scripts/validation/tranco-check'
@@ -34,10 +35,15 @@ const ENV = {
   CF_DATABASE_ID: 'd',
 }
 
+/** 既定は「Tranco に何も載っていない」集合。 */
+function deps(fetch: typeof globalThis.fetch, domains: string[] = []) {
+  return { fetch, loadTrancoSet: async () => new Set(domains) }
+}
+
 describe('runTrancoCheck', () => {
   test('no aggregating candidates → no updates', async () => {
     const { fetch, calls } = makeFetchMock([{ rows: [] }])
-    const r = await runTrancoCheck(ENV, { fetch })
+    const r = await runTrancoCheck(ENV, deps(fetch))
     expect(r).toEqual({ passed: 0, queued: 0, rejected: 0 })
     expect(calls).toHaveLength(1) // only the SELECT
   })
@@ -49,14 +55,12 @@ describe('runTrancoCheck', () => {
     ]
     const { fetch, calls } = makeFetchMock([
       { rows: candidates }, // SELECT candidates
-      { rows: [] }, // SELECT tranco lookup (no hits)
       { rows: [] }, // batch UPDATE
     ])
-    const r = await runTrancoCheck(ENV, { fetch })
+    const r = await runTrancoCheck(ENV, deps(fetch))
     expect(r.passed).toBe(2)
     expect(r.queued).toBe(0)
     expect(r.rejected).toBe(0)
-    // Last call should be UPDATE
     const updateCall = calls.find((c) => /UPDATE rule_candidates/i.test(c.body.sql))
     expect(updateCall).toBeTruthy()
     expect(updateCall!.body.params[0]).toBe('validating')
@@ -66,12 +70,8 @@ describe('runTrancoCheck', () => {
   // D-lite: critical も自動却下せず kureho_queue へ（rejected は常に 0 になる）。
   test('critical-list hit → kureho_queue', async () => {
     const candidates = [{ id: 'c1', domain: 'apple.com' }]
-    const { fetch, calls } = makeFetchMock([
-      { rows: candidates },
-      { rows: [] }, // tranco lookup
-      { rows: [] }, // UPDATE
-    ])
-    const r = await runTrancoCheck(ENV, { fetch })
+    const { fetch, calls } = makeFetchMock([{ rows: candidates }, { rows: [] }])
+    const r = await runTrancoCheck(ENV, deps(fetch))
     expect(r.queued).toBe(1)
     expect(r.rejected).toBe(0)
     expect(r.passed).toBe(0)
@@ -80,14 +80,10 @@ describe('runTrancoCheck', () => {
     expect(updateCall!.body.params[1]).toBe('fail')
   })
 
-  test('tranco hit → kureho_queue', async () => {
+  test('tranco hit（サブドメインは親ドメインで一致）→ kureho_queue', async () => {
     const candidates = [{ id: 'c1', domain: 'www.big-portal.com' }]
-    const { fetch, calls } = makeFetchMock([
-      { rows: candidates },
-      { rows: [{ domain: 'big-portal.com' }] }, // tranco lookup returns root match
-      { rows: [] }, // UPDATE
-    ])
-    const r = await runTrancoCheck(ENV, { fetch })
+    const { fetch, calls } = makeFetchMock([{ rows: candidates }, { rows: [] }])
+    const r = await runTrancoCheck(ENV, deps(fetch, ['big-portal.com']))
     expect(r.queued).toBe(1)
     const updateCall = calls.find((c) => /UPDATE rule_candidates/i.test(c.body.sql))
     expect(updateCall!.body.params[0]).toBe('kureho_queue')
@@ -102,17 +98,23 @@ describe('runTrancoCheck', () => {
     ]
     const { fetch } = makeFetchMock([
       { rows: candidates },
-      { rows: [{ domain: 'big-portal.com' }] },
       { rows: [] }, // UPDATE queued (critical + tranco が同じ status になる)
       { rows: [] }, // UPDATE passed
     ])
-    const r = await runTrancoCheck(ENV, { fetch })
-    // D-lite: critical も tranco も kureho_queue へ入るので queued=2 / rejected=0
+    const r = await runTrancoCheck(ENV, deps(fetch, ['big-portal.com']))
     expect(r).toEqual({ passed: 1, queued: 2, rejected: 0 })
+  })
+
+  // 回帰ガード: D1 の tranco テーブルを二度と参照しない（2026-09-06 の枠超過の原因）。
+  test('tranco_top_1m を SQL で引かない', async () => {
+    const candidates = [{ id: 'c1', domain: 'www.big-portal.com' }]
+    const { fetch, calls } = makeFetchMock([{ rows: candidates }, { rows: [] }])
+    await runTrancoCheck(ENV, deps(fetch, ['big-portal.com']))
+    expect(calls.some((c) => /tranco/i.test(c.body.sql))).toBe(false)
   })
 
   test('D1 error propagates', async () => {
     const { fetch } = makeFetchMock([{ error: 'db offline' }])
-    await expect(runTrancoCheck(ENV, { fetch })).rejects.toThrow(/db offline/)
+    await expect(runTrancoCheck(ENV, deps(fetch))).rejects.toThrow(/db offline/)
   })
 })

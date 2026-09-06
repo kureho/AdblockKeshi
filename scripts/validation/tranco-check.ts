@@ -1,6 +1,6 @@
 // Plan B Task 1.3 (L3): runs hourly-ish via daily-validation.yml.
-// Pulls aggregating rule_candidates, looks up their domains in tranco_top_1m
-// (suffix-aware), and updates each candidate's status:
+// Pulls aggregating rule_candidates, looks up their domains in the Tranco
+// Top 100k set (suffix-aware, in-memory), and updates each candidate's status:
 //   - critical-list hit → rejected_critical
 //   - tranco hit          → kureho_queue (manual review)
 //   - neither             → validating  (next layer L4)
@@ -10,6 +10,12 @@ import { decideL3 } from '../../workers/src/lib/l3-decision'
 
 export interface TrancoCheckDeps {
   fetch: typeof globalThis.fetch
+  /**
+   * Tranco 上位ドメイン集合。ワークフローが CSV を落として渡す。
+   * 2026-09-06 まで D1 の tranco_top_1m を引いていたが、その週次同期が
+   * rows_written 無料枠の 4 倍を消費していたため in-memory に移した。
+   */
+  loadTrancoSet: () => Promise<Set<string>>
 }
 
 export interface TrancoCheckResult {
@@ -21,39 +27,6 @@ export interface TrancoCheckResult {
 interface CandidateRow {
   id: string
   domain: string
-}
-
-function buildSuffixLookupKeys(domains: string[]): string[] {
-  const keys = new Set<string>()
-  for (const d of domains) {
-    keys.add(d)
-    const parts = d.split('.')
-    for (let i = 1; i < parts.length; i++) {
-      const suffix = parts.slice(i).join('.')
-      if (suffix.includes('.')) keys.add(suffix)
-    }
-  }
-  return [...keys]
-}
-
-async function loadTrancoHits(
-  env: D1Env,
-  fetchFn: typeof fetch,
-  candidates: CandidateRow[]
-): Promise<Set<string>> {
-  const lookupKeys = buildSuffixLookupKeys(candidates.map((c) => c.domain))
-  const hits = new Set<string>()
-  await chunked(lookupKeys, D1_MAX_IN_PARAMS, async (chunk) => {
-    const placeholders = chunk.map(() => '?').join(',')
-    const rows = await d1Query(
-      env,
-      fetchFn,
-      `SELECT domain FROM tranco_top_1m WHERE domain IN (${placeholders})`,
-      chunk
-    )
-    for (const r of rows) hits.add(r.domain)
-  })
-  return hits
 }
 
 export async function runTrancoCheck(
@@ -70,8 +43,8 @@ export async function runTrancoCheck(
     return { passed: 0, queued: 0, rejected: 0 }
   }
 
-  const trancoHits = await loadTrancoHits(env, deps.fetch, candidates)
-  const decisions = candidates.map((c) => decideL3(c, trancoHits))
+  const trancoSet = await deps.loadTrancoSet()
+  const decisions = candidates.map((c) => decideL3(c, trancoSet))
 
   const groups = {
     validating: decisions.filter((d) => d.next_status === 'validating'),

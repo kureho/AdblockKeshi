@@ -29,8 +29,26 @@ jobs:
           cd workers
           npm install --no-save playwright
           npx playwright install --with-deps chromium
+      # Tranco リストは D1 に置かずここで直接読む（2026-09-06 の rows_written
+      # 無料枠超過対策。理由は scripts/lib/tranco-list.ts）。
+      # 週替わりのキーでキャッシュし、tranco-list.eu への DL は週 1 回に留める。
+      - name: Tranco cache key (ISO week)
+        id: tranco_key
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - name: Restore Tranco CSV cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/tranco.csv
+          key: tranco-top-1m-${{ steps.tranco_key.outputs.week }}
+      - name: Fetch + unzip Tranco Top 1M CSV (cache miss only)
+        run: |
+          if [ ! -s /tmp/tranco.csv ]; then
+            curl -fL --retry 3 'https://tranco-list.eu/top-1m.csv.zip' -o /tmp/tranco.zip
+            unzip -p /tmp/tranco.zip > /tmp/tranco.csv
+          fi
+          echo "lines: $(wc -l < /tmp/tranco.csv)"
       - name: L3 Tranco + critical-list check
-        run: cd workers && npx tsx ../scripts/validation/run-tranco-check.ts
+        run: cd workers && npx tsx ../scripts/validation/run-tranco-check.ts /tmp/tranco.csv
         env:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}

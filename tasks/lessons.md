@@ -117,3 +117,21 @@ D1 実測で確定: 問い合わせ主は `apps.apple.com`（広告のリンク�
 ## 2026-09-02 4.2.0 提出
 - `fastlane beta` の archive が「No Accounts: Add a new account in Accounts settings」／「provisioning profile に Apple Development: Created via API (8AQ38HX67R) が無い」で落ちる → Xcode にログインするのではなく、`build_app` の `xcargs` に `-allowProvisioningUpdates -authenticationKeyPath <p8> -authenticationKeyID 8AQ38HX67R -authenticationKeyIssuerID <issuer>` を渡す（`4fef73f`・GenbaCamera/oshilog と同型）。署名は API キーで cloud signing させる
 - 4.2.0 は実機確認をスキップして出した（kureho 判断）。配信後に「壊れ報告が効かない」「一時停止が戻らない」が来たら、end-to-end の報告経路・per-site 例外の Safari 反映・DNS 一時停止の自動再開を最初に疑う
+
+## 2026-09-06 週次 Tranco 同期が D1 無料枠の 4 倍を毎週焼いていた（Cloudflare アラートで発覚）
+
+### 事象
+Cloudflare から「D1 の rows_written 1 日上限（10 万行）を超過」のアラートメール。Gmail 上ではこれが初回だが、D1 Analytics（GraphQL）で日次を引くと **8/9・8/16・8/23・8/30・9/6 の日曜が全て 40 万行ちょうど**、平日は 0〜30 行。つまり超過は初回ではなく、少なくとも 1 か月前から毎週発生していた。
+
+### 根本原因
+`weekly-tranco-sync.yml`（日曜 02:00 UTC）が毎週 `DELETE FROM tranco_top_1m` → 10 万行 INSERT の**全入れ替え**をしていた。D1 の rows_written はインデックス更新も 1 行として数えるため、`domain TEXT PRIMARY KEY` の暗黙インデックス + `idx_tranco_synced_at` で **1 行あたり実質 4 行** = 40 万行。無料枠の 4 倍。超過後は当日 24:00 UTC まで D1 書き込みが全部エラー（= 日曜 16:00 JST〜月曜 09:00 JST は報告受付が落ちる窓だった）。
+
+### 修正
+D1 から Tranco を外し、唯一の読み手である `daily-validation.yml`（GitHub Actions の Node プロセス）が CSV を直接メモリに載せる方式へ。`decideL3` は元から in-memory `Set<string>` を受け取る設計だったので、判定ロジックは無改造。週次同期 workflow とスクリプトは削除。DL は週替わりキャッシュキーで週 1 回に維持。実測 10 万件 57ms / 87MB。
+
+### 教訓・適用範囲
+- **「無料枠に収まるか」は行数ではなく〈行数 × (1 + インデックス数)〉で見積もる**。D1 に限らず、行課金のマネージド DB は暗黙の PK インデックスも書き込みに数える
+- **参照専用の静的リストを DB に置かない**。読み手が 1 本のバッチだけなら、そのバッチがファイルを読めば DB 書き込みはゼロになる。実際この repo の `build_security_rules.py` は同じ Tranco を最初からファイルとして扱っていた＝先例が repo 内にあった
+- **全入れ替え（DELETE→再 INSERT）は行課金では最悪手**。差分が数 % でも毎回 100% 分を払う
+- **無料枠の超過は「アラートが来た日」ではなく「実測の時系列」で確認する**。今回もアラート初回 = 超過初回ではなかった。`wrangler d1 info <db>` の 24h 値と Cloudflare GraphQL の `d1AnalyticsAdaptiveGroups` で日次が取れる
+- 残: D1 の `tranco_top_1m` テーブル本体（10 万行・約 5MB）は未 DROP。書き込みが 9/7 09:00 JST に復旧してから削除する

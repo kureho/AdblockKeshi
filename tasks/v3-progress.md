@@ -75,7 +75,7 @@ L2-L8 + deletion processor + CDN sync の **実 script 全 11 本** と 7 workfl
 | `scripts/promotion/beta-to-stable.ts` + `run-beta-to-stable.ts` | L7 β→stable 昇格 |
 | `scripts/rollback/complaint-rollback.ts` + `run-complaint-rollback.ts` | L8 苦情 rollback (β≥2 / stable≥3) |
 | `scripts/deletion/deletion-processor.ts` + `run-deletion-processor.ts` | 削除依頼 1h SLA processor |
-| `scripts/sync/tranco-sync.ts` + `run-tranco-sync.ts` | weekly Tranco Top 1M sync |
+| `scripts/lib/tranco-list.ts` | Tranco CSV → 上位 10 万ドメインの Set（D1 を経由しない） |
 | `scripts/sync/reported-rules-build.ts` + `run-reported-rules-build.ts` | weekly CDN sync (rules-reported.json 生成) |
 
 ### workers/src/lib/ 追加
@@ -92,7 +92,7 @@ L2-L8 + deletion processor + CDN sync の **実 script 全 11 本** と 7 workfl
 | `complaint.ts` | `POST /v1/reports/complaint` (HMAC scope='complaint', uuid_hash × rule_candidate_id dedupe) |
 
 ### migrations 追加
-- `0006_init_tranco_top_1m.sql` — Tranco Top 1M 格納
+- `0006_init_tranco_top_1m.sql` — Tranco Top 1M 格納（**2026-09-06 に利用終了**。週次全入れ替えが rows_written 無料枠の 4 倍を消費していたため in-memory 判定へ移行。テーブル本体の DROP は未実施）
 - `0007_rule_candidates_url.sql` — Playwright navigate 用 url 列
 - `0008_abuse_log_target_id.sql` — broken_site dedupe 用 target_id
 
@@ -102,10 +102,9 @@ L2-L8 + deletion processor + CDN sync の **実 script 全 11 本** と 7 workfl
 | `hourly-aggregation.yml` | `:00 hourly` | `scripts/aggregation/run.ts` |
 | `complaint-monitor.yml` | `:15 hourly` | `scripts/rollback/run-complaint-rollback.ts` |
 | `hourly-deletion-processor.yml` | `:30 hourly` | `scripts/deletion/run-deletion-processor.ts` |
-| `daily-validation.yml` | daily 03:00 UTC | tranco-check → cdn-check → playwright-validate |
+| `daily-validation.yml` | daily 03:00 UTC | Tranco DL+unzip（週替わりキャッシュ）→ tranco-check → cdn-check → playwright-validate |
 | `weekly-stable-promotion.yml` | weekly Mon 04:00 UTC | `scripts/promotion/run-beta-to-stable.ts` |
 | `weekly-cdn-sync.yml` | weekly Tue 05:00 UTC | reported-rules-build + git commit |
-| `weekly-tranco-sync.yml` | weekly Sun 02:00 UTC | DL+unzip + `scripts/sync/run-tranco-sync.ts` |
 
 ### 副次的に修正した事故
 - `workers/src/lib/ban-engine.ts`: SELECT alias `c` vs interface field `count` のミスマッチで `result.banned` / `result.upgraded` が常に 0 だった (2 tests 落ちていた)。`COUNT(*) as count` に修正し ban-engine 全 10 tests pass。
