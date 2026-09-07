@@ -134,4 +134,6 @@ D1 から Tranco を外し、唯一の読み手である `daily-validation.yml`�
 - **参照専用の静的リストを DB に置かない**。読み手が 1 本のバッチだけなら、そのバッチがファイルを読めば DB 書き込みはゼロになる。実際この repo の `build_security_rules.py` は同じ Tranco を最初からファイルとして扱っていた＝先例が repo 内にあった
 - **全入れ替え（DELETE→再 INSERT）は行課金では最悪手**。差分が数 % でも毎回 100% 分を払う
 - **無料枠の超過は「アラートが来た日」ではなく「実測の時系列」で確認する**。今回もアラート初回 = 超過初回ではなかった。`wrangler d1 info <db>` の 24h 値と Cloudflare GraphQL の `d1AnalyticsAdaptiveGroups` で日次が取れる
-- 残: D1 の `tranco_top_1m` テーブル本体（10 万行・約 5MB）は未 DROP。書き込みが 9/7 09:00 JST に復旧してから削除する
+- **Cloudflare の超過アラートは「枠の期間が閉じた直後」にもう 1 通来る**。2026-09-07 09:12 JST（= 00:12 UTC）に届いた 2 通目は、本文の「上限がリセットされる」時刻が **9/7 00:00 UTC = 受信の 12 分前**で、9/6 分（UTC 日 9/6）の締めの通知だった。**新規の超過と読み違えない**。判定方法 = ①メール本文のリセット時刻が受信時刻より前なら過去分 ②`wrangler d1 info` の `rows_written_24h` が既知の 1 イベント分ちょうど（今回 400,000）なら当日分は 0
+- **GitHub Actions の cron は数時間ずれる**。`0 2 * * 0` の同期が実際に走ったのは 02:58〜07:54 UTC（6〜9 月の全 13 回）。「cron 時刻に走った前提」で UTC 日の切り分けをすると原因を取り違える。`gh run list --json createdAt` の実測で見る
+- 残: D1 の `tranco_top_1m` テーブル本体（10 万行・約 5MB）は未削除。migration `workers/migrations/0014_drop_tranco_top_1m.sql` を用意済み（`wrangler d1 migrations apply … --remote` で適用）。★**削除文そのものの rows_written コストは Cloudflare 未文書**（公式 pricing は「DDL は read/write 行の両方に寄与しうる」のみ）。SQLite の実装上は行単位の削除をしないので ~0 行の見込みだが未確認で、万一 40 万行と数えられると当日の書き込みが翌 09:00 JST まで全部エラーになる＝不安なら 08:5x JST（リセット直前）に実行する。実行後に `d1 info` で実測してこの行を確定値に置き換える
