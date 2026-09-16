@@ -85,7 +85,7 @@ struct DNSSettingsView: View {
         }
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: 10)
                 .fill(Color(UIColor.secondarySystemBackground))
         )
     }
@@ -124,7 +124,7 @@ struct DNSSettingsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: 10)
                 .fill(Color(UIColor.secondarySystemBackground))
         )
     }
@@ -159,7 +159,7 @@ struct DNSSettingsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: 10)
                 .fill(Color(UIColor.secondarySystemBackground))
         )
     }

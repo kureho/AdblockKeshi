@@ -30,6 +30,11 @@ struct AdblockKeshiApp: App {
             if ProcessInfo.processInfo.arguments.contains("--show-dns-settings") {
                 NavigationStack { DNSSettingsView(store: proStore) }
                     .preferredColorScheme(.light)
+                    // ★ボタンの形は**角丸 12pt**に固定する（2026-09-15 kureho 決定）。
+                    //   `.borderedProminent` は OS 既定の形に従うので、**iOS 26 で勝手にカプセルになった**。
+                    //   このアプリのカード・入力欄・広告カードは角丸（10〜16pt）なので、ボタンだけ形が割れていた。
+                    //   ここで 1 回宣言すると配下の bordered 系ボタンすべてに効く＝**ボタンを足しても割れない**。
+                    .buttonBorderShape(.roundedRectangle(radius: 12))
             } else {
                 mainTabView
             }
@@ -61,6 +66,11 @@ struct AdblockKeshiApp: App {
             }
             .preferredColorScheme(.light)
             .environmentObject(appState)
+            // ★ボタンの形は**角丸 12pt**に固定する（2026-09-15 kureho 決定）。
+            //   `.borderedProminent` は OS 既定の形に従うので、**iOS 26 で勝手にカプセルになった**。
+            //   このアプリのカード・入力欄・広告カードは角丸（10〜16pt）なので、ボタンだけ形が割れていた。
+            //   ここで 1 回宣言すると配下の bordered 系ボタンすべてに効く＝**ボタンを足しても割れない**。
+            .buttonBorderShape(.roundedRectangle(radius: 12))
             .overlay {
                 // 満足度カード (報告送信成功・閾値到達時のみ。頻度制御は ReviewPrompt が担う)
                 if reviewCoordinator.showSatisfactionPrompt {

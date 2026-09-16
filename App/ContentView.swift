@@ -230,7 +230,7 @@ struct CompletedView: View {
                 }
                 .padding(16)
                 .background(
-                    RoundedRectangle(cornerRadius: 16)
+                    RoundedRectangle(cornerRadius: 10)
                         .fill(Color(UIColor.secondarySystemBackground))
                 )
                 .padding(.horizontal, 20)
@@ -258,7 +258,7 @@ struct CompletedView: View {
                     }
                     .padding(16)
                     .background(
-                        RoundedRectangle(cornerRadius: 16)
+                        RoundedRectangle(cornerRadius: 10)
                             .fill(Color(UIColor.secondarySystemBackground))
                     )
                     .padding(.horizontal, 20)
@@ -291,7 +291,7 @@ struct CompletedView: View {
                         }
                         .padding(16)
                         .background(
-                            RoundedRectangle(cornerRadius: 16)
+                            RoundedRectangle(cornerRadius: 10)
                                 .fill(Color(UIColor.secondarySystemBackground))
                         )
                         .padding(.horizontal, 20)
