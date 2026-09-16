@@ -12,9 +12,7 @@ struct PaywallView: View {
                 header
                 hero
                 featureList
-                Text("サブスクではなく、一度きり。")
-                    .font(.system(size: 12, weight: .heavy))
-                    .foregroundStyle(.tertiary)
+                priceSection
                 purchaseCTA
                 restoreLink
                 limitsNote
@@ -33,35 +31,48 @@ struct PaywallView: View {
         .task { await store.loadProduct() }
     }
 
-    // MARK: - ヘッダー（アイコン + 名称 + 価格ピル）
+    // MARK: - ヘッダー（アイコン + 名称 + 補足／中央寄せ）
+    // ★2026-09-16 kureho「中央寄せの方がきれいだね」で横並び（アイコン+名称+価格ピル）から作り替え。
+    //   基準は かした・かりた `App/Monetization/PaywallView.swift` の header。
+    //   価格はここから priceSection へ移した（横並びをやめると右端の置き場所が無くなるため）。
 
     private var header: some View {
-        HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.accentColor.opacity(0.15))
-                .frame(width: 38, height: 38)
-                .overlay(
-                    Image(systemName: "shield.lefthalf.filled")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
-                )
+        VStack(spacing: 8) {
+            Image(systemName: "shield.lefthalf.filled")
+                .font(.system(size: 48))
+                .foregroundStyle(Color.accentColor)
+                .accessibilityHidden(true)
             Text("アプリ内広告ブロック")
-                .font(.system(size: 17, weight: .heavy))
-            Spacer(minLength: 8)
-            VStack(spacing: 1) {
-                Text(priceText)
-                    .font(.system(size: 14, weight: .heavy))
-                Text("買い切り")
-                    .font(.system(size: 9, weight: .heavy))
-                    .tracking(1)
+                .font(.title2.bold())
+            Text("端末の中で広告を抑える、買い切りの機能です。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .multilineTextAlignment(.center)
+    }
+
+    // MARK: - 価格（header の価格ピルから移設）
+
+    private var priceSection: some View {
+        VStack(spacing: 4) {
+            if let price = store.proProduct?.displayPrice {
+                // ★価格は常に StoreKit の displayPrice。旧仕様にあった "¥800" のフォールバックは
+                //   廃止した（largeTitle で大きく出す位置に移ったため、値上げ後に嘘の価格が
+                //   大書きされる。他アプリ〈InchCalc / 鏡〉と同じく未ロードなら価格を出さない規律に揃える）。
+                Text(price)
+                    .font(.largeTitle.bold())
+                Text("サブスクではなく、一度きり・月額料金なし")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("価格を取得しています…")
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
-    }
-
-    /// StoreKit 取得後はストア表記、未取得時は確定価格へフォールバック。
-    private var priceText: String {
-        store.proProduct?.displayPrice ?? "¥800"
+        .frame(maxWidth: .infinity)
+        .multilineTextAlignment(.center)
     }
 
     // MARK: - ヒーロー（差別化 #3・報告で増える）
