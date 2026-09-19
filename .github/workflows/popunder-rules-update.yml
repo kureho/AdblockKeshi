@@ -16,6 +16,15 @@ on:
       - 'tasks/b-popunder-script/popunder-aggressive-sites.json'
       - 'scripts/build_popunder_rules.py'
 
+# ★生成物を main へコミットするので書き込み権限が要る（2026-09-18 追加）。
+#   ❌ 既定の権限に任せる → ✅ 姉妹 workflow（build-security-rules / monthly-filter-update）と同じく明示する
+#   → 理由: 2026-06-17〜06-23 の 3 回とも
+#     `remote: Permission to kureho/AdblockKeshi.git denied to github-actions[bot]` (403) で落ちていた。
+#     生成そのものは成功していて push だけ失敗するので、**失敗に気付かないまま
+#     CDN が古いままになる**クラス（今回は手動コミットで追いついていて実害なし）。
+permissions:
+  contents: write
+
 concurrency:
   group: popunder-rules
   cancel-in-progress: true
