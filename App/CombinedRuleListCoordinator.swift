@@ -17,8 +17,12 @@ enum CombinedRuleListCoordinator {
         label: "com.kureho.adblockkeshi.combined-regen", qos: .utility)
 
     /// 任意スレッドから安全に起動。fire-and-forget。
-    static func scheduleRegenerate() {
-        regenQueue.async { regenerateIfNeeded() }
+    /// `completion` は再生成キュー上で最後に呼ばれる（テストが終了を待つための口。通常は渡さない）。
+    static func scheduleRegenerate(completion: (() -> Void)? = nil) {
+        regenQueue.async {
+            regenerateIfNeeded()
+            completion?()
+        }
     }
 
     /// 報告反映(popunder)の combined を必要時のみ再生成し、変化時だけ報告反映 ContentBlocker を reload。
@@ -92,6 +96,24 @@ enum CombinedRuleListCoordinator {
         }
     }
 
+    /// WebKit に触る処理を **必ずメインスレッドで**実行する。
+    ///
+    /// `WKContentRuleListStore.default()` は初回アクセスで WebKit のグローバル初期化
+    /// （`WebKit::InitializeWebKit2()`）を走らせる。この初期化は **メインスレッド限定**で、
+    /// メイン以外から最初に触ると `RELEASE_ASSERT` に引っかかり `EXC_BREAKPOINT (SIGTRAP)` で
+    /// プロセスごと落ちる（2026-09-18 に発覚。例外サイトが 1 件でもあると起動直後に再生成が走り、
+    /// 起動した瞬間にホーム画面へ戻る＝「広告ブロックがなんかおかしい」の正体）。
+    ///
+    /// ❌ 再生成ごと main に載せる → ✅ **WebKit を呼ぶ一瞬だけ** main に寄せる
+    /// → 理由: 再生成は decode/splice/write を含む重い処理で、main に載せると起動が固まる。
+    static func onMainThread(_ body: @escaping () -> Void) {
+        if Thread.isMainThread {
+            body()
+        } else {
+            DispatchQueue.main.async(execute: body)
+        }
+    }
+
     private static func appBuildVersion() -> String {
         (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "0"
     }
@@ -103,17 +125,22 @@ enum CombinedRuleListCoordinator {
         guard let json = String(data: data, encoding: .utf8) else { throw CoordinatorError.encoding }
         let sem = DispatchSemaphore(value: 0)
         var compileError: Error?
-        WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "combined-verify",
-            encodedContentRuleList: json
-        ) { _, error in
-            compileError = error
-            sem.signal()
+        // ★store に触るのは main（`onMainThread` の説明を参照。off-main で触ると SIGTRAP）。
+        onMainThread {
+            WKContentRuleListStore.default().compileContentRuleList(
+                forIdentifier: "combined-verify",
+                encodedContentRuleList: json
+            ) { _, error in
+                compileError = error
+                sem.signal()
+            }
         }
-        // off-main 前提。completion は別 queue で発火するので deadlock しない。30s でタイムアウト。
+        // off-main 前提。待つのは再生成キュー側で、signal は main から来るので deadlock しない。30s でタイムアウト。
         if sem.wait(timeout: .now() + 30) == .timedOut { throw CoordinatorError.compileTimeout }
         // 検証用にコンパイルした孤児エントリを削除（WKContentRuleListStore に溜めない）。best-effort。
-        WKContentRuleListStore.default().removeContentRuleList(forIdentifier: "combined-verify") { _ in }
+        onMainThread {
+            WKContentRuleListStore.default().removeContentRuleList(forIdentifier: "combined-verify") { _ in }
+        }
         if let e = compileError { throw e }
     }
 }

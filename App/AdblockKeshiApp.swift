@@ -17,6 +17,9 @@ struct AdblockKeshiApp: App {
         if ProcessInfo.processInfo.arguments.contains("--show-report-tab") {
             _selectedTab = State(initialValue: .report)
         }
+        if ProcessInfo.processInfo.arguments.contains("--show-settings-tab") {
+            _selectedTab = State(initialValue: .settings)
+        }
         #endif
     }
 
@@ -46,7 +49,7 @@ struct AdblockKeshiApp: App {
 
     private var mainTabView: some View {
             TabView(selection: $selectedTab) {
-                ContentView()
+                ContentView(proStore: proStore)
                     .tabItem {
                         Image(systemName: "shield.checkered")
                         Text("ブロッカー")
@@ -63,6 +66,13 @@ struct AdblockKeshiApp: App {
                     Text("報告")
                 }
                 .tag(AppTab.report)
+
+                SettingsView(proStore: proStore)
+                    .tabItem {
+                        Image(systemName: "gearshape")
+                        Text("設定")
+                    }
+                    .tag(AppTab.settings)
             }
             .preferredColorScheme(.light)
             .environmentObject(appState)
@@ -143,4 +153,7 @@ extension AdblockKeshiApp {
 enum AppTab: Hashable {
     case blocker
     case report
+    /// 設定タブ（2026-09-18 新設）。買い切りの入口は**ここが正面**
+    /// ＝ブロッカーを ON にしていない端末からも辿り着ける。
+    case settings
 }

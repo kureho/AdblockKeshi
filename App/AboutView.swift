@@ -60,17 +60,10 @@ struct AboutView: View {
                     LicenseTextView(title: "MIT", filename: "PhishingDatabase-MIT")
                 }
 
-                Divider()
+                // ★サポート導線（レビューを書く / お問い合わせ）は **2026-09-18 に設定タブへ移した**。
+                //   ❌ 同じリンクを 2 か所に置く → ✅ 設定タブに 1 か所
+                //   → 理由: この画面はライセンスとクレジットの置き場で、たどり着く人が少ない。
 
-                Text("サポート")
-                    .font(.headline)
-                // ユーザー起点のレビュー導線は requestReview ではなく write-review deep link を使う (Apple 公式推奨)
-                Link(destination: URL(string: "https://apps.apple.com/app/id6774906945?action=write-review")!) {
-                    Label("レビューを書く", systemImage: "square.and.pencil")
-                }
-                Link(destination: URL(string: SupportLink.contactURLString)!) {
-                    Label("ご意見・お問い合わせ", systemImage: "envelope")
-                }
                 #if DEBUG
                 // シミュレータ確認用 (リリースビルドには含まれない)
                 Button {

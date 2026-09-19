@@ -109,7 +109,11 @@ struct OnboardingView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 4)
 
-                Spacer(minLength: 20)
+                // ★ここに `Spacer(minLength: 20)` を置かない（2026-09-18 kureho「ここのマージンむだかもね」）。
+                //   ❌ `ScrollView` の中の `Spacer` でボタンを下へ押す
+                //   → ✅ 何も挟まず `VStack(spacing: 28)` の間隔だけにする
+                //   → 理由: `ScrollView` の中では `Spacer` は伸びないので、下へ押す効果は**元から無く**、
+                //     `28 + 20 + 28 = 76pt` のただの空白だけが残っていた。
 
                 // CTA
                 VStack(spacing: 12) {

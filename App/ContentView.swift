@@ -4,6 +4,9 @@ import SafariServices
 struct ContentView: View {
     @State private var blockerState: BlockerState = .disabled
     @State private var isChecking: Bool = false
+    /// 買い切り（アプリ内広告ブロック）の状態。★**アプリ全体で 1 つ**を
+    ///   `AdblockKeshiApp` から受け取る（設定タブ・DNS 画面と同じインスタンス）。
+    let proStore: ProStore
 
     private let checker = ContentBlockerStateChecker()
     private let extensionIdentifier = "com.kureho.adblockkeshi.blocker"
@@ -13,7 +16,7 @@ struct ContentView: View {
             Group {
                 switch blockerState {
                 case .enabled:
-                    CompletedView()
+                    CompletedView(proStore: proStore)
                 case .disabled:
                     OnboardingView(onReady: openAppSettings)
                 case .error(let message):
@@ -135,14 +138,16 @@ struct CompletedView: View {
     @State private var appliedRecords: [String: AppliedRulesRecord] = [:]
     /// CDN 未取得端末のフォールバック: bundle 同梱ルールの生成日。
     @State private var bundledGeneratedAt: Date? = nil
-    /// アプリ内広告ブロック（DNS・Pro）の状態。永続 Pro 状態を読むので自前インスタンスで可。
-    @State private var proStore = ProStore()
+    /// アプリ内広告ブロック（DNS・Pro）の状態。★`ContentView` が持つものを受け取る
+    /// （準備中の画面にも同じ入口を出すため・2026-09-18）。
+    let proStore: ProStore
     /// v4.2.0: per-site 例外（このサイトで一時オフ）。空なら導線ごと出さない。
     @State private var siteExceptionDomains: [String] = []
     @StateObject private var controlVM: BlockerControlViewModel
     private let versionStore: VersionInfoStore
 
-    init(versionStore: VersionInfoStore = VersionInfoStore()) {
+    init(proStore: ProStore, versionStore: VersionInfoStore = VersionInfoStore()) {
+        self.proStore = proStore
         let store = StateStore.sharedAppGroup()
             ?? StateStore(stateFileURL: URL(fileURLWithPath: NSTemporaryDirectory() + "fallback-state.json"))
         _controlVM = StateObject(
@@ -235,34 +240,7 @@ struct CompletedView: View {
                 )
                 .padding(.horizontal, 20)
 
-                NavigationLink {
-                    DNSSettingsView(store: proStore)
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "shield.lefthalf.filled")
-                            .font(.system(size: 18))
-                            .foregroundStyle(Color.accentColor)
-                            .frame(width: 24)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("アプリ内広告ブロック")
-                                .font(.callout.weight(.semibold))
-                                .foregroundStyle(.primary)
-                            Text("他アプリの広告も抑える（買い切り）")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color(UIColor.secondarySystemBackground))
-                    )
-                    .padding(.horizontal, 20)
-                }
+                ProEntryCard(store: proStore)
 
                 // v4.2.0: 壊れ報告から「一時オフ」にしたサイトの管理導線（例外がある時だけ）。
                 if !siteExceptionDomains.isEmpty {
@@ -334,14 +312,15 @@ struct CompletedView: View {
             if ScreenshotMode.autoOpenDNS { screenshotAutoOpenDNS = true }
         }
         .task {
-            // 撮影モード（DEBUG only）では StoreKit を起動しない。sim の sandbox サインイン
-            // ダイアログが撮影に被るため。Release では ScreenshotMode.isActive が常に false。
+            // ★**所有を StoreKit に問い合わせない**（2026-09-18）。
+            //   `Transaction.currentEntitlements` / `AppTransaction.shared` は Apple Account が
+            //   無い端末で**サインインのダイアログを出す**ので、画面を見ただけで出てしまう。
+            //   所有は端末のキャッシュで判断し、問い合わせは `DNSSettingsView`（買う直前）と
+            //   「購入を復元」に寄せた。ここでやるのは価格の取得と購入通知の購読だけ。
+            // 撮影モード（DEBUG only）では StoreKit を起動しない。
             guard !ScreenshotMode.isActive else { return }
-            // Pro 権利をアプリ起動時に最新化（既存購入・grandfather を反映 → App Group にも書き、
-            // DNS 画面へ入る前に isPro を pre-warm・tunnel の Pro チェックとも整合。P1 対策）。
             proStore.startTransactionListener()
-            await proStore.refreshEntitlements()
-            await proStore.refreshGrandfatherFromAppTransaction()
+            if !proStore.isPro { await proStore.loadProduct() }
         }
     }
 
@@ -424,5 +403,5 @@ struct ErrorView: View {
 }
 
 #Preview {
-    ContentView()
+    ContentView(proStore: ProStore())
 }

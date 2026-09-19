@@ -126,6 +126,7 @@ final class ProStore {
             case .success(let verification):
                 let transaction = try Self.verified(verification)
                 hasPurchaseEntitlement = true
+                cache.grantPro()   // ★買った事実を端末に残す（次の起動で StoreKit に聞かずに済む）
                 recompute()
                 await transaction.finish()
                 return true
@@ -156,6 +157,13 @@ final class ProStore {
             }
         }
         hasPurchaseEntitlement = owned
+        // ★買った事実を**端末に残す**（2026-09-18 追加）。
+        //   `Transaction.currentEntitlements` は Apple Account が無い端末で**サインインを要求する**ので、
+        //   毎起動これを呼んで所有を確かめる作りにはできない。所有を一度でも観測したら
+        //   grandfather と同じ 3 冗長キャッシュへ書き、以後は StoreKit を叩かずに Pro と分かるようにする。
+        //   ❌ 起動のたびに StoreKit へ聞く → ✅ 一度観測したら端末に残す
+        //   （このキャッシュは元から「剥奪しない」設計＝買い切り 1 本の意味と一致する）。
+        if owned { cache.grantPro() }
         recompute()
     }
 

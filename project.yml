@@ -4,11 +4,15 @@ options:
   deploymentTarget:
     iOS: "17.0"
   developmentLanguage: ja
+packages:
+  KurehoKit:
+    path: ../KurehoKit
+
 settings:
   base:
     DEVELOPMENT_TEAM: L455WPL8QZ
-    MARKETING_VERSION: "4.2.1"
-    CURRENT_PROJECT_VERSION: "10202"
+    MARKETING_VERSION: "4.3.0"
+    CURRENT_PROJECT_VERSION: "10302"
     SWIFT_VERSION: "5.10"
     CODE_SIGN_STYLE: Automatic
     TARGETED_DEVICE_FAMILY: "1"  # iPhone only (iPad multitasking 対応不要にする)
@@ -54,6 +58,8 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/App.entitlements
         TARGETED_DEVICE_FAMILY: "1"  # iPhone only (target level でも厳密化)
     dependencies:
+      - package: KurehoKit
+        product: KurehoKit
       - target: ContentBlockerExtension
         embed: true
       - target: PopunderBlockerExtension
@@ -193,6 +199,8 @@ targets:
         buildPhase: resources
     dependencies:
       - target: AdblockKeshi
+      - package: KurehoKit
+        product: KurehoKit
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
