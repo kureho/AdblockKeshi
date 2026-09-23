@@ -1,9 +1,10 @@
 # AdblockKeshi v3 - 永続 TODO
 
-## ★条件つきで次版に反映: ja keywords に「ポップアップ」（B7）
+## ★次版で必ず反映: ja keywords に「ポップアップ」（B7）
 
-★2026-09-23 kureho 承認（獲得調査 段 1・台帳 C-91）。**この変更だけのために版を作らない**＝下の条件に合格していれば、理由を問わず次に出す通常版に載せる（未合格なら載せない）（A-81 の画像待ちとは無関係・待たない）。**段 2（A-81 本体の name/subtitle/keywords）は今回承認外＝混ぜない**。提出版の localization へ keywords を PATCH → 提出前に GET で読み直して一致を確認 → 載せたら台帳 C-91 の該当アプリを消す。根拠 `/Users/oharakureho/claude/tasks/acquisition-research-2026-09-23/06-decision-package.md`
-- **審査中の 4.3.0 には触らない**。**kureho の実機確認（一般サイトのポップアップが止まる）に合格したときだけ**、4.3.0 の次の通常版に載せる（確認手順は台帳 C-92）
+★2026-09-23 kureho 承認（獲得調査 段 1・台帳 C-91）。**この変更だけのために版を作らない**＝理由を問わず次に出す通常版に載せる（A-81 の画像待ちとは無関係・待たない）。**段 2（A-81 本体の name/subtitle/keywords）は今回承認外＝混ぜない**。提出版の localization へ keywords を PATCH → 提出前に GET で読み直して一致を確認 → 載せたら台帳 C-91 の該当アプリを消す。根拠 `/Users/oharakureho/claude/tasks/acquisition-research-2026-09-23/06-decision-package.md`
+- **審査中の 4.3.0 には触らない**。4.3.0 の次の通常版に載せる
+- kureho の実機確認は Mac 上の自動検証に置き換え（2026-09-23・kureho「テストコスト高いのでやらなくて済む方法」）: `/Users/oharakureho/claude/AdblockKeshi/scripts/check-popunder-rules-webkit.swift` で配信中の `popunder-rules.json` を WebKit（iOS Safari と同じ規則エンジン）に読ませた結果、**既知の広告網 33 件のスクリプトが全件停止・規則外の CDN は読み込める**。規則なしでは 17 件が実通信の応答待ち＝停止は規則によるもの。★止められるのは既知の広告網だけ＝説明文・宣伝文で「すべてのポップアップを消す」とは書かない。規則を更新したらこのスクリプトを再実行する
 - 変更前（4.2.1・4.3.0 とも）: `広告,消す,ブロック,アプリ内広告,他アプリ,うざい,詐欺,フィッシング,セキュリティ,報告,進化`（49 字）
 - 変更後: 上の末尾に `,ポップアップ`（56 字）
 - ★このリポジトリは `fastlane/metadata/ja/keywords.txt` もある＝提出経路が deliver なら同じ値をそこにも入れる
