@@ -1,5 +1,10 @@
 # AdblockKeshi v3 - 永続 TODO
 
+## 2026-09-23: ディープリンク `adblockkeshi://<host>` 実装済み（C-88・次の版に同乗）
+
+対応 host: `home`（ブロッカータブ）/ `report`（報告タブ）/ `settings`（設定タブ）。
+アプリ内イベントの deepLink には `adblockkeshi://home` 等を使う。
+
 ## Issue #36 Sub-2: Privacy Redaction (2026-06-27・spec/plan とも reviewer Approved)
 
 実装計画: `~/claude/docs/superpowers/plans/2026-06-27-adblock-privacy-redaction.md`

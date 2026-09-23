@@ -35,6 +35,10 @@ targets:
         CFBundleDisplayName: 広告消し
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # ディープリンク受け口（C-88・アプリ内イベントの deepLink 用）。受け手は App/DeepLink.swift
+        CFBundleURLTypes:
+          - CFBundleURLName: com.kureho.adblockkeshi.DeepLink
+            CFBundleURLSchemes: [adblockkeshi]
         UILaunchScreen:
           UIColorName: ""
         UISupportedInterfaceOrientations:

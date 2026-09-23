@@ -91,6 +91,13 @@ struct AdblockKeshiApp: App {
                 }
             }
             .animation(.easeOut(duration: 0.2), value: reviewCoordinator.showSatisfactionPrompt)
+            // アプリ内イベント（ASC）などのディープリンク受け口（C-88）。
+            // `adblockkeshi://<タブ名>` を該当タブへ。未知の URL は何もしない。
+            .onOpenURL { url in
+                if let tab = DeepLink.tab(for: url) {
+                    selectedTab = tab
+                }
+            }
             .task {
                 migrateReportedRulesIfNeeded()
                 ReviewPrompt.recordFirstLaunchIfNeeded()
