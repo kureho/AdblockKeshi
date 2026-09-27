@@ -19,7 +19,7 @@ kureho「この形で進める（推奨）」＝**土台の修理 → 週 1 回�
 
 ## 表示の誤りの疑い（2026-09-24 獲得調査でコード読みから記録・未修正・未配信）
 
-オンボーディングの案内が旧経路「Safari → 機能拡張」のまま（`App/OnboardingView.swift:48`）。実機・シミュレータでの再現は未確認。次の通常版を計画するときに今の iOS の設定経路を確かめてから直す。正典 `/Users/oharakureho/claude/tasks/owned-channels-2026-09-24/phase2/30-deliverables.md`「アプリ側の別タスク」。
+オンボーディングの案内が旧経路「Safari → 機能拡張」のまま（`App/OnboardingView.swift:48`）。✅**9/27 確定**: Apple 公式ユーザガイド（support.apple.com/ja-jp/guide/iphone/iphab0432bf6/ios・iOS 27 版・9/27 取得）の手順は「設定 →『アプリ』→『Safari』→『機能拡張』」＝「アプリ」が抜けている。さらに下のボタン（`UIApplication.openSettingsURLString`）は「設定 → アプリ → 広告消し」に着地するので、そこから「アプリ」へ 1 つ戻る案内が要る。→ 4.4.0 の段 4（文言）で直し、kureho に見せる画面に含める。正典 `/Users/oharakureho/claude/tasks/owned-channels-2026-09-24/phase2/30-deliverables.md`「アプリ側の別タスク」。
 
 ## ★次版で必ず反映: ja keywords に「ポップアップ」（B7）
 
