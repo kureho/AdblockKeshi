@@ -10,6 +10,11 @@ kureho「この形で進める（推奨）」＝**土台の修理 → 週 1 回�
   - ★9/27 実測: `docs/cdn/merged-rules.json`（広告＋セキュリティ両方オン用・13 万件）に**セキュリティ由来ルールが 0 件**＝`scripts/build_merged_rules.py` が広告（15 万件）→セキュリティの順に詰めて 13 万件で切るため。両方オンの人は詐欺サイト対策が効いていない
   - コンテンツブロッカーは 2 本ある（`ContentBlockerExtension`・`PopunderBlockerExtension`＝40 件だけ）＝2 本目の空きを使えば「捨てるルールを選ぶ」並べ替え（6/2 に yahoo.co.jp 70→0 の前例）を避けられる可能性
   - 手順: 上限なしの総数を実測 → 2 本への分け方を決める（例外ルールは同じブロッカー内でしか効かない点に注意）→ 主要サイトの効きを前後で測る仕組みを作る → 入れ替え
+  - ★9/27 kureho 追加依頼「広告除去をオンにしてると閲覧できないサイトがある。うまく突破できるように」→ 主因候補 = 上限で捨てている例外（日本のサイト向け 309 サイト分。TVer・テレ朝・Lemino・ニコニコの動画部品 ima3.js、Yahoo!トップのタイムライン、ABEMA 等が今は無条件に止まる）。設計書 §0 の表・§1 に記録
+  - ★**形の第一候補 = C3**: 基本保護 = 日本語 + base + セキュリティ + **全例外**（138,428）／2 本目 = easyprivacy + easylist + **全例外** + ポップアップ + 報告ルール（129,468）。例外を両方に入れると上限なしの 1 本と同じ効き方。生成物 scratchpad `split-measure/out2/c3-basic.json`・`c3-second-full.json`（WebKit コンパイル成功）
+  - [ ] 計測（9/27 夜に裏で実行・`split-measure/run3.sh`→`out3/{A0N,A1N,C3}.json`）: 78 サイト＋例外の対象 20 サイト。見るもの = ①漏れ（A1N 以下か）②崩れ（A0N 比で文字数・画像が大きく減るページ）③例外の対象サイトで、例外が守る通信（ima3.js・yads 等）が C3 で読まれ A1N で読まれないか。集計は `split-measure/analyze2.py` と同じ判定＋③を追加
+  - [ ] 実装（計測で C3 が通ったら・TDD）: 生成スクリプトで 2 リスト群を別々に上限なし変換→例外の和集合を両方の末尾へ→トグル別の新ファイル（旧ファイル名・形式は旧版のため不変）。**基本保護が 15 万を超えたら広告ルールを 2 本目へ回す安全弁**（base の成長で 148k 付近まで来ている）。アプリは新ファイルを読み、2 本目 = 広告の残り（広告オン時）＋ポップアップ＋報告ルール＋一時オフ。同梱（全ルールを bundle）と `bundled-rules-info.json` も同期
+  - 残る手: 例外でも直らない「広告ブロッカー検知の壁」は、既存の Safari 機能拡張（`PopupShieldExtension`・今は streamtape.com 限定）で壁外しスクリプトを動かせるが、全サイトで動かすには利用者の追加許可が要る＝体験が変わるので、C3 で直らないサイトが実在した時に kureho に案を出す
 - [ ] ② 報告の週 1 回判定（Claude が日本のシミュレータの Safari で開く）→ そのサイト限定のルール → 朝のレポートに結果。止まっている `kureho_queue`・期限切れ `pending` にも出口。本番 DB は直接触らず、判定結果はリポジトリのファイル経由で定期処理が反映する形にする
   - ✅ 仕組み（9/27・commit 13d62bb）: 束づくり `scripts/review/build_review_packet.py`（月曜 06:30 launchd `com.kureho.adblockkeshi-review-packet`・plist は `~/Library/LaunchAgents/` に配置済み）／手書きルール `review/rules/`（旧版にも届く）／止まった候補は `candidates` で閉じる／朝のレポートに件数／起動時に新しい束を 1 回だけ案内（`~/.claude/hooks/session-start-trends.sh` 3 つ目）。手順 `/Users/oharakureho/claude/AdblockKeshi/tasks/a88-review-runbook.md`
   - [ ] launchd への登録（Claude のツールからは権限で拒否＝kureho が `!` で 1 行。登録しなくても次回ログイン時に自動で読まれる）
