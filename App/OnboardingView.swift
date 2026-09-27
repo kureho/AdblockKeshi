@@ -3,6 +3,14 @@ import SwiftUI
 struct OnboardingView: View {
     let onReady: () -> Void
 
+    /// A-88 進め方6: Apple 公式の経路は「設定 →『アプリ』→『Safari』→『機能拡張』」。
+    /// 旧文言「Safari → 機能拡張」は一覧の起点（「アプリ」）が抜けていた。
+    /// static にしてテスト（`OnboardingSettingsPathWordingTests`）から文言を検証できるようにする。
+    static let step2Title = "「アプリ」→「Safari」→「機能拡張」"
+    /// 下のボタン（`UIApplication.openSettingsURLString`）は「設定 → アプリ → 広告消し」に
+    /// 着地する＝一覧の 1 段下。そこから「アプリ」で一覧へ戻る旨を一言添える。
+    static let step2Detail = "開いた画面の左上「アプリ」で一覧に戻り、Safari をタップします"
+
     @State private var showFilterInfo: Bool = {
         #if DEBUG
         return ProcessInfo.processInfo.arguments.contains("--show-filter-sheet")
@@ -45,8 +53,8 @@ struct OnboardingView: View {
                     )
                     StepRow(
                         number: 2,
-                        title: "Safari → 機能拡張",
-                        detail: "設定の中で順番に開きます"
+                        title: Self.step2Title,
+                        detail: Self.step2Detail
                     )
 
                     // Step 3: タイトル + 2 フィルタ inline 列挙 + リンク

@@ -15,10 +15,12 @@ final class SubmitDoesNotWriteSelfListsTests: XCTestCase {
     private final class StubClient: ReportAPIClientProtocol, @unchecked Sendable {
         private(set) var submitted = 0
         func submitReport(url: URL, memo: String?, adType: AdType?, reportKind: ReportKind,
-                          seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws {
+                          seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws -> String {
             submitted += 1
+            return "server-id"
         }
         func requestToken(turnstileResponse: String, scope: TokenScope) async throws {}
+        func fetchReportOutcomes(ids: [String]) async throws -> [ReportOutcomeResult] { [] }
     }
 
     private func snapshot(_ container: URL, _ filename: String) -> Data? {

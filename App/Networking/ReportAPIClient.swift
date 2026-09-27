@@ -27,7 +27,7 @@ final class ReportAPIClient: ReportAPIClientProtocol {
     }
 
     func submitReport(url: URL, memo: String?, adType: AdType?, reportKind: ReportKind,
-                      seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws {
+                      seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws -> String {
         let token = try await acquireToken(scope: .submit)
         let uuidHash = try uuidStore.getUUIDHash()
         let endpoint = baseURL.appendingPathComponent("/v1/reports/submit")
@@ -47,7 +47,19 @@ final class ReportAPIClient: ReportAPIClientProtocol {
             filterVersion: diagnostics.filterVersion
         )
         request.httpBody = try encoder.encode(body)
-        let _: SubmitResponseDTO = try await send(request)
+        let dto: SubmitResponseDTO = try await send(request)
+        return dto.id
+    }
+
+    /// A-88 §3: `POST /v1/reports/status`。ロボット確認・HMAC トークンは不要（設計どおり
+    /// 認可なしの読み取り専用エンドポイント。ID は推測できない乱数が前提）。
+    func fetchReportOutcomes(ids: [String]) async throws -> [ReportOutcomeResult] {
+        guard !ids.isEmpty else { return [] }
+        let endpoint = baseURL.appendingPathComponent("/v1/reports/status")
+        var request = makeBaseRequest(url: endpoint)
+        request.httpBody = try encoder.encode(ReportStatusRequestDTO(ids: ids))
+        let dto: ReportStatusResponseDTO = try await send(request)
+        return dto.items.map { ReportOutcomeResult(id: $0.id, outcome: $0.outcome) }
     }
 
     func requestToken(turnstileResponse: String, scope: TokenScope) async throws {
@@ -92,8 +104,14 @@ final class ReportAPIClient: ReportAPIClientProtocol {
             case 200..<300:
                 do { return try decoder.decode(T.self, from: data) }
                 catch { throw APIError.decodingFailed }
-            case 401, 403:
+            case 401:
                 throw APIError.unauthorized
+            case 403:
+                // Workers のコード内で 403 を返すのは送信停止中 (banned) の 1 箇所のみ
+                // (`workers/src/handlers/submit.ts:123`)。401 と一律 unauthorized にすると
+                // 「認証エラーです。アプリを再起動してください」という、再起動しても直らない
+                // 誤った案内になる（点検記録 `tasks/report-pipeline-audit-2026-09-27.md` ③）。
+                throw try APIError.fromBody(data: data, statusCode: 403)
             case 429:
                 throw try APIError.fromBody(data: data, statusCode: 429)
             case 400:

@@ -17,13 +17,15 @@ final class ReportFormViewModelKindTests: XCTestCase {
         var submitCount = 0
 
         func submitReport(url: URL, memo: String?, adType: AdType?, reportKind: ReportKind,
-                          seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws {
+                          seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws -> String {
             submitCount += 1
             lastAdType = adType
             lastKind = reportKind
+            return "server-id"
         }
 
         func requestToken(turnstileResponse: String, scope: TokenScope) async throws {}
+        func fetchReportOutcomes(ids: [String]) async throws -> [ReportOutcomeResult] { [] }
     }
 
     private func makeViewModel(

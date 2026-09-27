@@ -64,6 +64,11 @@ struct HistoryRequestDTO: Encodable {
     }
 }
 
+/// A-88 §3: `POST /v1/reports/status`。トークン・uuid_hash 不要（認可なしの読み取り専用）。
+struct ReportStatusRequestDTO: Encodable {
+    let ids: [String]
+}
+
 struct DeletionRequestDTO: Encodable {
     let token: String
     let uuidHash: String
@@ -117,6 +122,29 @@ struct SubmitResponseDTO: Decodable {
         let ts = try c.decode(Int64.self, forKey: .receivedAt)
         self.receivedAt = Date(timeIntervalSince1970: TimeInterval(ts))
         self.memoRedacted = try c.decode(Bool.self, forKey: .memoRedacted)
+    }
+}
+
+/// A-88 §3: `POST /v1/reports/status` の応答（`workers/src/handlers/report-status.ts`）。
+struct ReportStatusItemDTO: Decodable {
+    let id: String
+    let outcome: String
+}
+
+struct ReportStatusResponseDTO: Decodable {
+    let items: [ReportStatusItemDTO]
+    let fetchedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case items
+        case fetchedAt = "fetched_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.items = try c.decode([ReportStatusItemDTO].self, forKey: .items)
+        let ts = try c.decode(Int64.self, forKey: .fetchedAt)
+        self.fetchedAt = Date(timeIntervalSince1970: TimeInterval(ts))
     }
 }
 

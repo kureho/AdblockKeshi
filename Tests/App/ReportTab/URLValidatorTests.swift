@@ -24,9 +24,38 @@ final class URLValidatorTests: XCTestCase {
         XCTAssertEqual(URLValidator.validate("   "), .invalid(.empty))
     }
 
-    func testTooLong_isRejected() {
-        let long = "https://example.com/" + String(repeating: "a", count: 200)
-        XCTAssertEqual(URLValidator.validate(long), .invalid(.tooLong))
+    /// A-88 修正①: 上限は 2048（送信形 `absoluteString` の長さ）。ASCII のみなら
+    /// percent-encoding で伸びないので raw と送信形は一致する。
+    func testTooLong_atBoundary2048_isValid() {
+        let prefix = "https://example.com/"
+        let raw = prefix + String(repeating: "a", count: URLValidator.maxLength - prefix.count)
+        guard case .valid(let url) = URLValidator.validate(raw) else {
+            return XCTFail("2048 文字ちょうど（送信形）は許可する")
+        }
+        XCTAssertEqual(url.absoluteString.count, URLValidator.maxLength)
+    }
+
+    func testTooLong_over2048_isRejected() {
+        let prefix = "https://example.com/"
+        let raw = prefix + String(repeating: "a", count: URLValidator.maxLength - prefix.count + 1)
+        XCTAssertEqual(URLValidator.validate(raw), .invalid(.tooLong))
+    }
+
+    /// A-88 修正①の本丸: 日本語等は percent-encoding で送信形が生文字列より大きく膨らむ。
+    /// 実測で生73字・送信形233字の URL が旧実装（生文字列を200文字で判定）では
+    /// サーバ側の url_too_long（当時の上限200）に弾かれ、自動停止の原因になっていた。
+    /// 実測の内訳: ASCII 53字（不変）+ 日本語 20字（1字→9字に percent-encoding）
+    /// = 生 53+20=73字、送信形 53+20*9=233字。
+    func testJapaneseURL_isJudgedBySentForm_notRawInput() {
+        let jp = String(repeating: "あ", count: 20)
+        let asciiSuffix = String(repeating: "a", count: 33)
+        let raw = "https://example.com/" + jp + asciiSuffix
+        XCTAssertEqual(raw.count, 73, "前提: 生文字列は73字")
+
+        guard case .valid(let url) = URLValidator.validate(raw) else {
+            return XCTFail("日本語入り URL（生73字・送信形233字）は 2048 以内なので通るはず")
+        }
+        XCTAssertEqual(url.absoluteString.count, 233, "前提: 送信形は233字（percent-encodingで膨張）")
     }
 
     func testNoScheme_isRejected() {

@@ -20,15 +20,17 @@ final class ReportFormViewModelDLiteTests: XCTestCase {
         var submitCount = 0
 
         func submitReport(url: URL, memo: String?, adType: AdType?, reportKind: ReportKind,
-                          seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws {
+                          seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws -> String {
             submitCount += 1
             lastURL = url
             lastAdType = adType
             lastSeenIn = seenIn
             lastDiagnostics = diagnostics
+            return "server-id"
         }
 
         func requestToken(turnstileResponse: String, scope: TokenScope) async throws {}
+        func fetchReportOutcomes(ids: [String]) async throws -> [ReportOutcomeResult] { [] }
     }
 
     private struct StubCollector: ReportDiagnosticsCollecting {

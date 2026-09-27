@@ -1,7 +1,14 @@
 import Foundation
 
 /// Pure URL validator for the report form.
-/// spec rev4 §2: https-only, 200 char max, min host length 7.
+/// spec rev4 §2 (A-88 で改訂): https-only, 送信形 (`URL.absoluteString`) で 2048 文字以内,
+/// min host length 7。
+///
+/// A-88 送信エラー修正①: 以前は貼り付けた生文字列 (`raw.count`) を 200 文字で判定していたが、
+/// 実際にサーバへ送るのは `components.url.absoluteString`（日本語等は %XX percent-encoding で
+/// 展開される）。実測で生73字の日本語入り URL が送信形233字になり、サーバ側の旧上限(200)で
+/// url_too_long として弾かれ、3回で自動停止（誤 ban）の原因になっていた。サーバ側の上限は
+/// 別途 2048 に引き上げ、アプリ側もこれに合わせて「送信する文字列」の長さで判定する。
 enum URLValidator {
     enum Result: Equatable {
         case valid(URL)
@@ -19,20 +26,20 @@ enum URLValidator {
             switch self {
             case .empty: return "URL を入力してください"
             case .httpNotAllowed: return "https:// で始まる URL を入力してください"
-            case .tooLong: return "URL が長すぎます (200 文字以内)"
+            // 上限の数字はサーバ側の変更で動きうるため画面には出さない。
+            case .tooLong: return "URL が長すぎます"
             case .malformed: return "URL の形式が正しくありません"
             case .suspiciouslyShort: return "ドメインが短すぎる可能性があります"
             }
         }
     }
 
-    static let maxLength = 200
+    static let maxLength = 2048
     static let minDomainLength = 7
 
     static func validate(_ raw: String) -> Result {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .invalid(.empty) }
-        guard trimmed.count <= maxLength else { return .invalid(.tooLong) }
         let lower = trimmed.lowercased()
         if lower.hasPrefix("http://") { return .invalid(.httpNotAllowed) }
         guard lower.hasPrefix("https://") else { return .invalid(.malformed) }
@@ -47,6 +54,8 @@ enum URLValidator {
         guard let url = components.url else {
             return .invalid(.malformed)
         }
+        // 実際にサーバへ送る形（percent-encoding 後）の長さで判定する。
+        guard url.absoluteString.count <= maxLength else { return .invalid(.tooLong) }
         return .valid(url)
     }
 }
