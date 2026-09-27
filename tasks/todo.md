@@ -1,5 +1,26 @@
 # AdblockKeshi v3 - 永続 TODO
 
+## ★A-88: 報告→ブロックの作り直し（2026-09-27 kureho 方針確定・4.4.0 で出す）
+
+kureho「この形で進める（推奨）」＝**土台の修理 → 週 1 回の判定 → 報告者への結果表示と送信エラーの修正を、まとめて次の版で出す。土台の修理は主要サイトの効きを前後で測りながら入れる**。
+根拠: 点検 `/Users/oharakureho/claude/AdblockKeshi/tasks/report-pipeline-audit-2026-09-27.md`／調査 `/Users/oharakureho/claude/AdblockKeshi/tasks/report-method-research-2026-09-27.md`
+**設計（正）: `/Users/oharakureho/claude/AdblockKeshi/tasks/a88-design-2026-09-27.md`**（事実表・5 部の方針・進め方 6 段）。**今どこ**: 9/27 設計完了 → 段 1（計測の道具・基準の数字）に着手
+
+- [ ] ① 土台の修理（全員に効く）
+  - ★9/27 実測: `docs/cdn/merged-rules.json`（広告＋セキュリティ両方オン用・13 万件）に**セキュリティ由来ルールが 0 件**＝`scripts/build_merged_rules.py` が広告（15 万件）→セキュリティの順に詰めて 13 万件で切るため。両方オンの人は詐欺サイト対策が効いていない
+  - コンテンツブロッカーは 2 本ある（`ContentBlockerExtension`・`PopunderBlockerExtension`＝40 件だけ）＝2 本目の空きを使えば「捨てるルールを選ぶ」並べ替え（6/2 に yahoo.co.jp 70→0 の前例）を避けられる可能性
+  - 手順: 上限なしの総数を実測 → 2 本への分け方を決める（例外ルールは同じブロッカー内でしか効かない点に注意）→ 主要サイトの効きを前後で測る仕組みを作る → 入れ替え
+- [ ] ② 報告の週 1 回判定（Claude が日本のシミュレータの Safari で開く）→ そのサイト限定のルール → 朝のレポートに結果。止まっている `kureho_queue`・期限切れ `pending` にも出口。本番 DB は直接触らず、判定結果はリポジトリのファイル経由で定期処理が反映する形にする
+- [ ] ③ 報告者に結果（履歴に 確認中／反映済み／このアプリでは消せない種類。アプリ内広告の報告には「アプリ内広告ブロック」の案内）
+- [ ] ④ 送信エラーの修正（ロボット確認の失敗を「もう一度」付きで表示・送信停止中は正しい文言・月の上限の文言・サーバー文言をそのまま出さない）
+- [ ] ⑤ 約束の文言（報告画面「通常 7〜14 日」・説明文「アプリ内広告ブロックにも反映」）を②③でできることに合わせる
+- [ ] 同乗: 下の B7（ja keywords に「ポップアップ」）・C-88 ディープリンク・オンボーディングの旧経路の疑い
+- 見た目が変わる画面（③の履歴・④のエラー表示）は**既存の部品の使い回しだけで作り、提出前に kureho に画面を見せて OK をもらう**（memory `user_profession_designer`）
+
+## 表示の誤りの疑い（2026-09-24 獲得調査でコード読みから記録・未修正・未配信）
+
+オンボーディングの案内が旧経路「Safari → 機能拡張」のまま（`App/OnboardingView.swift:48`）。実機・シミュレータでの再現は未確認。次の通常版を計画するときに今の iOS の設定経路を確かめてから直す。正典 `/Users/oharakureho/claude/tasks/owned-channels-2026-09-24/phase2/30-deliverables.md`「アプリ側の別タスク」。
+
 ## ★次版で必ず反映: ja keywords に「ポップアップ」（B7）
 
 ★2026-09-23 kureho 承認（獲得調査 段 1・台帳 C-91）。**この変更だけのために版を作らない**＝理由を問わず次に出す通常版に載せる（A-81 の画像待ちとは無関係・待たない）。**段 2（A-81 本体の name/subtitle/keywords）は今回承認外＝混ぜない**。提出版の localization へ keywords を PATCH → 提出前に GET で読み直して一致を確認 → 載せたら台帳 C-91 の該当アプリを消す。根拠 `/Users/oharakureho/claude/tasks/acquisition-research-2026-09-23/06-decision-package.md`
