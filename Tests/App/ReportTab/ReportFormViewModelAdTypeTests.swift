@@ -10,14 +10,16 @@ final class ReportFormViewModelAdTypeTests: XCTestCase {
         var didCallRequestToken = false
 
         func submitReport(url: URL, memo: String?, adType: AdType?, reportKind: ReportKind,
-                          seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws {
+                          seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws -> String {
             lastSubmittedURL = url
             lastSubmittedAdType = adType
+            return "server-id"
         }
 
         func requestToken(turnstileResponse: String, scope: TokenScope) async throws {
             didCallRequestToken = true
         }
+        func fetchReportOutcomes(ids: [String]) async throws -> [ReportOutcomeResult] { [] }
     }
 
     private func makeViewModel(_ client: ReportAPIClientProtocol,

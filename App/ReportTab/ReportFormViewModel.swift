@@ -158,7 +158,7 @@ final class ReportFormViewModel: ObservableObject {
             // 失敗はユーザーへ一切見せない（診断が取れないから報告できない、は本末転倒）。
             let diagnostics = await diagnosticsCollector?.collect() ?? .unavailable
             let kind = selectedKind
-            try await apiClient.submitReport(
+            let serverId = try await apiClient.submitReport(
                 url: url, memo: memo,
                 // 壊れ報告に広告タイプを混ぜない（種別切替前の選択残骸がサーバの解釈を汚す）。
                 adType: kind.requiresAdType ? selectedAdType : nil,
@@ -167,7 +167,8 @@ final class ReportFormViewModel: ObservableObject {
             )
             // D-lite: 報告は改善用データであり、その端末で即ブロックはしない。
             // したがって履歴は常に「受付済」から始まる。
-            historyStore?.append(url: url, memo: memo, status: .pending)
+            // A-88 §1: serverId を保存し、履歴を開いたときに週次判定結果を取りに行けるようにする。
+            historyStore?.append(url: url, memo: memo, status: .pending, serverId: serverId)
             state = .idle
             turnstileFailureCount = 0
             urlInput = ""

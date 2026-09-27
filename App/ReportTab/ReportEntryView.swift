@@ -4,6 +4,11 @@ struct ReportEntryView: View {
     let onReportTap: () -> Void
     let onHistoryTap: () -> Void
 
+    /// A-88 進め方5: 「通常 7〜14 日でブロックリストに追加」は“必ず追加される”と読める断定表現
+    /// だったため、実態（週1回の判定・結果は履歴で分かる）に合わせて書き換える。
+    /// static にしてテスト（`ReportEntryWordingTests`）から直接文言を検証できるようにする。
+    static let flowStep3Subtitle = "週1回内容を確認し、結果を履歴でお知らせします（本体アプリの更新は不要）。"
+
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
@@ -102,7 +107,7 @@ struct ReportEntryView: View {
             stepRow(
                 icon: "shield.lefthalf.filled",
                 title: "3. ブロックに反映",
-                subtitle: "通常 7〜14 日でブロックリストに追加。本体アプリの更新は不要。"
+                subtitle: Self.flowStep3Subtitle
             )
         }
         .padding(20)

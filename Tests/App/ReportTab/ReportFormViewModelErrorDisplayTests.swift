@@ -13,29 +13,33 @@ final class ReportFormViewModelErrorDisplayTests: XCTestCase {
 
     private final class NeverCalledClient: ReportAPIClientProtocol, @unchecked Sendable {
         func submitReport(url: URL, memo: String?, adType: AdType?, reportKind: ReportKind,
-                          seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws {
+                          seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws -> String {
             XCTFail("Turnstile 失敗時はサーバへ到達しないはず")
+            return ""
         }
         func requestToken(turnstileResponse: String, scope: TokenScope) async throws {
             XCTFail("Turnstile 失敗時はサーバへ到達しないはず")
         }
+        func fetchReportOutcomes(ids: [String]) async throws -> [ReportOutcomeResult] { [] }
     }
 
     /// 常に成功するクライアント（ウォッチドッグが送信完了後に誤発火しないことの検証用）。
     private final class SucceedingClient: ReportAPIClientProtocol, @unchecked Sendable {
         func submitReport(url: URL, memo: String?, adType: AdType?, reportKind: ReportKind,
-                          seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws {}
+                          seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws -> String { "server-id" }
         func requestToken(turnstileResponse: String, scope: TokenScope) async throws {}
+        func fetchReportOutcomes(ids: [String]) async throws -> [ReportOutcomeResult] { [] }
     }
 
     /// `requestToken` が戻らない（＝ `.submitting` のまま止まる）クライアント。
     /// 「送信中に `failTurnstile` を呼んでも状態が変わらない」ことを検証するために使う。
     private final class HangingClient: ReportAPIClientProtocol, @unchecked Sendable {
         func submitReport(url: URL, memo: String?, adType: AdType?, reportKind: ReportKind,
-                          seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws {}
+                          seenIn: SeenIn, diagnostics: ReportDiagnostics) async throws -> String { "server-id" }
         func requestToken(turnstileResponse: String, scope: TokenScope) async throws {
             try? await Task.sleep(for: .seconds(999))
         }
+        func fetchReportOutcomes(ids: [String]) async throws -> [ReportOutcomeResult] { [] }
     }
 
     private func makeAwaitingViewModel() -> ReportFormViewModel {

@@ -5,7 +5,11 @@ struct AdblockKeshiApp: App {
     @State private var selectedTab: AppTab = .blocker
     @State private var reviewCoordinator = ReviewPromptCoordinator.shared
     @StateObject private var appState = AppStateStore()
-    @StateObject private var historyStore = LocalReportHistoryStore()
+    // A-88 検証用: `historyStore` の default 初期化式は `init()` 本体より先に評価されるため、
+    // 起動引数によるフィクスチャ投入は `init()` の中ではなくこの生成関数の中で行う
+    // （`init()` 内で UserDefaults に書いても、その時点で historyStore は既に空のまま
+    //  読み込み済みで手遅れになる）。
+    @StateObject private var historyStore = AdblockKeshiApp.makeHistoryStore()
     private let apiClient: ReportAPIClientProtocol = ReportAPIClient(
         baseURL: AppConfig.workersBaseURL,
         uuidStore: DeviceUUIDStore(serverSalt: DeviceUUIDStore.loadServerSaltFromBundle())
@@ -154,6 +158,19 @@ extension AdblockKeshiApp {
            (try? dnsStore.purge()) == true {
             Task { await TunnelManager.requestReloadIfRunning() }
         }
+    }
+}
+
+extension AdblockKeshiApp {
+    /// A-88 検証用: 起動引数 `--seed-report-history-fixtures` があれば `LocalReportHistoryStore`
+    /// を作る前にサンプル行を仕込む（screenshot 用。本番ビルドに影響しない）。
+    private static func makeHistoryStore() -> LocalReportHistoryStore {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--seed-report-history-fixtures") {
+            LocalReportHistoryStore.seedFixturesForUITesting()
+        }
+        #endif
+        return LocalReportHistoryStore()
     }
 }
 

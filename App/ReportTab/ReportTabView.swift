@@ -45,7 +45,7 @@ struct ReportTabView: View {
                         }
                     )
                 case .history:
-                    ReportHistoryView(store: historyStore)
+                    ReportHistoryView(store: historyStore, apiClient: apiClient)
                 }
             }
         }
