@@ -220,7 +220,10 @@ final class Job: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     }
 
     func start() {
-        guard let url = URL(string: "https://" + domain) else {
+        // 週 1 回判定の束（scripts/review/build-review-packet.sh）は報告されたページそのものを開くため、
+        // https:// で始まる完全な URL も受け付ける。ドメインだけならトップページを開く。
+        let target = domain.hasPrefix("https://") ? domain : "https://" + domain
+        guard let url = URL(string: target) else {
             failed = true
             failReason = "invalid-url"
             finalize(reason: "invalid-url")

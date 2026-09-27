@@ -185,3 +185,51 @@ describe('applyReviewResultFiles', () => {
     expect(calls).toHaveLength(3) // fails.json 2回（1成功+1失敗） + good.json 1回
   })
 })
+
+// A-88 §2: 止まっている kureho_queue の候補に出口を作る。判定したら candidates に書いて閉じる
+// （ルールが要るなら review/rules/ にサイト限定で書く＝候補の rule_text はそのまま配らない）。
+describe('candidates（止まっている候補を閉じる）', () => {
+  const UUID_C = '33333333-3333-4333-8333-333333333333'
+  const CLOSE_SQL = `UPDATE rule_candidates SET status = 'closed_by_review' WHERE id = ? AND status = 'kureho_queue'`
+
+  test('results が空でも candidates があればパースできる', () => {
+    const raw = JSON.stringify({ reviewed_at: '2026-09-28', results: [], candidates: [{ candidate_id: UUID_C, decision: 'closed' }] })
+    const parsed = parseReviewResultFile('c.json', raw)
+    expect(parsed.items).toEqual([])
+    expect(parsed.candidateIds).toEqual([UUID_C])
+  })
+
+  test('results も candidates も空なら Error', () => {
+    const raw = JSON.stringify({ reviewed_at: '2026-09-28', results: [], candidates: [] })
+    expect(() => parseReviewResultFile('c.json', raw)).toThrow()
+  })
+
+  test('candidate_id が UUID でない・decision が未知なら Error（ファイルごと失敗）', () => {
+    const bad1 = JSON.stringify({ reviewed_at: '2026-09-28', results: [], candidates: [{ candidate_id: 'x', decision: 'closed' }] })
+    const bad2 = JSON.stringify({ reviewed_at: '2026-09-28', results: [], candidates: [{ candidate_id: UUID_C, decision: 'promote' }] })
+    expect(() => parseReviewResultFile('c.json', bad1)).toThrow(/candidate_id/)
+    expect(() => parseReviewResultFile('c.json', bad2)).toThrow(/decision/)
+  })
+
+  test('適用すると kureho_queue の候補だけを closed_by_review にする UPDATE が走る', async () => {
+    const { fetch, calls } = makeD1FetchMock()
+    const raw = JSON.stringify({
+      reviewed_at: '2026-09-28',
+      results: [{ report_id: UUID_A, outcome: 'site_own_ad' }],
+      candidates: [{ candidate_id: UUID_C, decision: 'closed' }],
+    })
+    const res = await applyReviewResultFiles(ENV, [{ name: 'c.json', raw }], { fetch })
+    expect(res[0].ok).toBe(true)
+    expect(res[0].updated).toBe(2)
+    expect(calls.map((c) => c.body.sql)).toContain(CLOSE_SQL)
+    expect(calls.find((c) => c.body.sql === CLOSE_SQL)!.body.params).toEqual([UUID_C])
+  })
+
+  test('dryRun でも候補の UPDATE が予定に出る', async () => {
+    const { fetch, calls } = makeD1FetchMock()
+    const raw = JSON.stringify({ reviewed_at: '2026-09-28', results: [], candidates: [{ candidate_id: UUID_C, decision: 'closed' }] })
+    const res = await applyReviewResultFiles(ENV, [{ name: 'c.json', raw }], { fetch, dryRun: true })
+    expect(calls).toHaveLength(0)
+    expect(res[0].statements).toEqual([{ sql: CLOSE_SQL, params: [UUID_C] }])
+  })
+})

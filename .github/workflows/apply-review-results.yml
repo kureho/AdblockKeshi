@@ -8,7 +8,7 @@ on:
     branches:
       - main
     paths:
-      - 'review/results/**'
+      - 'review/results/*.json'  # README の編集では動かさない（読むのは .json だけ）
   workflow_dispatch:
     inputs:
       dry_run:

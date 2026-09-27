@@ -18,16 +18,26 @@ export interface ReviewResultItem {
   note?: string
 }
 
+/** A-88 §2: 止まっている kureho_queue の候補を閉じる（ルールが要るなら review/rules/ に別途書く）。 */
+export interface ReviewCandidateItem {
+  candidate_id: string
+  decision: string
+}
+
 export interface ReviewResultFile {
   reviewed_at: string
   results: ReviewResultItem[]
+  candidates?: ReviewCandidateItem[]
 }
 
 export interface ParsedReviewFile {
   fileName: string
   reviewedAtSec: number
   items: Array<{ reportId: string; outcome: RawReviewOutcome }>
+  candidateIds: string[]
 }
+
+const CANDIDATE_DECISIONS = new Set(['closed'])
 
 /**
  * review/results/*.json 1ファイル分をパース＋検証する。
@@ -55,8 +65,12 @@ export function parseReviewResultFile(fileName: string, raw: string): ParsedRevi
   }
   const reviewedAtSec = Math.floor(reviewedAtMs / 1000)
 
-  if (!Array.isArray(file.results) || file.results.length === 0) {
-    throw new Error(`${fileName}: results must be a non-empty array`)
+  const candidates = file.candidates ?? []
+  if (!Array.isArray(file.results) || !Array.isArray(candidates)) {
+    throw new Error(`${fileName}: results (and candidates, if present) must be arrays`)
+  }
+  if (file.results.length === 0 && candidates.length === 0) {
+    throw new Error(`${fileName}: results must be a non-empty array (or candidates must be non-empty)`)
   }
 
   const items = file.results.map((item, i) => {
@@ -74,7 +88,22 @@ export function parseReviewResultFile(fileName: string, raw: string): ParsedRevi
     return { reportId, outcome }
   })
 
-  return { fileName, reviewedAtSec, items }
+  const candidateIds = candidates.map((c, i) => {
+    if (typeof c !== 'object' || c === null) {
+      throw new Error(`${fileName}: candidates[${i}] must be an object`)
+    }
+    const id = (c as ReviewCandidateItem).candidate_id
+    if (typeof id !== 'string' || !UUID_RE.test(id)) {
+      throw new Error(`${fileName}: candidates[${i}].candidate_id is not a UUID`)
+    }
+    const decision = (c as ReviewCandidateItem).decision
+    if (!CANDIDATE_DECISIONS.has(decision)) {
+      throw new Error(`${fileName}: candidates[${i}].decision is unknown: ${JSON.stringify(decision)}`)
+    }
+    return id
+  })
+
+  return { fileName, reviewedAtSec, items, candidateIds }
 }
 
 export interface ApplyReviewResultsDeps {
@@ -89,10 +118,13 @@ export interface ApplyFileResult {
   updated: number
   error?: string
   /** dryRun 時のみ。実行される予定だった UPDATE 文。 */
-  statements?: Array<{ sql: string; params: [string, number, string] }>
+  statements?: Array<{ sql: string; params: Array<string | number> }>
 }
 
 const UPDATE_SQL = `UPDATE reports SET review_outcome = ?, reviewed_at = ? WHERE id = ?`
+// kureho_queue の候補だけを閉じる（ほかの状態の候補は触らない＝自動の流れを横取りしない）。
+// closed_by_review はどの処理も読まない終端の状態（集計・検証・配信はすべて status を名指しで読む）。
+const CLOSE_CANDIDATE_SQL = `UPDATE rule_candidates SET status = 'closed_by_review' WHERE id = ? AND status = 'kureho_queue'`
 
 /**
  * 複数の判定結果ファイルを順に適用する。
@@ -116,10 +148,13 @@ export async function applyReviewResultFiles(
       continue
     }
 
-    const statements: Array<{ sql: string; params: [string, number, string] }> = parsed.items.map((item) => ({
-      sql: UPDATE_SQL,
-      params: [item.outcome, parsed.reviewedAtSec, item.reportId],
-    }))
+    const statements: Array<{ sql: string; params: Array<string | number> }> = [
+      ...parsed.items.map((item) => ({
+        sql: UPDATE_SQL,
+        params: [item.outcome, parsed.reviewedAtSec, item.reportId],
+      })),
+      ...parsed.candidateIds.map((id) => ({ sql: CLOSE_CANDIDATE_SQL, params: [id] })),
+    ]
 
     if (deps.dryRun) {
       out.push({ fileName: f.name, ok: true, updated: statements.length, statements })

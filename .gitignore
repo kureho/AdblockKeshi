@@ -57,3 +57,6 @@ tasks/dlite-design-*.md
 tasks/dns-hotfix-*-design.md
 tasks/report-feature-redesign-*.md
 tasks/v42-design-*.md
+
+# A-88 週1回判定の束（報告された URL・画面を含む＝公開リポジトリに入れない）
+.review-packets/
