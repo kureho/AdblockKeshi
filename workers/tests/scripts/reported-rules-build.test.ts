@@ -177,6 +177,23 @@ describe('parseManualRuleFile (A-88 §2)', () => {
     expect(() => parseManualRuleFile('x.json', ok([r]))).toThrow(/url-filter/)
   })
 
+  // WebKit が解釈できない書き方が 1 本でもあると、2 本目のブロッカーのリスト全体（旧版含む）が
+  // コンパイルに失敗する（2026-09-27 に配信中の security-rules.json 3 万件で実際に起きていた）
+  test.each([
+    ['どちらか（|）', '^https?://([^/]+\\.)?(a|b)\\.example[/:]'],
+    ['回数指定（{n}）', '^https?://ad[0-9]{2}\\.example[/:]'],
+    ['\\d などの略記', '^https?://ad\\d+\\.example[/:]'],
+    ['先読み（?=）', '^https?://(?=ad)[^/]+[/:]'],
+  ])('拒否: WebKit が読めない url-filter（%s）', (_label, filter) => {
+    const r = { trigger: { 'url-filter': filter, 'if-domain': ['example.jp'] }, action: { type: 'block' } }
+    expect(() => parseManualRuleFile('x.json', ok([r]))).toThrow(/WebKit/)
+  })
+
+  test('許可: エスケープした文字どおりの | と . は通す', () => {
+    const r = { trigger: { 'url-filter': '^https?://([^/]+\\.)?ad\\.example/a\\|b', 'if-domain': ['example.jp'] }, action: { type: 'block' } }
+    expect(parseManualRuleFile('x.json', ok([r])).rules).toHaveLength(1)
+  })
+
   test('拒否: css-display-none に selector が無い', () => {
     const r = { trigger: { 'url-filter': '.*', 'if-domain': ['example.jp'] }, action: { type: 'css-display-none' } }
     expect(() => parseManualRuleFile('x.json', ok([r]))).toThrow(/selector/)

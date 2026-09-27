@@ -73,6 +73,8 @@ function validateManualRule(file: string, index: number, rule: unknown): void {
   }
   const filter = trigger['url-filter']
   if (typeof filter !== 'string') throw new Error(`${where}: url-filter が文字列でない`)
+  const unsupported = webkitUnsupportedSyntax(filter)
+  if (unsupported) throw new Error(`${where}: WebKit が読めない url-filter（${unsupported}: ${filter}）`)
   const domains = trigger['if-domain']
   if (!Array.isArray(domains) || domains.length === 0 || domains.length > 20) {
     throw new Error(`${where}: if-domain（報告されたサイト）が 1〜20 件必要`)
@@ -104,6 +106,32 @@ function validateManualRule(file: string, index: number, rule: unknown): void {
 }
 
 /** review/rules/<name>.json を 1 本読んで検証する。不正ならファイル名つきで throw（配信を止める）。 */
+// WebKit のコンテンツブロッカーが解釈できない正規表現の書き方。1 本でもあると 2 本目のブロッカーの
+// リスト全体（旧版含む）がコンパイルに失敗する（2026-09-27 に security-rules.json 3 万件で実際に起きていた
+// "Disjunctions are not supported yet"）。[...] の中とエスケープした文字は文字どおりなので見ない。
+function webkitUnsupportedSyntax(filter: string): string | null {
+  for (let i = 0; i < filter.length; i++) {
+    const c = filter[i]
+    if (c.charCodeAt(0) > 0x7e) return 'ASCII 以外の文字'
+    if (c === '\\') {
+      const next = filter[i + 1] ?? ''
+      if (/[A-Za-z0-9]/.test(next)) return `\\${next} などの略記`
+      i++
+      continue
+    }
+    if (c === '[') {
+      const end = filter.indexOf(']', i + 1)
+      if (end === -1) return '閉じていない ['
+      i = end
+      continue
+    }
+    if (c === '|') return 'どちらか（|）'
+    if (c === '{' || c === '}') return '回数指定（{n}）'
+    if (c === '(' && filter[i + 1] === '?') return '先読みなど（(?）'
+  }
+  return null
+}
+
 export function parseManualRuleFile(name: string, raw: string): ManualRuleFile {
   let parsed: unknown
   try {
