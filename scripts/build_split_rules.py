@@ -155,6 +155,7 @@ def build_outputs(
     basic_cap: int = BASIC_CAP,
     second_cap: int = SECOND_CAP,
     popunder: list[dict] | None = None,
+    dropped: dict[str, int] | None = None,
 ) -> dict[str, list[dict]]:
     """トグル（広告・セキュリティ）別の 4 リストを作る。
 
@@ -164,13 +165,16 @@ def build_outputs(
     （週ごとのセキュリティ件数の増減で広告の振り分けが揺れない＝2 本目は月 1 回しか変わらない）。
     `popunder` を渡すと、その例外が通すホスト宛てのルールを基本保護に寄せる（アプリは
     2 本目の後ろにポップアップ対策を並べるため）。
+    `dropped` を渡すと、2 本目にも入り切らず捨てた件数を 2 本目のファイル名ごとに書き込む。
     """
     protected = l2_allowed_hosts(popunder or [])
-    basic_sec, second_sec, _ = split_rules(
+    basic_sec, second_sec, dropped_sec = split_rules(
         full, security, basic_cap=basic_cap, second_cap=second_cap, security_budget=security_budget,
         protected_hosts=protected)
-    basic_ads, second_ads, _ = split_rules(full, [], basic_cap=basic_cap, second_cap=second_cap,
-                                           protected_hosts=protected)
+    basic_ads, second_ads, dropped_ads = split_rules(full, [], basic_cap=basic_cap, second_cap=second_cap,
+                                                     protected_hosts=protected)
+    if dropped is not None:
+        dropped.update({"second-ads-sec": dropped_sec, "second-ads": dropped_ads})
     return {
         "basic-ads-sec": basic_sec,
         "second-ads-sec": second_sec,
@@ -224,11 +228,14 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.cmd == "build":
-        outs = build_outputs(_load(args.full), _load(args.security), popunder=_load(args.popunder))
+        dropped: dict[str, int] = {}
+        outs = build_outputs(_load(args.full), _load(args.security), popunder=_load(args.popunder),
+                             dropped=dropped)
         args.out_dir.mkdir(parents=True, exist_ok=True)
         for name, rules in outs.items():
             _dump(rules, args.out_dir / f"{name}.json")
-            print(f"{name}: {len(rules)} rules")
+            note = f" (dropped {dropped[name]} that fit neither list)" if dropped.get(name) else ""
+            print(f"{name}: {len(rules)} rules{note}")
     else:
         swapped = replace_security_tail(
             _load(args.basic), _load(args.old_security), _load(args.new_security))

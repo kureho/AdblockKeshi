@@ -43,6 +43,33 @@ enum CombinedRuleListMerge {
         return result
     }
 
+    /// JSON 配列のバイト列 2 つを、デコードせずに 1 つの配列に繋ぐ（`first` の要素 → `second` の要素）。
+    /// どちらかが配列でなければ throw。
+    static func concatenate(_ first: Data, _ second: Data) throws -> Data {
+        let whitespace: Set<UInt8> = [0x20, 0x09, 0x0a, 0x0d]
+        guard let firstOpen = first.firstIndex(where: { !whitespace.contains($0) }),
+              first[firstOpen] == UInt8(ascii: "["),
+              let firstClose = first.lastIndex(where: { !whitespace.contains($0) }),
+              first[firstClose] == UInt8(ascii: "]"), firstClose > firstOpen,
+              let secondOpen = second.firstIndex(where: { !whitespace.contains($0) }),
+              second[secondOpen] == UInt8(ascii: "["),
+              let secondClose = second.lastIndex(where: { !whitespace.contains($0) }),
+              second[secondClose] == UInt8(ascii: "]"), secondClose > secondOpen
+        else { throw MergeError.invalidStandardJSON }
+
+        let firstInner = first[first.index(after: firstOpen)..<firstClose]
+        let secondInner = second[second.index(after: secondOpen)..<secondClose]
+        let firstHasElement = firstInner.contains { !whitespace.contains($0) }
+        let secondHasElement = secondInner.contains { !whitespace.contains($0) }
+
+        var result = Data([UInt8(ascii: "[")])
+        result.append(contentsOf: firstInner)
+        if firstHasElement && secondHasElement { result.append(UInt8(ascii: ",")) }
+        result.append(contentsOf: secondInner)
+        result.append(UInt8(ascii: "]"))
+        return result
+    }
+
     /// 標準ルール配列の先頭 `keepStandard` 件 + `reported` を結合して JSON 化する（truncation 版）。
     static func truncatedMerge(standardRules: [ContentBlockerRule],
                                keepStandard: Int,

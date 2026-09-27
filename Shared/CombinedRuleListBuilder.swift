@@ -81,36 +81,51 @@ struct CombinedRuleListBuilder {
     ///   - reportedSafe: 安全化済み・dedup 済み reported（報告順）。
     ///   - compileVerify: 生成データの検証（iOS: WKContentRuleListStore。テスト: stub）。throw すると install しない。
     /// - Returns: 再生成して install したら rebuilt=true（呼び出し側が reload）。変化なしは false。
+    ///   - keepWhenNoReported: 報告ルールが 0 件でも combined を作る（A-88 ①: 2 本目の土台に広告の残りが
+    ///     入っているとき。combined が無いと拡張は同梱のポップアップ対策だけを読み、残りが効かない）。
     @discardableResult
     func rebuildIfNeeded(
         variantFilename: String,
         standardRulesURL: URL,
         mayTruncate: Bool,
         reportedSafe: [ContentBlockerRule],
+        keepWhenNoReported: Bool = false,
+        compileVerify: (Data) throws -> Void = { _ in }
+    ) throws -> Outcome {
+        // 自己学習が空なら標準を読む前に済ませる（標準は数 MB〜）。
+        if reportedSafe.isEmpty && !keepWhenNoReported {
+            return removeCombinedIfPresent(variantFilename: variantFilename)
+        }
+        return try rebuildIfNeeded(
+            variantFilename: variantFilename,
+            baseData: try Data(contentsOf: standardRulesURL),
+            mayTruncate: mayTruncate,
+            reportedSafe: reportedSafe,
+            keepWhenNoReported: keepWhenNoReported,
+            compileVerify: compileVerify)
+    }
+
+    /// 土台をバイト列で渡す版（2 本目は「広告の残り＋ポップアップ対策」を呼び出し側で繋いでから渡す）。
+    @discardableResult
+    func rebuildIfNeeded(
+        variantFilename: String,
+        baseData: Data,
+        mayTruncate: Bool,
+        reportedSafe: [ContentBlockerRule],
+        keepWhenNoReported: Bool = false,
         compileVerify: (Data) throws -> Void = { _ in }
     ) throws -> Outcome {
         let combinedName = Self.combinedFilename(forVariant: variantFilename)
         let combinedURL = directory.appendingPathComponent(combinedName)
         let metaURL = directory.appendingPathComponent(combinedName + ".meta")
 
-        // 自己学習が空: combined を作らない（標準と同一の 19.5MB 複製を App Group に残さない）。
-        // 既存 combined があれば削除して resolver を bundle 標準へフォールバックさせる
-        // （reported 無し時は bundle 標準が正しい。migration purge で空になった端末の stale combined も除去）。
-        if reportedSafe.isEmpty {
-            let combinedURL = directory.appendingPathComponent(Self.combinedFilename(forVariant: variantFilename))
-            let metaURL = directory.appendingPathComponent(Self.combinedFilename(forVariant: variantFilename) + ".meta")
-            guard fileManager.fileExists(atPath: combinedURL.path) else {
-                return Outcome(rebuilt: false, droppedStandard: 0, droppedReported: 0)
-            }
-            try? fileManager.removeItem(at: combinedURL)
-            try? fileManager.removeItem(at: metaURL)
-            return Outcome(rebuilt: true, droppedStandard: 0, droppedReported: 0)
+        if reportedSafe.isEmpty && !keepWhenNoReported {
+            return removeCombinedIfPresent(variantFilename: variantFilename)
         }
 
-        // base（popunder L1+L2 等）を先に読む。base は CDN(PopunderGlobalSync)で runtime 更新され得るため、
-        // change-key に base の内容ハッシュを含めて CDN 更新を検知する（base=static の前提は popunder に不成立）。
-        // popunder base は ~8KB なので guard 前に読んでも軽い（基本保護の 22MB combined はもう生成しない）。
-        let standardJSON = try Data(contentsOf: standardRulesURL)
+        // base は CDN(PopunderGlobalSync / RuleUpdater)で runtime 更新され得るため、
+        // change-key に base の内容ハッシュを含めて CDN 更新を検知する（base=static の前提は不成立）。
+        let standardJSON = baseData
 
         // change-key 用は .sortedKeys で決定的にエンコードする。
         // 既定の JSONEncoder は keyed container のキー順が非決定的で、hash がブレて change-guard が
@@ -154,6 +169,20 @@ struct CombinedRuleListBuilder {
         try key.write(to: metaURL, atomically: true, encoding: .utf8)
 
         return Outcome(rebuilt: true, droppedStandard: droppedStandard, droppedReported: droppedReported)
+    }
+
+    /// 自己学習が空: combined を作らない（標準と同一の複製を App Group に残さない）。
+    /// 既存 combined があれば削除して resolver を bundle 標準へフォールバックさせる
+    /// （reported 無し時は bundle 標準が正しい。migration purge で空になった端末の stale combined も除去）。
+    private func removeCombinedIfPresent(variantFilename: String) -> Outcome {
+        let combinedURL = directory.appendingPathComponent(Self.combinedFilename(forVariant: variantFilename))
+        let metaURL = directory.appendingPathComponent(Self.combinedFilename(forVariant: variantFilename) + ".meta")
+        guard fileManager.fileExists(atPath: combinedURL.path) else {
+            return Outcome(rebuilt: false, droppedStandard: 0, droppedReported: 0)
+        }
+        try? fileManager.removeItem(at: combinedURL)
+        try? fileManager.removeItem(at: metaURL)
+        return Outcome(rebuilt: true, droppedStandard: 0, droppedReported: 0)
     }
 
     private func changeKey(variant: String, baseData: Data, reportedData: Data) -> String {

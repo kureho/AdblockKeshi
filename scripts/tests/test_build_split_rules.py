@@ -197,6 +197,14 @@ def test_build_outputs_makes_four_files_with_a_fixed_security_budget():
     assert_same_as_single_list([out["basic-ads"], out["second-ads"]], FULL)
 
 
+def test_build_outputs_reports_rules_that_fit_neither_list():
+    # 2 本目も溢れたら捨てた件数を返す（月次のログに出して、上限の見直しに気づけるようにする）
+    dropped: dict[str, int] = {}
+    build_outputs(FULL, SECURITY, security_budget=3, basic_cap=9, second_cap=4, dropped=dropped)
+    ads = len([r for r in FULL if not is_exc(r)])
+    assert dropped == {"second-ads-sec": ads - (9 - 3 - 3) - (4 - 3), "second-ads": ads - (9 - 3) - (4 - 3)}
+
+
 def test_build_outputs_rejects_security_over_budget():
     with pytest.raises(SplitError):
         build_outputs(FULL, SECURITY, security_budget=1, basic_cap=9, second_cap=100)

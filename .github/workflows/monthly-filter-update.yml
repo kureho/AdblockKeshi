@@ -25,12 +25,21 @@ jobs:
       - name: Show Swift version
         run: swift --version
 
-      - name: Clone and build SafariConverterLib
+      - name: Clone and build SafariConverterLib (15 万件の打ち切りを外す)
+        # A-88 ①: 全量を上限なしで変換し、scripts/build_split_rules.py で基本保護と 2 本目に振り分ける。
+        # 版は振り分けを計測した版に固定する（上げるときは計測をやり直す）。
+        # 上限の書き方が変わって置き換えが効かなければ、ここで止める（打ち切られた全量で振り分けない）。
+        env:
+          CONVERTER_REF: 2462a48f286dcf39d1cc0a9f198126600f599bff
         run: |
-          mkdir -p scripts/converter-build
-          cd scripts/converter-build
-          git clone --depth 1 https://github.com/AdguardTeam/SafariConverterLib.git
-          cd SafariConverterLib
+          mkdir -p scripts/converter-build/SafariConverterLib
+          cd scripts/converter-build/SafariConverterLib
+          git init -q
+          git fetch -q --depth 1 https://github.com/AdguardTeam/SafariConverterLib.git "$CONVERTER_REF"
+          git checkout -q FETCH_HEAD
+          LIMIT_FILE=Sources/ContentBlockerConverter/Rules/SafariVersion.swift
+          sed -i '' 's/? 150000 : 50000/? 100_000_000 : 50000/' "$LIMIT_FILE"
+          grep -q '? 100_000_000 : 50000' "$LIMIT_FILE" || { echo "rule limit patch did not apply" >&2; exit 1; }
           swift build -c release
 
       - name: Install Python dependencies
@@ -44,7 +53,8 @@ jobs:
       - name: Detect diff
         id: diff
         run: |
-          if git diff --quiet docs/cdn/ App/Resources/version.json; then
+          # 新しく増えたファイル（second-*.json）も拾うため git diff ではなく git status で見る
+          if [ -z "$(git status --porcelain docs/cdn/ App/Resources/version.json)" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "No filter changes detected."
           else
