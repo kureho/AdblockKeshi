@@ -1,0 +1,48 @@
+# A-88 §2: 週1回の人手判定結果（review/results/*.json）を D1 に書き込む。
+# 書き込みは既存の d1-write 系ワークフロー（hourly-aggregation 等）と同じ経路
+# （scripts/lib/d1-rest.ts 経由の D1 REST API）。本番 DB を手で触らない。
+name: apply-review-results
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'review/results/**'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'true にすると D1 に書き込まず、流す予定の SQL を表示するだけ'
+        required: false
+        type: boolean
+        default: false
+
+# 他の d1-write 系ワークフロー（hourly-aggregation 等）と同じグループ。
+# reports テーブルへの書き込みが競合しないよう直列化する。書き込みなので途中キャンセルはしない。
+concurrency:
+  group: d1-write
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: workers/package-lock.json
+      - run: cd workers && npm ci
+      - name: Apply review results to D1 (reports.review_outcome / reviewed_at)
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            cd workers && npx tsx ../scripts/review/run-apply-review-results.ts --dry-run
+          else
+            cd workers && npx tsx ../scripts/review/run-apply-review-results.ts
+          fi
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: 91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4
