@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-09-27T10:11:29Z",
+  "generated_at": "2026-09-27T10:54:48Z",
   "rule_count": 148800,
-  "size_bytes": 28320463,
-  "blocker_list_sha256": "c316799217faeb57851f7765d14b311a2aa38e04739af32041337674a9e8be56",
+  "size_bytes": 26976012,
+  "blocker_list_sha256": "1273839ca065bf65db09027b56977df63d442ef2a4da09cc5bfaf7532d187bd7",
   "filters": [
     {
       "name": "easyprivacy",
@@ -21,7 +21,7 @@
       "license": "CC-BY-SA-3.0"
     }
   ],
-  "second_ads_sha256": "d4849f8d55dc9e56d680acc1258fa3562f88e3bf096b2dc543d0b151c48cc70d",
+  "second_ads_sha256": "0e698508e46691dc745516e782e8c68aaac5ad88dba38340f600eccbf4284afa",
   "reported": {
     "rule_count": 8,
     "added_last_month": 8

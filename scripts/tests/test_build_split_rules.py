@@ -104,8 +104,8 @@ REQUESTS = [
 ] + [(f"https://{page}/", page) for page in ["news.example", "shop.example", "video.example"]]
 
 
-def assert_same_as_single_list(parts: list[list[dict]], single: list[dict]) -> None:
-    for url, page in REQUESTS:
+def assert_same_as_single_list(parts: list[list[dict]], single: list[dict], requests=REQUESTS) -> None:
+    for url, page in requests:
         want = evaluate(single, url, page)
         got_blocked = False
         got_sel: set[str] = set()
@@ -117,14 +117,14 @@ def assert_same_as_single_list(parts: list[list[dict]], single: list[dict]) -> N
 
 
 def test_every_exception_stays_in_both_lists_in_original_order():
-    basic, second, _ = split_rules(FULL, security=[], basic_cap=7, second_cap=100)
+    basic, second, _ = split_rules(FULL, basic_cap=7, second_cap=100)
     want = [r for r in FULL if is_exc(r)]
     assert [r for r in basic if is_exc(r)] == want
     assert [r for r in second if is_exc(r)] == want
 
 
 def test_non_exception_rules_go_to_exactly_one_list():
-    basic, second, dropped = split_rules(FULL, security=[], basic_cap=7, second_cap=100)
+    basic, second, dropped = split_rules(FULL, basic_cap=7, second_cap=100)
     assert dropped == 0
     non_exc = [r for r in FULL if not is_exc(r)]
     got = [r for r in basic if not is_exc(r)] + [r for r in second if not is_exc(r)]
@@ -132,7 +132,7 @@ def test_non_exception_rules_go_to_exactly_one_list():
 
 
 def test_both_lists_keep_the_single_list_order():
-    basic, second, _ = split_rules(FULL, security=[], basic_cap=7, second_cap=100)
+    basic, second, _ = split_rules(FULL, basic_cap=7, second_cap=100)
     pos = {repr(r): i for i, r in enumerate(FULL)}
     for part in (basic, second):
         idx = [pos[repr(r)] for r in part]
@@ -141,48 +141,52 @@ def test_both_lists_keep_the_single_list_order():
 
 @pytest.mark.parametrize("basic_cap", [4, 5, 6, 7, 8, 9, 10, 11])
 def test_two_lists_together_behave_like_one_uncapped_list(basic_cap):
-    basic, second, _ = split_rules(FULL, security=[], basic_cap=basic_cap, second_cap=100)
+    basic, second, _ = split_rules(FULL, basic_cap=basic_cap, second_cap=100)
     assert_same_as_single_list([basic, second], FULL)
 
 
-@pytest.mark.parametrize("basic_cap", [6, 8, 13])
-def test_security_goes_last_in_basic_and_is_never_undone_by_ad_exceptions(basic_cap):
-    basic, second, _ = split_rules(FULL, security=SECURITY, basic_cap=basic_cap, second_cap=100)
-    assert basic[-2:] == SECURITY
-    assert_same_as_single_list([basic, second], FULL + SECURITY)
-
-
-def test_basic_is_filled_important_first_then_in_list_order():
-    # 例外 3 本 + 重要 1 本 + 先頭から 2 本（汎用・サイト別の要素隠し）
-    basic, second, _ = split_rules(FULL, security=[], basic_cap=6, second_cap=100)
+def test_basic_is_filled_important_first_then_blocks_before_element_hiding():
+    # 例外 3 本 + 重要 1 本 + 遮断を並び順に 2 本。要素隠し（汎用・サイト別）は 2 本目へ
+    # 9/27 計測（R_S）: 変換器の並び（要素隠し → 遮断）のまま詰めると、最後のフィルタ（EasyList）の
+    # 主要な広告の遮断（doubleclick・pagead2・ads-twitter）が 2 本目に押し出され、全部入れた例外
+    # （gpt.js を通す等）の先を止める規則が基本保護に無くなる＝基本保護だけの人の漏れが 116 対 79
+    basic, second, _ = split_rules(FULL, basic_cap=6, second_cap=100)
     non_exc = [r for r in basic if not is_exc(r)]
-    assert non_exc == [FULL[0], FULL[2], FULL[9]]
-    assert FULL[3] in second
+    assert non_exc == [FULL[3], FULL[4], FULL[9]]
+    assert FULL[0] in second and FULL[2] in second
+
+
+def test_generic_element_hiding_comes_before_site_specific_element_hiding():
+    # 遮断が全部入った後の余りは、全サイトに効く汎用の要素隠しを先に入れる
+    basic, second, _ = split_rules(FULL, basic_cap=10, second_cap=100)
+    assert FULL[0] in basic and FULL[2] in second
 
 
 def test_basic_never_exceeds_its_cap():
-    for cap in range(5, 16):
-        basic, _, _ = split_rules(FULL, security=SECURITY, basic_cap=cap, second_cap=100)
+    for cap in range(3, 16):
+        basic, _, _ = split_rules(FULL, basic_cap=cap, second_cap=100)
         assert len(basic) <= cap
 
 
-def test_second_overflow_drops_plain_blocks_from_the_end_only():
-    # 2 本目の上限を小さくすると、並びの最後の遮断（tail2 → tail1）から捨てる。例外と重要ルールは捨てない
-    basic, second, dropped = split_rules(FULL, security=[], basic_cap=6, second_cap=6)
+def test_second_overflow_drops_element_hiding_first_then_blocks_from_the_end():
+    # 2 本目の上限を小さくすると、優先順の最後（サイト別の要素隠し → 汎用の要素隠し）から捨てる。
+    # 遮断・例外・重要ルールは残す
+    basic, second, dropped = split_rules(FULL, basic_cap=6, second_cap=6)
     assert dropped == 2
     assert len(second) == 6
-    assert FULL[7] not in second and FULL[6] not in second
+    assert FULL[2] not in second and FULL[0] not in second
+    assert all(r in basic or r in second for r in FULL[3:8])
     assert [r for r in second if is_exc(r)] == [r for r in FULL if is_exc(r)]
 
 
-def test_fails_when_exceptions_and_security_do_not_fit_in_basic():
+def test_fails_when_exceptions_do_not_fit_in_basic():
     with pytest.raises(SplitError):
-        split_rules(FULL, security=SECURITY, basic_cap=4, second_cap=100)
+        split_rules(FULL, basic_cap=2, second_cap=100)
 
 
 def test_fails_when_second_cannot_even_hold_the_exceptions():
     with pytest.raises(SplitError):
-        split_rules(FULL, security=[], basic_cap=6, second_cap=2)
+        split_rules(FULL, basic_cap=6, second_cap=2)
 
 
 def test_build_outputs_puts_security_at_the_end_of_the_second_list():
@@ -276,14 +280,14 @@ def test_l2_allowed_hosts_reads_only_the_popunder_exceptions():
 @pytest.mark.parametrize("basic_cap", [4, 5, 6, 7, 8, 9, 10, 11])
 def test_second_plus_popunder_matches_today_on_l2_sites(basic_cap):
     # 今日 = 上限なしの広告 1 本 と ポップアップ対策 が別リスト
-    basic, second, _ = split_rules(FULL, security=[], basic_cap=basic_cap, second_cap=100,
+    basic, second, _ = split_rules(FULL, basic_cap=basic_cap, second_cap=100,
                                    protected_hosts=l2_allowed_hosts(POPUNDER))
     assert_same_as_separate_lists([basic, second + POPUNDER], [FULL, POPUNDER],
                                   L2_REQUESTS + REQUESTS)
 
 
 def test_rules_for_l2_allowed_hosts_are_placed_in_basic_first():
-    basic, second, _ = split_rules(FULL, security=[], basic_cap=4, second_cap=100,
+    basic, second, _ = split_rules(FULL, basic_cap=4, second_cap=100,
                                    protected_hosts={"ima.example"})
     assert FULL[5] in basic and FULL[5] not in second
 
@@ -299,9 +303,10 @@ def test_build_outputs_protects_l2_allowed_hosts_in_both_toggle_variants():
 
 def test_build_outputs_fails_when_popunder_does_not_fit_behind_the_remainder():
     # アプリは 2 本目に「残り → ポップアップ対策 → 報告（予約 2,000）→ 一時オフ」と並べ、件数では切らない。
-    # ポップアップ対策が伸び代（1,000）を超えて伸びたら、配信を止めて気づかせる（15 万件超えで 2 本目が壊れる）
+    # ポップアップ対策が伸び代（1,000）を超えて伸びたら、配信を止めて気づかせる（15 万件超えで 2 本目が壊れる）。
+    # セキュリティは今の件数（2）ではなく予算（3）で数える＝週次で予算いっぱいまで増えても収まることを月次で確かめる
     out = build_outputs(FULL, SECURITY, security_budget=3, basic_cap=8, second_cap=100, popunder=POPUNDER)
-    fits = max(len(out["second-ads-sec"]), len(out["second-ads"])) + len(POPUNDER)
+    fits = max(len(out["second-ads-sec"]) - len(SECURITY) + 3, len(out["second-ads"])) + len(POPUNDER)
     build_outputs(FULL, SECURITY, security_budget=3, basic_cap=8, second_cap=100, popunder=POPUNDER,
                   second_total_cap=fits)
     with pytest.raises(SplitError):
@@ -319,7 +324,7 @@ FULL_DUP = FULL[:3] + [block("ima.example"), block("ads.example")] + FULL[3:9] +
 
 
 def test_duplicates_are_removed_keeping_the_last_copy():
-    basic, second, _ = split_rules(FULL_DUP, security=[], basic_cap=100, second_cap=100)
+    basic, second, _ = split_rules(FULL_DUP, basic_cap=100, second_cap=100)
     keys = [repr(r) for r in basic]
     assert len(keys) == len(set(keys))
     assert len([r for r in basic if not is_exc(r)]) == len({repr(r) for r in FULL_DUP if not is_exc(r)})
@@ -327,7 +332,7 @@ def test_duplicates_are_removed_keeping_the_last_copy():
 
 @pytest.mark.parametrize("basic_cap", [5, 6, 7, 8, 9, 10, 11])
 def test_dedup_keeps_the_single_list_behavior(basic_cap):
-    basic, second, _ = split_rules(FULL_DUP, security=[], basic_cap=basic_cap, second_cap=100)
+    basic, second, _ = split_rules(FULL_DUP, basic_cap=basic_cap, second_cap=100)
     for part in (basic, second):
         keys = [repr(r) for r in part]
         assert len(keys) == len(set(keys))
@@ -342,6 +347,17 @@ def test_a_rule_repeated_later_keeps_the_priority_of_its_first_copy():
     # （9/27 計測: 後ろのコピーの位置で並べたら fluct・openx・Google の広告タグが 2 本目に回り、
     #   基本保護だけの人の漏れが今の 2 倍になった）
     full = [block("a.example"), block("dup.example"), block("b.example"), block("c.example"), block("dup.example")]
-    basic, second, _ = split_rules(full, security=[], basic_cap=2, second_cap=100)
+    basic, second, _ = split_rules(full, basic_cap=2, second_cap=100)
     assert block("dup.example") in basic and block("dup.example") not in second
-    assert_same_as_single_list([basic, second], full)
+    assert_same_as_single_list([basic, second], full,
+                               [(f"https://{h}.example/x.js", "news.example") for h in ("a", "b", "c", "dup")])
+
+
+def test_replace_security_tail_refuses_new_security_below_half_of_the_previous():
+    # アプリは前回の半分未満の件数のファイルを捨てる（RuleUpdatePlanner.validateRuleCount）。配信側でも止めないと、
+    # 元データが一時的に痩せた週に 2 本目（両方オン・約 1,200 万バイト）が毎回ダウンロードされては捨てられる
+    old = [block(f"p{i}.example") for i in range(4)]
+    out = build_outputs(FULL, old, security_budget=4, basic_cap=9, second_cap=100)
+    replace_security_tail(out["second-ads-sec"], old_security=old, new_security=old[:2], security_budget=4)
+    with pytest.raises(SplitError):
+        replace_security_tail(out["second-ads-sec"], old_security=old, new_security=old[:1], security_budget=4)
