@@ -37,7 +37,7 @@ kureho「この形で進める（推奨）」＝**土台の修理 → 週 1 回�
   - 残る手: 例外でも直らない「広告ブロッカー検知の壁」は、既存の Safari 機能拡張（`PopupShieldExtension`・今は streamtape.com 限定）で壁外しスクリプトを動かせるが、全サイトで動かすには利用者の追加許可が要る＝体験が変わるので、C3 で直らないサイトが実在した時に kureho に案を出す
 - [ ] ② 報告の週 1 回判定（Claude が日本のシミュレータの Safari で開く）→ そのサイト限定のルール → 朝のレポートに結果。止まっている `kureho_queue`・期限切れ `pending` にも出口。本番 DB は直接触らず、判定結果はリポジトリのファイル経由で定期処理が反映する形にする
   - ✅ 仕組み（9/27・commit 13d62bb）: 束づくり `scripts/review/build_review_packet.py`（月曜 06:30 launchd `com.kureho.adblockkeshi-review-packet`・plist は `~/Library/LaunchAgents/` に配置済み）／手書きルール `review/rules/`（旧版にも届く）／止まった候補は `candidates` で閉じる／朝のレポートに件数／起動時に新しい束を 1 回だけ案内（`~/.claude/hooks/session-start-trends.sh` 3 つ目）。手順 `/Users/oharakureho/claude/AdblockKeshi/tasks/a88-review-runbook.md`
-  - [ ] launchd への登録（Claude のツールからは権限で拒否＝kureho が `!` で 1 行。登録しなくても次回ログイン時に自動で読まれる）
+  - [x] launchd への登録（9/27 21:45 kureho が `!` で bootstrap・エラー出力なし。毎週月曜 6:30 に起動。Claude のツールからは launchctl が権限で拒否されるため、登録状態の確認も kureho 側）
   - [x] 初回の判定（9/27）: 23 件＝ルール追加 6・アプリ内広告 6・再現せず 6・無効 4・サイト自身の広告 1／止まった候補 2 件を閉じた。サイト限定ルール 4 ファイル 8 本（`review/rules/2026-09-27-*.json`）は入れる前後を計測ツールで開き、広告の通信が消えて壁・崩れが出ないことを画面で確認してから配信
 - [ ] ③ 報告者に結果（履歴に 確認中／反映済み／このアプリでは消せない種類。アプリ内広告の報告には「アプリ内広告ブロック」の案内）
 - [ ] ④ 送信エラーの修正（ロボット確認の失敗を「もう一度」付きで表示・送信停止中は正しい文言・月の上限の文言・サーバー文言をそのまま出さない）
