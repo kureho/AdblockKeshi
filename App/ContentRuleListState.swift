@@ -37,9 +37,10 @@ struct ContentRuleListSnapshot: Equatable {
 
     /// core(基本保護) が ON のとき、追加保護の「報告反映」も勧める任意ヒント。
     /// core が未完了のときは出さない（まずそちらの設定に集中させる）。
+    /// A-88 ①: 基本保護に入り切らない広告の残りは報告反映に載る＝OFF のままだと届かないことも伝える。
     var popunderSuggestion: BannerType? {
         guard mode == .bothEnabled, !popunderEnabled else { return nil }
-        return .yellow("「報告反映」も ON にすると、タップ時に広告サイトへ飛ばされる誘導をブロックします")
+        return .yellow("「報告反映」も ON にすると、さらに多くの広告と、タップ時に広告サイトへ飛ばされる誘導をブロックします")
     }
 }
 

@@ -11,8 +11,8 @@ packages:
 settings:
   base:
     DEVELOPMENT_TEAM: L455WPL8QZ
-    MARKETING_VERSION: "4.3.0"
-    CURRENT_PROJECT_VERSION: "10302"
+    MARKETING_VERSION: "4.4.0"
+    CURRENT_PROJECT_VERSION: "10400"
     SWIFT_VERSION: "5.10"
     CODE_SIGN_STYLE: Automatic
     TARGETED_DEVICE_FAMILY: "1"  # iPhone only (iPad multitasking 対応不要にする)

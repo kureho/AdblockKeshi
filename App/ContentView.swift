@@ -7,6 +7,8 @@ struct ContentView: View {
     /// 買い切り（アプリ内広告ブロック）の状態。★**アプリ全体で 1 つ**を
     ///   `AdblockKeshiApp` から受け取る（設定タブ・DNS 画面と同じインスタンス）。
     let proStore: ProStore
+    /// 報告反映の ON/OFF（完了画面の案内に使う）。
+    @EnvironmentObject private var appState: AppStateStore
 
     private let checker = ContentBlockerStateChecker()
     private let extensionIdentifier = "com.kureho.adblockkeshi.blocker"
@@ -79,6 +81,9 @@ struct ContentView: View {
             DispatchQueue.main.async {
                 self.blockerState = state
                 self.isChecking = false
+                // 報告反映の ON/OFF も取り直す（Safari の設定から戻ったとき用）。基本保護の確認が
+                // 終わってから続けて呼ぶ＝状態確認の XPC を並列にしない（ContentRuleListState.swift 参照）。
+                Task { await appState.refresh() }
             }
         }
     }
@@ -147,6 +152,7 @@ struct CompletedView: View {
     let proStore: ProStore
     /// v4.2.0: per-site 例外（このサイトで一時オフ）。空なら導線ごと出さない。
     @State private var siteExceptionDomains: [String] = []
+    @EnvironmentObject private var appState: AppStateStore
     @StateObject private var controlVM: BlockerControlViewModel
     private let versionStore: VersionInfoStore
 
@@ -229,6 +235,13 @@ struct CompletedView: View {
                             icon: "person.2.fill",
                             iconColor: .blue,
                             text: moatText
+                        )
+                    }
+                    if case .yellow(let hint)? = popunderHint {
+                        InfoRow(
+                            icon: "exclamationmark.bubble.fill",
+                            iconColor: .orange,
+                            text: hint
                         )
                     }
                     InfoRow(
@@ -328,6 +341,13 @@ struct CompletedView: View {
         }
     }
 
+    /// 報告反映が OFF のときの案内（A-88 ①）。この画面は基本保護が ON のときだけ出るので base は true。
+    /// 報告反映の状態がまだ取れていない間は出さない。
+    private var popunderHint: BannerType? {
+        guard let popunderEnabled = appState.currentSnapshot?.popunderEnabled else { return nil }
+        return ContentRuleListSnapshot.from(base: true, popunder: popunderEnabled).popunderSuggestion
+    }
+
     /// フィルタ更新状況の表示テキスト。
     /// 表示日付 = 現在の state で拡張が実際に読む variant の適用記録（generated_at）。
     /// 適用記録が無い端末（CDN 未取得）は bundle 同梱ルールの生成日（虚偽表示の解消）。
@@ -408,4 +428,5 @@ struct ErrorView: View {
 
 #Preview {
     ContentView(proStore: ProStore())
+        .environmentObject(AppStateStore())
 }

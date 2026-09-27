@@ -20,6 +20,15 @@ final class ContentRuleListSnapshotTests: XCTestCase {
         XCTAssertNotNil(ContentRuleListSnapshot.from(base: true, popunder: false).popunderSuggestion)
     }
 
+    /// A-88 ①: 基本保護に入り切らない広告の残りは報告反映に載る＝案内はそれも伝える。
+    func test_suggestion_mentions_the_ads_that_only_the_second_blocker_carries() {
+        guard case .yellow(let text)? = ContentRuleListSnapshot.from(base: true, popunder: false).popunderSuggestion else {
+            return XCTFail("案内が出ていない")
+        }
+        XCTAssertTrue(text.contains("さらに多くの広告"), text)
+        XCTAssertTrue(text.contains("広告サイトへ飛ばされる誘導"), text)
+    }
+
     func test_no_suggestion_when_popunder_already_on() {
         XCTAssertNil(ContentRuleListSnapshot.from(base: true, popunder: true).popunderSuggestion)
     }

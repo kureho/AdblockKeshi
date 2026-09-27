@@ -80,7 +80,7 @@ struct OnboardingView: View {
                             }
 
                             // グレー補足文
-                            Text("基本保護で一般的な広告・トラッカーを防ぎ、報告反映で検証済みの追加対策を反映、遷移保護で勝手に開くタブや広告ページへの移動を防ぎます")
+                            Text("基本保護で一般的な広告・トラッカーを防ぎ、報告反映で基本保護に載せきれない広告と検証済みの追加対策を反映、遷移保護で勝手に開くタブや広告ページへの移動を防ぎます")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -220,7 +220,7 @@ struct FilterInfoSheet: View {
                     FilterDescriptionCard(
                         iconName: "exclamationmark.bubble.fill",
                         title: "報告反映",
-                        detail: "利用者から届いた広告報告をもとに、安全性を確認した追加対策を反映します。動画・まとめサイト等でサムネをタップすると広告サイトに飛ばされる「タップ乗っ取り」も、既知の広告ネットワークのスクリプトをブロックして抑えます。"
+                        detail: "Safari の件数上限で基本保護に載せきれない広告ルールと、利用者から届いた広告報告をもとに安全性を確認した追加対策を反映します。動画・まとめサイト等でサムネをタップすると広告サイトに飛ばされる「タップ乗っ取り」も、既知の広告ネットワークのスクリプトをブロックして抑えます。"
                     )
 
                     FilterDescriptionCard(
