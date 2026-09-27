@@ -1,0 +1,78 @@
+# scripts/measure/sites-jp.txt
+# measure.swift に渡すサイト一覧。1 行 1 ドメイン（https:// を付けて開く）。
+# "#" で始まる行はコメント、"SKIP " で始まる行は「開いていない」記録専用（測定ツールには渡さない）。
+#
+# 内訳: ポータル・ニュース・天気・レシピ・まとめ・ブログ・動画・漫画・EC・比較サイト
+# ＋ 点検記録 tasks/report-pipeline-audit-2026-09-27.md・調査記録
+# tasks/report-method-research-2026-09-27.md の E6/E7 に出てくる報告された実サイト。
+
+# --- ポータル ---
+yahoo.co.jp
+www.msn.com
+goo.ne.jp
+
+# --- ニュース ---
+news.yahoo.co.jp
+www3.nhk.or.jp
+www.asahi.com
+mainichi.jp
+www.itmedia.co.jp
+
+# --- 天気 ---
+tenki.jp
+weathernews.jp
+
+# --- レシピ ---
+cookpad.com
+www.kurashiru.com
+delishkitchen.tv
+
+# --- ブログ・CGM ---
+ameblo.jp
+hatenablog.com
+note.com
+
+# --- まとめ（広告が濃い定番カテゴリ） ---
+togetter.com
+girlschannel.net
+otakomu.jp
+matomame.jp
+
+# --- 動画 ---
+www.nicovideo.jp
+tver.jp
+
+# --- 漫画 ---
+www.pixiv.net
+shonenjumpplus.com
+comic-walker.com
+
+# --- EC・比較・アフィリエイトが濃いカテゴリ ---
+www.rakuten.co.jp
+kakaku.com
+www.jalan.net
+chiebukuro.yahoo.co.jp
+
+# --- 報告された実サイト（tasks/report-method-research-2026-09-27.md E6） ---
+# 既にルール同梱済みなのに報告された＝リストの網羅漏れではなく効き方の検証対象
+uranai.nosv.org
+thedigestweb.com
+
+# --- 報告された実サイトのうち、開いていないもの（理由つき） ---
+# 成人向け動画サイトのため未訪問（判断: ドメイン名・カテゴリから明白）
+SKIP tokyomotion.net
+# 漫画の無断転載（違法配信）の疑いが強いドメイン名のため未訪問
+SKIP mangaraw.ac
+# アニメ・漫画のネタバレサイト＝未公開話数の画像等を扱う疑いがあり、著作権侵害の疑いがあるため未訪問
+SKIP spoilerplus.tv
+# tasks/report-method-research-2026-09-27.md E7。TLD ".vbest" の実体・掲載内容とも未確認で
+# 海賊版サイトの疑いを否定できないため未訪問
+SKIP bkan.vbest
+# tasks/report-pipeline-audit-2026-09-27.md（ルール候補・却下）。以前からページが開けないため未訪問
+SKIP tpead.net
+# 広告ネットワーク amoad.com（AMoAd・CyberAgent 系）自体は上のドメイン集合抽出で確認済み
+# （scripts/measure/extract-block-domains.py の出力に amoad.com あり）。
+# ただし amoad.com を実際に配信する一般公開サイトは公開情報から特定できなかった
+# （web 調査: media-radar.jp 等に媒体資料はあるが個別掲載サイト名の一覧は非公開）。
+# サイトとしての訪問は見送り、ドメイン集合側での検出可否のみ確認する。
+SKIP amoad.com (配信先サイト未特定・ドメイン集合側でのみ確認)
