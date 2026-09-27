@@ -31,20 +31,20 @@ export async function checkRateLimit(db: D1Database, args: RateLimitArgs): Promi
   ).bind(args.uuidHash, args.ipHash, args.now).first()
   if (ban) return { allowed: false, reason: 'banned' }
 
-  // 2. uuid daily
-  const uuidDaily = await db.prepare(
-    'SELECT COUNT(*) as c FROM reports WHERE uuid_hash = ? AND created_at > ?'
-  ).bind(args.uuidHash, args.now - ONE_DAY_SEC).first<{ c: number }>()
-  if ((uuidDaily?.c ?? 0) >= UUID_DAILY_LIMIT) {
-    return { allowed: false, reason: 'uuid_daily_limit' }
-  }
-
-  // 3. uuid monthly
+  // 2. uuid monthly（日より先に見る。両方に当たったとき「明日また送れます」と言わないため・A-88）
   const uuidMonthly = await db.prepare(
     'SELECT COUNT(*) as c FROM reports WHERE uuid_hash = ? AND created_at > ?'
   ).bind(args.uuidHash, args.now - ONE_MONTH_SEC).first<{ c: number }>()
   if ((uuidMonthly?.c ?? 0) >= UUID_MONTHLY_LIMIT) {
     return { allowed: false, reason: 'uuid_monthly_limit' }
+  }
+
+  // 3. uuid daily
+  const uuidDaily = await db.prepare(
+    'SELECT COUNT(*) as c FROM reports WHERE uuid_hash = ? AND created_at > ?'
+  ).bind(args.uuidHash, args.now - ONE_DAY_SEC).first<{ c: number }>()
+  if ((uuidDaily?.c ?? 0) >= UUID_DAILY_LIMIT) {
+    return { allowed: false, reason: 'uuid_daily_limit' }
   }
 
   // 4. ip 15-min

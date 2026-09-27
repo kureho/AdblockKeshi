@@ -1,6 +1,6 @@
 import type { Env } from '../env'
 import { verifyToken } from '../lib/hmac'
-import { validateURL, validateMemo } from '../lib/validation'
+import { validateURL, validateMemo, countsAsAbuse } from '../lib/validation'
 import { redactPII } from '../lib/pii-redact'
 import { checkRateLimit } from '../lib/rate-limit'
 import { sha256Hex } from '../lib/hash'
@@ -85,7 +85,7 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
 
   const urlCheck = validateURL(body.url)
   if (!urlCheck.ok) {
-    await insertAbuseLog(env.DB, uuidHash, 'uuid', 'invalid_url', body.url, now)
+    if (countsAsAbuse(urlCheck)) await insertAbuseLog(env.DB, uuidHash, 'uuid', 'invalid_url', body.url, now)
     return jsonError(400, 'validation_failed', urlCheck.reason!)
   }
 
@@ -98,7 +98,7 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
 
   const memoCheck = validateMemo(body.memo)
   if (!memoCheck.ok) {
-    await insertAbuseLog(env.DB, uuidHash, 'uuid', 'spam_memo', body.url, now)
+    if (countsAsAbuse(memoCheck)) await insertAbuseLog(env.DB, uuidHash, 'uuid', 'spam_memo', body.url, now)
     return jsonError(400, 'validation_failed', memoCheck.reason!)
   }
 
@@ -109,6 +109,9 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
 
   const rl = await checkRateLimit(env.DB, { uuidHash, ipHash, now })
   if (!rl.allowed) {
+    // 停止中の再送は記録しない。記録すると停止中に送り直すたびに件数が増え、
+    // ban-engine が停止を延ばしてしまう（3 件 24h → 10 件 7 日）。A-88
+    if (rl.reason === 'banned') return jsonError(403, 'banned', 'temporarily banned')
     // rate_limit reason は ban-engine が集計する対象。identifier_type は
     // ip_15min_limit のみ 'ip'、それ以外は 'uuid'。
     const isIpScope = rl.reason === 'ip_15min_limit'
@@ -120,7 +123,6 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
       body.url,
       now,
     )
-    if (rl.reason === 'banned') return jsonError(403, 'banned', 'temporarily banned')
     const retryAfter =
       rl.reason === 'uuid_daily_limit' ? 86400 :
       rl.reason === 'uuid_monthly_limit' ? 30 * 86400 : 900
