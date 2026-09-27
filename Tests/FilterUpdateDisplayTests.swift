@@ -76,10 +76,10 @@ final class FilterUpdateDisplayTests: XCTestCase {
     }
 
     func test_app_bundle_contains_bundled_rules_info_matching_extension_resources() throws {
-        // App bundle に bundled-rules-info.json が同梱され、同梱ルール（2026-06-02 commit 8e001a2d）
-        // の生成日を返すこと。ルール差し替え時はこのファイルも更新する運用。
+        // App bundle に bundled-rules-info.json が同梱され、同梱ルール（2026-09-27 A-88 ① の振り分け版・
+        // scripts/convert.sh の出力）の生成日を返すこと。ルール差し替え時はこのファイルも更新する運用。
         let date = try XCTUnwrap(BundledRulesInfo.generatedAt(bundle: .main))
         let formatter = ISO8601DateFormatter()
-        XCTAssertEqual(date, formatter.date(from: "2026-06-02T11:37:20Z"))
+        XCTAssertEqual(date, formatter.date(from: "2026-09-27T09:26:20Z"))
     }
 }

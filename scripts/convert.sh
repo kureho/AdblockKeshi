@@ -2,7 +2,15 @@
 set -euo pipefail
 
 # scripts/convert.sh
-# 5本のフィルタを取得 → SafariConverterLib で Safari JSON 変換 → 統合 → docs/cdn/ に出力
+# 5本のフィルタを取得 → SafariConverterLib で Safari JSON 変換（上限なし）→
+# 基本保護 / 2 本目の残り に振り分け（A-88 ①・build_split_rules.py）→ docs/cdn/ に出力
+#
+# 出力（docs/cdn/）:
+#   blockerList.json   = 基本保護（広告だけオン）。旧版アプリの ad-rules.json もこれを取る
+#   merged-rules.json  = 基本保護（広告＋セキュリティ）。旧版アプリも同じ名前で取る
+#   second-ads.json / second-ads-sec.json = 2 本目に載せる広告の残り（4.4.0〜）
+#   version.json / version-security.json の該当 sha
+# ConverterTool は 15 万件で打ち切らない版を使う（monthly-filter-update.yml が上限を外してビルドする）。
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -58,27 +66,50 @@ cat "${FILES[@]}" > "$TMP_DIR/combined.txt"
 COMBINED_LINES=$(wc -l < "$TMP_DIR/combined.txt")
 echo "  combined lines: $COMBINED_LINES"
 
-echo "[convert] running SafariConverterLib..."
+echo "[convert] running SafariConverterLib (no rule limit)..."
 "$CONVERTER" convert \
   --input-path "$TMP_DIR/combined.txt" \
-  --safari-rules-json-path "$TMP_DIR/blockerList.json" \
+  --safari-rules-json-path "$TMP_DIR/full.json" \
   --safari-version 17
 
-RULE_COUNT=$(jq 'length' "$TMP_DIR/blockerList.json")
-JSON_BYTES=$(wc -c < "$TMP_DIR/blockerList.json")
-echo "  converted rules: $RULE_COUNT"
-echo "  json size: $JSON_BYTES bytes"
-
-if [ "$RULE_COUNT" -gt 150000 ]; then
-  echo "[ERROR] rule count $RULE_COUNT exceeds 150k limit" >&2
+FULL_COUNT=$(jq 'length' "$TMP_DIR/full.json")
+echo "  converted rules (all): $FULL_COUNT"
+# 上限を外し損ねた ConverterTool はちょうど 150,000 件で打ち切る＝振り分けても例外が欠けたまま
+if [ "$FULL_COUNT" -le 150000 ]; then
+  echo "[ERROR] converted $FULL_COUNT rules: the converter still truncates at 150k (rule limit not removed?)" >&2
   exit 1
 fi
 
+# 全量を 2 本に振り分ける。セキュリティは週次（build-security-rules.yml）が docs/cdn に置いた最新版、
+# ポップアップ対策は 2 本目で残りの後ろに並ぶ docs/cdn/popunder-rules.json
+echo "[split] basic / second..."
+python3 "$SCRIPT_DIR/build_split_rules.py" build \
+  --full "$TMP_DIR/full.json" \
+  --security "$CDN_DIR/security-rules.json" \
+  --popunder "$CDN_DIR/popunder-rules.json" \
+  --out-dir "$TMP_DIR/split"
+
+for name in basic-ads-sec basic-ads second-ads-sec second-ads; do
+  n=$(jq 'length' "$TMP_DIR/split/$name.json")
+  if [ "$n" -gt 149000 ]; then
+    echo "[ERROR] $name has $n rules (over 149,000)" >&2
+    exit 1
+  fi
+done
+
 # 出力
-mv "$TMP_DIR/blockerList.json" "$CDN_DIR/blockerList.json"
+mv "$TMP_DIR/split/basic-ads.json" "$CDN_DIR/blockerList.json"
+mv "$TMP_DIR/split/basic-ads-sec.json" "$CDN_DIR/merged-rules.json"
+mv "$TMP_DIR/split/second-ads.json" "$CDN_DIR/second-ads.json"
+mv "$TMP_DIR/split/second-ads-sec.json" "$CDN_DIR/second-ads-sec.json"
+
+RULE_COUNT=$(jq 'length' "$CDN_DIR/blockerList.json")
+JSON_BYTES=$(wc -c < "$CDN_DIR/blockerList.json" | tr -d ' ')
 
 # version.json 生成（jq で構築）
 SHA256=$(shasum -a 256 "$CDN_DIR/blockerList.json" | awk '{print $1}')
+SECOND_ADS_SHA256=$(shasum -a 256 "$CDN_DIR/second-ads.json" | awk '{print $1}')
+SECOND_ADS_SEC_SHA256=$(shasum -a 256 "$CDN_DIR/second-ads-sec.json" | awk '{print $1}')
 GENERATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # filters 配列を jq で組み立て
@@ -104,15 +135,28 @@ jq -n \
   --arg sha256 "$SHA256" \
   --argjson filters "$FILTERS_JSON" \
   --argjson reported "$EXISTING_REPORTED" \
-  '{generated_at: $generated_at, rule_count: $rule_count, size_bytes: $size_bytes, blocker_list_sha256: $sha256, filters: $filters}
+  --arg second_ads_sha256 "$SECOND_ADS_SHA256" \
+  --arg second_ads_sec_sha256 "$SECOND_ADS_SEC_SHA256" \
+  '{generated_at: $generated_at, rule_count: $rule_count, size_bytes: $size_bytes, blocker_list_sha256: $sha256, filters: $filters,
+    second_ads_sha256: $second_ads_sha256, second_ads_sec_sha256: $second_ads_sec_sha256}
    + (if $reported != null then {reported: $reported} else {} end)' \
   > "$CDN_DIR/version.json"
+
+# merged-rules.json もここで作り直したので、アプリが見る version-security.json の sha と日時を合わせる
+# （security / empty の sha は週次の担当なのでそのまま残す）
+MERGED_SHA256=$(shasum -a 256 "$CDN_DIR/merged-rules.json" | awk '{print $1}')
+MERGED_BYTES=$(wc -c < "$CDN_DIR/merged-rules.json" | tr -d ' ')
+jq --arg sha "$MERGED_SHA256" --argjson bytes "$MERGED_BYTES" --arg at "$GENERATED_AT" \
+  '."merged-rules_sha256" = $sha | ."merged-rules_bytes" = $bytes | .generated_at = $at' \
+  "$CDN_DIR/version-security.json" > "$TMP_DIR/version-security.json"
+mv "$TMP_DIR/version-security.json" "$CDN_DIR/version-security.json"
 
 # bundle 同梱: CDN DL 失敗時の初回起動でも「最終更新日」を表示できるよう App/Resources に同期
 cp "$CDN_DIR/version.json" "$PROJECT_DIR/App/Resources/version.json"
 
 echo "[done]"
 echo "  $CDN_DIR/blockerList.json ($RULE_COUNT rules, $JSON_BYTES bytes)"
-echo "  $CDN_DIR/version.json"
+echo "  $CDN_DIR/merged-rules.json / second-ads.json / second-ads-sec.json"
+echo "  $CDN_DIR/version.json / version-security.json"
 echo "  $PROJECT_DIR/App/Resources/version.json (bundle copy)"
 cat "$CDN_DIR/version.json"

@@ -83,6 +83,34 @@ final class CombinedRuleListBuilderTests: XCTestCase {
         XCTAssertFalse(combinedExists("merged-rules.json")) // combined 不在
     }
 
+    /// A-88 ①: 2 本目の土台に広告の残りが入ると、報告ルールが 0 件でも combined が要る
+    /// （combined が無いと拡張は同梱のポップアップ対策だけを読み、広告の残りが効かない）。
+    func test_keepWhenNoReported_writes_combined_even_without_reported() throws {
+        let base = try JSONEncoder().encode([block("a.test"), block("pop.test")])
+        let b = CombinedRuleListBuilder(directory: dir, appBuildVersion: "100")
+        let out = try b.rebuildIfNeeded(variantFilename: "popunder-rules.json", baseData: base,
+                                        mayTruncate: false, reportedSafe: [], keepWhenNoReported: true)
+        XCTAssertTrue(out.rebuilt)
+        XCTAssertEqual(try combinedRules("popunder-rules.json"), [block("a.test"), block("pop.test")])
+        // 同じ入力なら作り直さない（起動のたびに 12MB を書かない）
+        XCTAssertFalse(try b.rebuildIfNeeded(variantFilename: "popunder-rules.json", baseData: base,
+                                             mayTruncate: false, reportedSafe: [],
+                                             keepWhenNoReported: true).rebuilt)
+    }
+
+    /// 広告をオフにして残りが外れたら、報告ルールも無ければ combined を消して同梱版へ戻す（従来どおり）。
+    func test_combined_is_removed_when_remainder_goes_away_and_no_reported() throws {
+        let b = CombinedRuleListBuilder(directory: dir, appBuildVersion: "100")
+        _ = try b.rebuildIfNeeded(variantFilename: "popunder-rules.json",
+                                  baseData: try JSONEncoder().encode([block("a.test"), block("pop.test")]),
+                                  mayTruncate: false, reportedSafe: [], keepWhenNoReported: true)
+        let out = try b.rebuildIfNeeded(variantFilename: "popunder-rules.json",
+                                        baseData: try JSONEncoder().encode([block("pop.test")]),
+                                        mayTruncate: false, reportedSafe: [], keepWhenNoReported: false)
+        XCTAssertTrue(out.rebuilt)
+        XCTAssertFalse(combinedExists("popunder-rules.json"))
+    }
+
     /// 自己学習が空になったら（migration purge 等）既存 combined を削除し、bundle 標準へ戻す。
     func test_empty_reported_removes_stale_combined() throws {
         let std = try writeStandard([block("a.test")], "merged-rules.json")

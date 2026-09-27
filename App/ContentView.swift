@@ -97,6 +97,10 @@ struct ContentView: View {
             if let updater = RuleUpdater(reload: { await reloadBasicBlocker(identifier: identifier) }) {
                 let outcome = try await updater.updateIfNeeded()
                 print("[RuleUpdater] applied=\(outcome.applied) recorded=\(outcome.recordedWithoutDownload) skipped=\(outcome.skipped) failed=\(outcome.failed)")
+                // A-88 ①: 2 本目に載せる広告の残りが差し替わったら、報告反映の combined を作り直す
+                if SecondBlockerBase.needsRegenerate(afterApplying: outcome.applied) {
+                    CombinedRuleListCoordinator.scheduleRegenerate()
+                }
                 if outcome.reloaded {
                     refreshState()
                 }

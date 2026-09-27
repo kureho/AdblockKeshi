@@ -56,21 +56,17 @@ jobs:
         run: |
           python3 scripts/build_empty_rules.py --output /tmp/empty-rules.json
 
-      - name: Download current ad-rules from CDN
+      - name: Swap the security part of merged-rules.json
+        # A-88 ①: merged-rules.json（基本保護・広告＋セキュリティ）は月次が
+        # 「例外全部＋広告の前半＋セキュリティ（末尾・枠 3 万固定）」で作る。週次は末尾のセキュリティだけ入れ替える
+        # （広告の振り分けは変えない＝2 本目の残りと食い違わない）。
+        # 末尾が前回のセキュリティと一致しなければ止める＝CDN は前の版のまま（月次で作り直すまで）。
         run: |
-          # ad-rules.json は monthly-filter-update.yml が生成する。
-          # 同じ CDN に存在する前提（無ければ空配列 fallback）
-          curl -fsSL "https://kureho.github.io/AdblockKeshi/cdn/blockerList.json" \
-            -o /tmp/ad-rules.json || echo "[]" > /tmp/ad-rules.json
-          echo "ad-rules size: $(wc -c < /tmp/ad-rules.json)"
-
-      - name: Build merged-rules.json
-        run: |
-          python3 scripts/build_merged_rules.py \
-            --ad /tmp/ad-rules.json \
-            --security /tmp/security-rules.json \
-            --output /tmp/merged-rules.json \
-            --limit 130000
+          python3 scripts/build_split_rules.py swap-security \
+            --basic docs/cdn/merged-rules.json \
+            --old-security docs/cdn/security-rules.json \
+            --new-security /tmp/security-rules.json \
+            --output /tmp/merged-rules.json
 
       - name: Copy outputs to main/docs/cdn (GitHub Pages source)
         run: |

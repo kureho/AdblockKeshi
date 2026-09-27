@@ -26,6 +26,7 @@ enum CombinedRuleListCoordinator {
     }
 
     /// 報告反映(popunder)の combined を必要時のみ再生成し、変化時だけ報告反映 ContentBlocker を reload。
+    /// A-88 ①: 報告反映の土台には、基本保護に入り切らない広告の残り（トグル別）も載る。
     /// v4.2.0: per-site 例外（このサイトで一時オフ）があるときは、基本保護も
     /// `combined-<variant>` = 標準 + 例外ルール を生成する（無ければ従来どおり bundle variant へ戻す）。
     /// **off-main 前提**（compile-verify が semaphore で待つため main で呼ぶと deadlock）。
@@ -39,8 +40,10 @@ enum CombinedRuleListCoordinator {
         let exceptionRules = SiteExceptionRules.rules(
             for: SiteExceptionsStore.sharedAppGroup()?.readDomains() ?? [])
 
-        // 1) 報告反映(popunder)= popunder L1+L2（base）+ 安全化 reported + 例外（最後尾）。
-        //    base は App 同梱/CDN の popunder-rules.json（combined ではない）。
+        let togglesState = StateStore.sharedAppGroup()?.read() ?? .default
+
+        // 1) 報告反映(popunder)= 広告の残り（A-88 ①・トグル別）+ popunder L1+L2 + 安全化 reported
+        //    + 例外（最後尾）。popunder base は App 同梱/CDN の popunder-rules.json（combined ではない）。
         //    base が取れなければ報告反映を更新できないので、basic にも触らず終了する
         //    （popunder 不在時に basic を bundle へ剥がして防御を一時消失させない）。
         let popunderResolver = BlockerListResolver(filterFilename: PopunderRulesResolver.filename)
@@ -51,11 +54,20 @@ enum CombinedRuleListCoordinator {
         let l2Allowed = PopunderReportedFilter.l2AllowedDomains(popunderRules: popunderRules)
         let reportedForPopunder = PopunderReportedFilter.excludingL2Allowed(
             store.safeMergedReportedRules(), allowed: l2Allowed)
+        // 広告の残り: App Group（CDN 更新）→ App 同梱。読めない・壊れているときはポップアップ対策だけで作る
+        // （2 本目の防御まで落とさない）。
+        let remainderData = SecondBlockerBase.adsRemainderFilename(for: togglesState)
+            .flatMap { BlockerListResolver(filterFilename: $0).resolveDirect() }
+            .flatMap { try? Data(contentsOf: $0) }
+        let composed = remainderData.flatMap {
+            try? SecondBlockerBase.compose(adsRemainder: $0, popunder: baseData)
+        }
         let outcome = try? builder.rebuildIfNeeded(
             variantFilename: PopunderRulesResolver.filename,
-            standardRulesURL: popunderBase,
-            mayTruncate: false,                 // popunder+reported+例外 ≪ 150,000・truncation 不要
+            baseData: composed ?? baseData,
+            mayTruncate: false,                 // 残り ≤ 14.6 万 + popunder + reported + 例外 ≤ 149,000（生成側で保証）
             reportedSafe: reportedForPopunder + exceptionRules,
+            keepWhenNoReported: composed != nil, // 残りがあれば報告 0 件でも combined が要る
             compileVerify: compileVerify
         )
         if outcome?.rebuilt == true {
@@ -69,7 +81,6 @@ enum CombinedRuleListCoordinator {
         //    - 例外あり → combined-<activeVariant> = 標準 + 例外ルール（resolver の combined 最優先で拾われる）
         //    - 例外なし → 従来どおり combined を持たず bundle variant に戻す（旧 combined を一掃）
         //    popunder base が取れている＝報告反映が機能する状態（combined or 直 base）なので安全。
-        let togglesState = StateStore.sharedAppGroup()?.read() ?? .default
         if let plan = BasicExceptionRegenPlan.plan(state: togglesState,
                                                    hasExceptions: !exceptionRules.isEmpty),
            let standardURL = BlockerListResolver().standardRulesURL(for: togglesState) {
