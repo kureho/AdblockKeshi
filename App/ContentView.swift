@@ -343,7 +343,10 @@ struct CompletedView: View {
 
     /// 報告反映が OFF のときの案内（A-88 ①）。この画面は基本保護が ON のときだけ出るので base は true。
     /// 報告反映の状態がまだ取れていない間は出さない。
+    /// 撮影モード（DEBUG only）では出さない: シミュレータでは報告反映を ON にする手段が無く、
+    /// 3 つとも ON の画面（ストアのスクショ）を撮れないため。
     private var popunderHint: BannerType? {
+        guard !ScreenshotMode.isActive else { return nil }
         guard let popunderEnabled = appState.currentSnapshot?.popunderEnabled else { return nil }
         return ContentRuleListSnapshot.from(base: true, popunder: popunderEnabled).popunderSuggestion
     }
