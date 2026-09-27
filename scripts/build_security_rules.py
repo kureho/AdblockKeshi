@@ -71,6 +71,9 @@ def load_tranco_set(text: str) -> set[str]:
     return result
 
 
+_HOST_RE = re.compile(r"^[a-z0-9_-]+(\.[a-z0-9_-]+)+$")
+
+
 def convert_to_content_blocker_rules(hosts: Iterable[str]) -> list[dict]:
     """host のリストを Safari Content Blocker JSON ルールに変換。"""
     rules: list[dict] = []
@@ -80,10 +83,14 @@ def convert_to_content_blocker_rules(hosts: Iterable[str]) -> list[dict]:
         if not host or host in seen:
             continue
         seen.add(host)
-        # url-filter regex で host を含む URL を block
-        escaped = re.escape(host)
+        if not _HOST_RE.match(host):
+            continue  # ホスト名に使えない文字が混ざった行は正規表現を壊しうるので入れない
+        # 他の配信リスト（popunder-rules.json・変換器の出力）と同じ書き方。
+        # ★「(/|$)」のような「|」は WebKit が解釈できず、1 本でもあるとリスト全体の
+        #   コンパイルが失敗する（"Disjunctions are not supported yet"・2026-09-27 実測）
+        escaped = host.replace(".", "\\.")
         rules.append({
-            "trigger": {"url-filter": f"https?://([^/]+\\.)?{escaped}(/|$)"},
+            "trigger": {"url-filter": f"^[^:]+://+([^:/]+\\.)?{escaped}[/:]"},
             "action": {"type": "block"},
         })
     return rules
@@ -104,8 +111,9 @@ def build_security_rules(
     all_hosts: list[str] = []
     seen: set[str] = set()
     for h in urlhaus_hosts + phishing_hosts:
-        h = h.lower().strip()
-        if not h or h in seen or h in tranco:
+        h = h.lower().strip().rstrip(".")
+        # 壊れた行は上限を数える前に捨てる（後で捨てると件数が上限を割る）
+        if not h or h in seen or h in tranco or not _HOST_RE.match(h):
             continue
         seen.add(h)
         all_hosts.append(h)

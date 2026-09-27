@@ -50,8 +50,21 @@ def test_convert_url_to_rule_format():
     rules = convert_to_content_blocker_rules(["malware-example-1.com", "phish-example-1.tk"])
     assert len(rules) == 2
     assert all(r["action"] == {"type": "block"} for r in rules)
-    assert all("url-filter" in r["trigger"] for r in rules)
-    assert "malware\\-example\\-1\\.com" in rules[0]["trigger"]["url-filter"]
+    # 他の配信リスト（popunder-rules.json・変換器の出力）と同じ書き方
+    assert rules[0]["trigger"]["url-filter"] == "^[^:]+://+([^:/]+\\.)?malware-example-1\\.com[/:]"
+
+
+def test_convert_never_emits_disjunction():
+    # WebKit のコンテンツブロッカーは「|」（どちらか）を解釈できず、1 本でもあると
+    # リスト全体のコンパイルが失敗する（"Disjunctions are not supported yet"・2026-09-27 実測）
+    rules = convert_to_content_blocker_rules(["a.example", "b-c.example"])
+    assert all("|" not in r["trigger"]["url-filter"] for r in rules)
+
+
+def test_convert_skips_hosts_with_unexpected_characters():
+    # ホスト名に使えない文字が混ざった行は正規表現を壊しうるので入れない
+    rules = convert_to_content_blocker_rules(["ok.example", "bad(host).example", "a|b.example", "sp ace.example"])
+    assert [r["trigger"]["url-filter"] for r in rules] == ["^[^:]+://+([^:/]+\\.)?ok\\.example[/:]"]
 
 
 def test_convert_dedupes():
@@ -85,6 +98,19 @@ def test_build_security_rules_limits_count():
         urlhaus_text, phishing_db_text, tranco_text, limit=100
     )
     assert len(rules) <= 100
+
+
+def test_build_security_rules_fills_limit_even_with_malformed_hosts():
+    # 壊れた行を上限の後で捨てると件数が上限を割る＝壊れた行は上限を数える前に捨てる
+    phishing_db_text = "%20bad.example\n40.70.42.104?rid=x\n" + "\n".join(f"phish-{i}.example" for i in range(10))
+    rules = build_security_rules("", phishing_db_text, "", limit=5)
+    assert len(rules) == 5
+    assert rules[0]["trigger"]["url-filter"] == "^[^:]+://+([^:/]+\\.)?phish-0\\.example[/:]"
+
+
+def test_build_security_rules_drops_trailing_dot():
+    rules = build_security_rules("", "phish.example.\n", "", limit=5)
+    assert [r["trigger"]["url-filter"] for r in rules] == ["^[^:]+://+([^:/]+\\.)?phish\\.example[/:]"]
 
 
 def test_build_security_rules_returns_empty_for_empty_input():
