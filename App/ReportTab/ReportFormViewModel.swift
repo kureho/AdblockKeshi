@@ -21,22 +21,37 @@ final class ReportFormViewModel: ObservableObject {
     /// どこで広告を見たか。nil = 未選択 (送信不可)。サーバの `seen_in` と同期。
     @Published var selectedSeenIn: SeenIn?
     @Published private(set) var state: ReportFormState = .idle
+    /// A-88 修正③: 同じ送信で連続して Turnstile 確認に失敗した回数。
+    /// 成功時にリセットする（`成功・フォームのリセットで回数を戻す`）。
+    @Published private(set) var turnstileFailureCount = 0
 
     private let apiClient: ReportAPIClientProtocol
     private let historyStore: LocalReportHistoryStore?
     private let onSuccess: (ReportSuccess) -> Void
     /// 診断情報の自動取得。nil なら添付なしで送る（テスト既定）。
     private let diagnosticsCollector: ReportDiagnosticsCollecting?
+    /// A-88 修正②の保険: シートが開き直せない等でどんな経路でも「確認待ち」のまま
+    /// 固まらないよう、一定時間後に自動でエラーへ戻す（本番既定 35 秒 = シート内部の
+    /// 30 秒タイムアウトより長く取り、シート側が先に決着するのを妨げない）。
+    /// テストからは短い値を注入できる。
+    private let awaitingTurnstileTimeout: Duration
+    private var awaitingTurnstileWatchdog: Task<Void, Never>?
 
     init(apiClient: ReportAPIClientProtocol,
          historyStore: LocalReportHistoryStore? = nil,
          diagnosticsCollector: ReportDiagnosticsCollecting? = nil,
+         awaitingTurnstileTimeout: Duration = .seconds(35),
          onSuccess: @escaping (ReportSuccess) -> Void) {
         self.apiClient = apiClient
         self.historyStore = historyStore
         self.diagnosticsCollector = diagnosticsCollector
+        self.awaitingTurnstileTimeout = awaitingTurnstileTimeout
         self.onSuccess = onSuccess
     }
+
+    /// A-88 修正③: 同じ送信で 2 回続けて確認に失敗した端末は、再送信より
+    /// お問い合わせを先に案内する（毎回失敗する端末では再送信しても無意味なため）。
+    var hasRepeatedTurnstileFailure: Bool { turnstileFailureCount >= 2 }
 
     var validatedURL: URL? {
         if case .valid(let url) = URLValidator.validate(urlInput) { return url }
@@ -87,11 +102,15 @@ final class ReportFormViewModel: ObservableObject {
     func beginSubmit() {
         guard canSubmit, validatedURL != nil else { return }
         state = .awaitingTurnstile
+        scheduleAwaitingTurnstileWatchdog()
     }
 
     /// Cancelled out of the Turnstile sheet without completing.
     func cancelTurnstile() {
-        if case .awaitingTurnstile = state { state = .idle }
+        if case .awaitingTurnstile = state {
+            cancelAwaitingTurnstileWatchdog()
+            state = .idle
+        }
     }
 
     /// Turnstile の検証が失敗した、または 30 秒でタイムアウトした。
@@ -100,13 +119,37 @@ final class ReportFormViewModel: ObservableObject {
     /// 入力は消さないので、既存の送信ボタンでそのまま「もう一度送信」できる。
     func failTurnstile(_ error: APIError) {
         guard case .awaitingTurnstile = state else { return }
+        cancelAwaitingTurnstileWatchdog()
+        turnstileFailureCount += 1
         state = .error(error)
+    }
+
+    /// A-88 修正②の保険。`beginSubmit()` のたびに張り直し、確認が動いている間
+    /// （タイムアウト・失敗・送信開始のいずれか）は必ずキャンセルする。
+    private func scheduleAwaitingTurnstileWatchdog() {
+        awaitingTurnstileWatchdog?.cancel()
+        let timeout = awaitingTurnstileTimeout
+        awaitingTurnstileWatchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard let self, !Task.isCancelled else { return }
+            // シートが一度も開けなかった／開き直せなかった等、どんな経路であれ
+            // 「確認待ち」のまま固まっていたら、ここで初めてエラーにする。
+            guard case .awaitingTurnstile = self.state else { return }
+            self.turnstileFailureCount += 1
+            self.state = .error(.turnstileVerificationFailed)
+        }
+    }
+
+    private func cancelAwaitingTurnstileWatchdog() {
+        awaitingTurnstileWatchdog?.cancel()
+        awaitingTurnstileWatchdog = nil
     }
 
     /// Turnstile widget produced a response token. Exchange it for an HMAC
     /// token, then send the report.
     func completeSubmit(turnstileResponse: String) async {
         guard let url = validatedURL, let seenIn = selectedSeenIn else { state = .idle; return }
+        cancelAwaitingTurnstileWatchdog()
         state = .submitting
         do {
             try await apiClient.requestToken(turnstileResponse: turnstileResponse, scope: .submit)
@@ -126,6 +169,7 @@ final class ReportFormViewModel: ObservableObject {
             // したがって履歴は常に「受付済」から始まる。
             historyStore?.append(url: url, memo: memo, status: .pending)
             state = .idle
+            turnstileFailureCount = 0
             urlInput = ""
             memoInput = ""
             selectedKind = .adNotBlocked

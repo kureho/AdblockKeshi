@@ -121,6 +121,14 @@ struct TurnstileChallengeSheet: View {
                     guard !resolved else { return }
                     resolved = true
                     failed = true
+                    // 親 (ReportFormView) の `state` を先に `.error` へ倒してから `dismiss()`
+                    // を呼ぶ。逆順（先に dismiss）にすると、このシートの表示を握っている
+                    // 外側の `Binding<Bool>`（`turnstileBinding`）の `set` が
+                    // `viewModel.cancelTurnstile()` を呼び、`state` がまだ `.awaitingTurnstile`
+                    // のうちにそれを `.idle` へ巻き戻してしまう。その後で本来の失敗通知
+                    // (`onResult` → `failTurnstile`) が届いても `state` は既に `.awaitingTurnstile`
+                    // ではないため `failTurnstile` の guard に弾かれて何も起きず、失敗アラートが
+                    // 出ないまま無言でフォームへ戻ってしまう（UI テストで発見・再現済み）。
                     onResult(.failure(APIError.turnstileVerificationFailed))
                     dismiss()
                 }
@@ -136,8 +144,15 @@ struct TurnstileChallengeSheet: View {
         .presentationDragIndicator(.visible)
         .task {
             try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
-            guard !resolved else { return }
+            // A-88 修正④: シートを閉じる（スワイプ等でキャンセル）と SwiftUI がこの `.task` を
+            // キャンセルするが、`Task.sleep` は `try?` で握りつぶされるため、キャンセル後も
+            // 以降の行がそのまま実行されてしまう。何もしていないのに「時間切れ」として
+            // `onResult(.failure(...))` を呼び、キャンセルを装って `dismiss()` してしまう
+            // （＝ユーザーが普通に閉じただけなのに確認失敗のエラーになる）。
+            guard !Task.isCancelled, !resolved else { return }
             resolved = true
+            // 上の onError と同じ理由で、必ず onResult() を先に呼んで `state` を確定させてから
+            // dismiss() する。
             onResult(.failure(APIError.turnstileVerificationFailed))
             dismiss()
         }

@@ -15,8 +15,8 @@ enum APIError: LocalizedError, Equatable {
         case .networkUnavailable:
             return "インターネット接続を確認してください"
         case .rateLimitExceeded(let after):
-            // サーバの実際の単位は日次 86400 秒 / 月次 2,592,000 秒の 2 通りだけ
-            // (`workers/src/lib/rate-limit.ts` UUID_DAILY_LIMIT / UUID_MONTHLY_LIMIT)。
+            // サーバが返す retryAfter の実際の値は 日次 86400 / 月次 2,592,000 /
+            // IP 15分 900 の 3 通り (`workers/src/handlers/submit.ts:124-126`)。
             // 月次を「明日また送れます」と言うと嘘になるため、まず月次を判定する。
             let hours = Int(after / 3600)
             if hours >= 24 * 7 {
@@ -40,7 +40,9 @@ enum APIError: LocalizedError, Equatable {
         case .banned:
             // サーバは実際の停止期間（24h/7d/30d/permanent）を返さないため期限は断定しない。
             // 「アプリを再起動してください」は誤り（再起動しても直らない）なので unauthorized とは分ける。
-            return "現在この報告機能を一時的に停止しています。しばらく経ってからもう一度お試しください"
+            // A-88 修正⑤: 無期限の停止もあり、かつ停止中に送り直すと停止が延びる作りだった
+            // （サーバ側は別途修正）ため、「一時的に」「しばらく経ってから」とは言わない。
+            return "現在この端末からの報告を停止しています。心当たりがない場合はお問い合わせください"
         case .serverError(let code):
             return "サーバエラー (HTTP \(code))。少し時間を空けて再試行してください"
         case .decodingFailed:

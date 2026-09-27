@@ -61,6 +61,16 @@ private struct URLTextField: UIViewRepresentable {
 struct ReportFormView: View {
     @StateObject private var viewModel: ReportFormViewModel
     @FocusState private var focusedField: Field?
+    /// A-88 追加修正（このセッションの UI テストで発見）: `.sheet` と `.alert` を同じ
+    /// `Form` に付け、両方とも `viewModel.state` から直接導出していると、Turnstile
+    /// シートの失敗で「シートを閉じる」と「アラートを出す」が同じ更新サイクルで同時に
+    /// 起きてしまい、UIKit がシートの dismiss アニメーション中に新しいプレゼンテーション
+    /// （アラート）を無視して**アラートが一生出ない**（「もう一度送信」の修正②と同じ
+    /// クラスの SwiftUI の既知動作だが、今度は sheet→alert 方向で発生する）。
+    /// `errorBinding` を `viewModel.state` に直結させず、いったんこのローカル state を
+    /// 経由させて 1 tick 遅らせることで、シートの dismiss が完了してからアラートを
+    /// 出す。
+    @State private var showErrorAlert = false
 
     enum Field { case url, memo }
 
@@ -234,7 +244,15 @@ struct ReportFormView: View {
                 }
             }
         }
-        .alert(isPresented: errorBinding) {
+        .onChange(of: viewModel.state) { _, newState in
+            if case .error = newState {
+                // シートの dismiss アニメーションが終わるのを待ってからアラートを出す。
+                DispatchQueue.main.async { showErrorAlert = true }
+            } else {
+                showErrorAlert = false
+            }
+        }
+        .alert(isPresented: $showErrorAlert) {
             if isRetryableTurnstileFailure {
                 // 既存の Alert 部品はそのまま・ボタンの文言と動作だけを差し替える
                 // （「もう一度」に当たる専用ボタンが無いため、送信ボタンを再度呼び出す形で流用する）。
@@ -243,7 +261,14 @@ struct ReportFormView: View {
                     message: Text(errorMessage),
                     primaryButton: .default(Text("もう一度送信")) {
                         viewModel.dismissError()
-                        viewModel.beginSubmit()
+                        // A-88 修正②: アラートの action では状態だけ変え、シートの表示は
+                        // 次のランループへ回す。アラートを閉じるのとシートを開くのを同じ
+                        // run loop tick で行うと、前のアラートの dismiss アニメーションが
+                        // 終わっていないため新しい sheet の提示が UIKit 側で無視される
+                        // （「もう一度送信」を押してもシートが開き直らず確認待ちで固まる）。
+                        DispatchQueue.main.async {
+                            viewModel.beginSubmit()
+                        }
                     },
                     secondaryButton: .cancel(Text("閉じる")) { viewModel.dismissError() }
                 )
@@ -289,22 +314,26 @@ struct ReportFormView: View {
         )
     }
 
-    private var errorBinding: Binding<Bool> {
-        Binding(
-            get: { if case .error = viewModel.state { return true }; return false },
-            set: { if !$0 { viewModel.dismissError() } }
-        )
-    }
-
     /// Turnstile の失敗・タイムアウトだけ「もう一度送信」ボタンにする
     /// （このアプリのバグではなく確認そのものの失敗なので、お問い合わせより再送信が先）。
+    /// `.turnstileVerificationFailed` はウィジェット側の失敗・30秒タイムアウトだけでなく、
+    /// サーバがトークンを無効と判定した場合（`/v1/reports/token` の 400 `turnstile_failed`
+    /// → `workers/src/handlers/token.ts:55` → `APIError.fromBody`）でも同じ値になる。
+    /// どちらも「確認そのものの失敗」という点は変わらないため、同じ扱いで問題ない。
+    /// A-88 修正③: ただし同じ送信で 2 回続けて失敗した端末では、再送信を促しても
+    /// 無意味なので通常の（お問い合わせ／OK）アラートへ切り替える。
     private var isRetryableTurnstileFailure: Bool {
-        if case .error(.turnstileVerificationFailed) = viewModel.state { return true }
+        if case .error(.turnstileVerificationFailed) = viewModel.state {
+            return !viewModel.hasRepeatedTurnstileFailure
+        }
         return false
     }
 
     private var errorMessage: String {
         if case .error(let err) = viewModel.state {
+            if err == .turnstileVerificationFailed, viewModel.hasRepeatedTurnstileFailure {
+                return "確認に続けて失敗しました。時間をおいてお試しいただくか、お問い合わせください"
+            }
             return err.localizedDescription
         }
         return ""

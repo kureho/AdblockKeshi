@@ -43,7 +43,7 @@ final class ReportAPIClientStatusMappingTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeClient() -> ReportAPIClient {
+    private func makeClient(tokenStore: HMACTokenStore = HMACTokenStore()) -> ReportAPIClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubURLProtocol.self]
         let session = URLSession(configuration: config)
@@ -51,7 +51,12 @@ final class ReportAPIClientStatusMappingTests: XCTestCase {
             keychain: KeychainHelper(service: keychainService, accessGroup: nil),
             serverSalt: "test-salt"
         )
-        return ReportAPIClient(baseURL: URL(string: "https://stub.invalid")!, session: session, uuidStore: uuidStore)
+        return ReportAPIClient(
+            baseURL: URL(string: "https://stub.invalid")!,
+            session: session,
+            uuidStore: uuidStore,
+            tokenStore: tokenStore
+        )
     }
 
     func test_403Banned_mapsToBanned_notUnauthorized() async throws {
@@ -85,6 +90,51 @@ final class ReportAPIClientStatusMappingTests: XCTestCase {
             XCTFail("401 は例外を投げるはず")
         } catch let err as APIError {
             XCTAssertEqual(err, .unauthorized, "401 は従来どおり unauthorized のまま")
+        }
+    }
+
+    /// A-88 修正⑥: `requestToken` 経由だけでなく `submitReport` 経由でも同じマッピングに
+    /// なることを確認する（`send()` は共通だが、呼び出し経路ごとの回帰も固定しておく）。
+    func test_403Banned_viaSubmitReport_mapsToBanned() async throws {
+        StubURLProtocol.statusCode = 403
+        StubURLProtocol.body = try JSONSerialization.data(withJSONObject: [
+            "error": "banned", "message": "temporarily banned",
+        ])
+        // submitReport は事前にキャッシュ済みトークンが無いと acquireToken() の時点で
+        // .unauthorized を投げて通信自体が発生しないため、有効なトークンを注入しておく。
+        let tokenStore = HMACTokenStore()
+        await tokenStore.set(HMACToken(value: "cached", scope: .submit,
+                                       expiresAt: Date(timeIntervalSinceNow: 300)))
+        let client = makeClient(tokenStore: tokenStore)
+
+        do {
+            try await client.submitReport(
+                url: URL(string: "https://example.com/article")!, memo: nil, adType: nil,
+                reportKind: .adNotBlocked, seenIn: .safari, diagnostics: .unavailable
+            )
+            XCTFail("403 は例外を投げるはず")
+        } catch let err as APIError {
+            guard case .banned = err else {
+                return XCTFail("submitReport 経由でも 403 banned は banned にマップすること: \(err)")
+            }
+        }
+    }
+
+    /// 本文が JSON でない 403（エッジのエラーページ等）は `APIError.fromBody` の
+    /// `try? JSONDecoder().decode` が nil になり、banned にも unauthorized にもならず
+    /// `serverError(statusCode:)` へフォールバックする。誤って「認証エラーです。
+    /// アプリを再起動してください」（unauthorized の文言）を出さないことを固定する。
+    func test_403WithNonJSONBody_fallsBackToServerError_notUnauthorized() async throws {
+        StubURLProtocol.statusCode = 403
+        StubURLProtocol.body = Data("<html>Forbidden</html>".utf8)
+        let client = makeClient()
+
+        do {
+            try await client.requestToken(turnstileResponse: "tt", scope: .submit)
+            XCTFail("403 は例外を投げるはず")
+        } catch let err as APIError {
+            XCTAssertEqual(err, .serverError(statusCode: 403),
+                           "本文が JSON でない 403 は serverError にフォールバック（unauthorized ではない）")
         }
     }
 }
