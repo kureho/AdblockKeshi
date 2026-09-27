@@ -1,0 +1,12 @@
+{
+  "added_at": "2026-09-27",
+  "rules": [
+    {
+      "trigger": {
+        "url-filter": "^[^:]+://+([^:/]+\\.)?asfxutnigr\\.in[/:]",
+        "if-domain": ["*spoilerplus.tv"]
+      },
+      "action": { "type": "block" }
+    }
+  ]
+}

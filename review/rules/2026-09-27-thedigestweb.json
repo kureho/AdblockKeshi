@@ -1,0 +1,38 @@
+{
+  "added_at": "2026-09-27",
+  "rules": [
+    {
+      "trigger": {
+        "url-filter": "^[^:]+://+([^:/]+\\.)?html-load\\.com[/:]",
+        "if-domain": [
+          "*thedigestweb.com"
+        ]
+      },
+      "action": {
+        "type": "block"
+      }
+    },
+    {
+      "trigger": {
+        "url-filter": "^[^:]+://+([^:/]+\\.)?googlesyndication\\.com[/:]",
+        "if-domain": [
+          "*thedigestweb.com"
+        ]
+      },
+      "action": {
+        "type": "block"
+      }
+    },
+    {
+      "trigger": {
+        "url-filter": "^[^:]+://+([^:/]+\\.)?doubleclick\\.net[/:]",
+        "if-domain": [
+          "*thedigestweb.com"
+        ]
+      },
+      "action": {
+        "type": "block"
+      }
+    }
+  ]
+}

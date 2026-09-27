@@ -1,0 +1,17 @@
+{
+  "added_at": "2026-09-27",
+  "rules": [
+    {
+      "trigger": { "url-filter": "^[^:]+://+([^:/]+\\.)?googlesyndication\\.com[/:]", "if-domain": ["*storysaver.net"] },
+      "action": { "type": "block" }
+    },
+    {
+      "trigger": { "url-filter": "^[^:]+://+([^:/]+\\.)?doubleclick\\.net[/:]", "if-domain": ["*storysaver.net"] },
+      "action": { "type": "block" }
+    },
+    {
+      "trigger": { "url-filter": "^[^:]+://+([^:/]+\\.)?adtrafficquality\\.google[/:]", "if-domain": ["*storysaver.net"] },
+      "action": { "type": "block" }
+    }
+  ]
+}

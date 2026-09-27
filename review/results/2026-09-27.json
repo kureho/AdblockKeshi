@@ -1,0 +1,130 @@
+{
+  "reviewed_at": "2026-09-27",
+  "results": [
+    {
+      "report_id": "2e181341-336f-4d9c-9c9a-05ef8c79b0a0",
+      "outcome": "invalid",
+      "note": "テスト送信・ホスト名が不正"
+    },
+    {
+      "report_id": "d2a583b2-65c6-4428-9a41-d45f261e2796",
+      "outcome": "invalid",
+      "note": "テスト送信・ホスト名が不正"
+    },
+    {
+      "report_id": "afcd90cc-6364-4538-a666-f6751965be1f",
+      "outcome": "not_reproduced",
+      "note": "開いても広告の通信・表示なし"
+    },
+    {
+      "report_id": "2e2d4abc-7f8a-434c-b59a-550d80faa9f8",
+      "outcome": "not_reproduced",
+      "note": "開いても広告の通信・表示なし"
+    },
+    {
+      "report_id": "d1c7c8ca-74ec-4a18-a15b-173eb5568a4a",
+      "outcome": "not_reproduced",
+      "note": "開いても広告の通信・表示なし"
+    },
+    {
+      "report_id": "81399a05-c4c3-47d3-bb39-b4a8202cc4b6",
+      "outcome": "not_reproduced",
+      "note": "開いても広告の通信・表示なし"
+    },
+    {
+      "report_id": "2302009f-7eed-4599-ba84-ec1dbfd5b867",
+      "outcome": "not_reproduced",
+      "note": "開いても広告の通信・表示なし"
+    },
+    {
+      "report_id": "d86a7733-efa8-42dc-a5f9-96a37816be10",
+      "outcome": "applied",
+      "note": "サイト限定ルールを review/rules に追加"
+    },
+    {
+      "report_id": "86cdcfc5-db9f-478b-8e38-9996ed4d7aca",
+      "outcome": "applied",
+      "note": "サイト限定ルールを review/rules に追加"
+    },
+    {
+      "report_id": "075fad6b-3c7b-4cb5-b75f-12d17f0b7b47",
+      "outcome": "applied",
+      "note": "サイト限定ルールを review/rules に追加"
+    },
+    {
+      "report_id": "a0122779-6628-4a45-96da-54ec31dc4c40",
+      "outcome": "applied",
+      "note": "サイト限定ルールを review/rules に追加"
+    },
+    {
+      "report_id": "d5e6f5ba-3587-4b18-904c-c86c261d3700",
+      "outcome": "site_own_ad",
+      "note": "サイト自身の告知バナーのみ"
+    },
+    {
+      "report_id": "47f6ff1a-172d-48c0-8a2b-b340fe50cd8d",
+      "outcome": "applied",
+      "note": "サイト限定ルールを review/rules に追加"
+    },
+    {
+      "report_id": "bdad5dbb-e0fb-40dc-ab11-6905aeaf0b11",
+      "outcome": "invalid",
+      "note": "テスト送信・ホスト名が不正"
+    },
+    {
+      "report_id": "e10c8dee-1434-44d4-987d-3e5b91c13b5b",
+      "outcome": "in_app_ad",
+      "note": "ほかのアプリ内の広告"
+    },
+    {
+      "report_id": "2b866162-b264-4008-810f-0f65186b5249",
+      "outcome": "in_app_ad",
+      "note": "ほかのアプリ内の広告"
+    },
+    {
+      "report_id": "261a2558-edc7-46d5-822d-1f41d1bc3aa6",
+      "outcome": "not_reproduced",
+      "note": "開いても広告の通信・表示なし"
+    },
+    {
+      "report_id": "c9ba6c3a-2215-465e-9fb1-0cb6ac3ebea2",
+      "outcome": "in_app_ad",
+      "note": "ほかのアプリ内の広告"
+    },
+    {
+      "report_id": "8d58a846-2ee6-43f7-a94e-f76109803550",
+      "outcome": "in_app_ad",
+      "note": "ほかのアプリ内の広告"
+    },
+    {
+      "report_id": "8ebee60f-ad64-46b9-bc41-c255f7174cc2",
+      "outcome": "in_app_ad",
+      "note": "ほかのアプリ内の広告"
+    },
+    {
+      "report_id": "4be65d3a-e940-42e5-b304-9884c07868aa",
+      "outcome": "in_app_ad",
+      "note": "ほかのアプリ内の広告"
+    },
+    {
+      "report_id": "30eb3e44-0840-4666-b254-b38feba4229d",
+      "outcome": "applied",
+      "note": "サイト限定ルールを review/rules に追加"
+    },
+    {
+      "report_id": "571d92ae-e075-43a2-92e7-7d6148b0e016",
+      "outcome": "invalid",
+      "note": "テスト送信・ホスト名が不正"
+    }
+  ],
+  "candidates": [
+    {
+      "candidate_id": "4439dd46-9d1f-4b91-bd9a-f2f001c7d195",
+      "decision": "closed"
+    },
+    {
+      "candidate_id": "b03963ad-73aa-4182-90b6-c7e06edbfa39",
+      "decision": "closed"
+    }
+  ]
+}

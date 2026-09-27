@@ -1,0 +1,16 @@
+{
+  "added_at": "2026-09-27",
+  "rules": [
+    {
+      "trigger": {
+        "url-filter": "^[^:]+://+([^:/]+\\.)?html-load\\.com[/:]",
+        "if-domain": [
+          "*nosv.org"
+        ]
+      },
+      "action": {
+        "type": "block"
+      }
+    }
+  ]
+}
