@@ -4,7 +4,7 @@
 
 kureho「この形で進める（推奨）」＝**土台の修理 → 週 1 回の判定 → 報告者への結果表示と送信エラーの修正を、まとめて次の版で出す。土台の修理は主要サイトの効きを前後で測りながら入れる**。
 根拠: 点検 `/Users/oharakureho/claude/AdblockKeshi/tasks/report-pipeline-audit-2026-09-27.md`／調査 `/Users/oharakureho/claude/AdblockKeshi/tasks/report-method-research-2026-09-27.md`
-**設計（正）: `/Users/oharakureho/claude/AdblockKeshi/tasks/a88-design-2026-09-27.md`**（事実表・5 部の方針・進め方 6 段）。**今どこ**: 9/27 設計完了 → 段 1（計測の道具・基準の数字）に着手
+**設計（正）: `/Users/oharakureho/claude/AdblockKeshi/tasks/a88-design-2026-09-27.md`**（事実表・5 部の方針・進め方 6 段）。**今どこ**（9/27 昼）: 設計完了 → 段 1（計測の道具 `scripts/measure/`・今の構成の基準の数字）を作成中（main に未コミットの `scripts/measure/` があれば作業途中の成果物）／④ 送信エラーの修正を作業ツリー `/private/tmp/claude-501/-Users-oharakureho-claude/d0f3538c-1c3f-4d35-8011-035183a11cbd/scratchpad/a88-errors-wt`（ブランチ `a88-report-errors`）で並行作業中。**次の 1 手**: 基準の数字を設計書 §1 に書き足す → 分け方の候補（設計書 §1 の ①〜③）を同じ道具で測って決める
 
 - [ ] ① 土台の修理（全員に効く）
   - ★9/27 実測: `docs/cdn/merged-rules.json`（広告＋セキュリティ両方オン用・13 万件）に**セキュリティ由来ルールが 0 件**＝`scripts/build_merged_rules.py` が広告（15 万件）→セキュリティの順に詰めて 13 万件で切るため。両方オンの人は詐欺サイト対策が効いていない
