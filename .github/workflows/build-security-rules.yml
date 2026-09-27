@@ -56,29 +56,30 @@ jobs:
         run: |
           python3 scripts/build_empty_rules.py --output /tmp/empty-rules.json
 
-      - name: Swap the security part of merged-rules.json
-        # A-88 ①: merged-rules.json（基本保護・広告＋セキュリティ）は月次が
-        # 「例外全部＋広告の前半＋セキュリティ（末尾・枠 3 万固定）」で作る。週次は末尾のセキュリティだけ入れ替える
-        # （広告の振り分けは変えない＝2 本目の残りと食い違わない）。
-        # 末尾が前回のセキュリティと一致しなければ止める＝CDN は前の版のまま（月次で作り直すまで）。
+      - name: Swap the security part of second-ads-sec.json
+        # A-88 ①: 両方オンのセキュリティは 2 本目（second-ads-sec.json）の末尾に載る（月次が
+        # 「例外全部＋広告の残り＋セキュリティ（末尾・枠 3 万固定）」で作る）。週次は末尾のセキュリティだけ入れ替える
+        # （広告の振り分けは変えない＝基本保護 merged-rules.json は週次では触らない）。
+        # 末尾が前回のセキュリティと一致しなければ止める＝CDN は前の版のまま（security-rules.json も含めて。
+        # 片方だけ進めると次の週から末尾が合わなくなる）。
         run: |
           python3 scripts/build_split_rules.py swap-security \
-            --basic docs/cdn/merged-rules.json \
+            --second docs/cdn/second-ads-sec.json \
             --old-security docs/cdn/security-rules.json \
             --new-security /tmp/security-rules.json \
-            --output /tmp/merged-rules.json
+            --output /tmp/second-ads-sec.json
 
       - name: Copy outputs to main/docs/cdn (GitHub Pages source)
         run: |
           mkdir -p docs/cdn
-          for name in security-rules merged-rules empty-rules; do
+          for name in security-rules second-ads-sec empty-rules; do
             cp /tmp/${name}.json docs/cdn/${name}.json
           done
           python3 - <<'PY'
           import json, hashlib, datetime
           from pathlib import Path
           out = {}
-          for name in ['security-rules', 'merged-rules', 'empty-rules']:
+          for name in ['security-rules', 'merged-rules', 'empty-rules', 'second-ads-sec']:
               data = Path(f'docs/cdn/{name}.json').read_bytes()
               out[name + '_sha256'] = hashlib.sha256(data).hexdigest()
               out[name + '_bytes'] = len(data)
@@ -91,7 +92,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/cdn/security-rules.json docs/cdn/merged-rules.json docs/cdn/empty-rules.json docs/cdn/version-security.json
+          git add docs/cdn/security-rules.json docs/cdn/second-ads-sec.json docs/cdn/empty-rules.json docs/cdn/version-security.json
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else

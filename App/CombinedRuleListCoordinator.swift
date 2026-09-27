@@ -62,14 +62,17 @@ enum CombinedRuleListCoordinator {
         let composed = remainderData.flatMap {
             try? SecondBlockerBase.compose(adsRemainder: $0, popunder: baseData)
         }
-        let outcome = try? builder.rebuildIfNeeded(
-            variantFilename: PopunderRulesResolver.filename,
-            baseData: composed ?? baseData,
-            mayTruncate: false,                 // 残り ≤ 14.6 万 + popunder + reported + 例外 ≤ 149,000（生成側で保証）
-            reportedSafe: reportedForPopunder + exceptionRules,
-            keepWhenNoReported: composed != nil, // 残りがあれば報告 0 件でも combined が要る
-            compileVerify: compileVerify
-        )
+        // 残りを載せた版が作れなければポップアップ対策だけで作り直す（一時オフと新しい報告を止めない）。
+        let outcome = SecondBlockerBase.rebuild(composed: composed, popunder: baseData) { base, keepWhenNoReported in
+            try builder.rebuildIfNeeded(
+                variantFilename: PopunderRulesResolver.filename,
+                baseData: base,
+                mayTruncate: false,                     // 残り ≤ 14.6 万 + popunder + reported + 例外 ≤ 149,000（生成側で保証）
+                reportedSafe: reportedForPopunder + exceptionRules,
+                keepWhenNoReported: keepWhenNoReported, // 残りがあれば報告 0 件でも combined が要る
+                compileVerify: compileVerify
+            )
+        }
         if outcome?.rebuilt == true {
             DispatchQueue.main.async {
                 SFContentBlockerManager.reloadContentBlocker(

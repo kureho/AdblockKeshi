@@ -75,8 +75,8 @@ enum RuleUpdatePlanner {
         }
     }
 
-    /// version.json（広告 = blockerList.json の sha・2 本目の残り）と version-security.json
-    /// （merged/security/empty の sha）から variant の更新計画を作る。
+    /// version.json（広告 = blockerList.json の sha・2 本目の残り〈広告だけ〉）と version-security.json
+    /// （merged/security/empty・2 本目の残り〈両方オン〉の sha）から variant の更新計画を作る。
     static func plans(versionJSON: Data, versionSecurityJSON: Data) throws -> [RuleVariantPlan] {
         guard let version = (try? JSONSerialization.jsonObject(with: versionJSON)) as? [String: Any]
         else { throw PlannerError.invalidManifest("version.json is not a JSON object") }
@@ -123,19 +123,22 @@ enum RuleUpdatePlanner {
         ]
 
         // A-88 ①: 2 本目に載せる広告の残り（月次で blockerList.json と同時に作られる）。
+        // 両方オン用は末尾にセキュリティが付き週次でも入れ替わる＝merged と同じく version-security.json に sha がある。
         // キーが無い CDN（新しい月次がまだ走っていない）では計画に入れない＝今までの 4 つだけ更新する。
         // 基準件数は今の件数（5.4 万 / 2.4 万）の約 4 割＝半分未満なら壊れたファイルとして捨てる。
-        let remainders: [(key: String, filename: String, baseline: Int)] = [
-            ("second_ads_sec_sha256", SecondBlockerBase.adsAndSecurityRemainder, 20_000),
-            ("second_ads_sha256", SecondBlockerBase.adsOnlyRemainder, 10_000),
+        let remainders: [(sha: String?, generatedAt: Date, filename: String, baseline: Int)] = [
+            (security["second-ads-sec_sha256"] as? String, secGenerated,
+             SecondBlockerBase.adsAndSecurityRemainder, 20_000),
+            (version["second_ads_sha256"] as? String, adGenerated,
+             SecondBlockerBase.adsOnlyRemainder, 10_000),
         ]
         for remainder in remainders {
-            guard let sha = version[remainder.key] as? String else { continue }
+            guard let sha = remainder.sha else { continue }
             plans.append(RuleVariantPlan(
                 variantFilename: remainder.filename,
                 downloadURL: cdnBaseURL.appendingPathComponent(remainder.filename),
                 expectedSHA256: sha,
-                generatedAt: adGenerated,
+                generatedAt: remainder.generatedAt,
                 defaultBaselineRuleCount: remainder.baseline))
         }
         return plans

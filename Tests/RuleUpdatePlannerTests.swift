@@ -168,44 +168,57 @@ final class RuleUpdatePlannerTests: XCTestCase {
         XCTAssertEqual(plan("empty-rules.json", in: plans)?.defaultBaselineRuleCount, 0)
     }
 
-    // MARK: - A-88 ①: 2 本目の広告の残り（version.json の新しいキー）
+    // MARK: - A-88 ①: 2 本目の広告の残り
+    // 広告だけオン用（second-ads）は月次だけが作る＝version.json。両方オン用（second-ads-sec）は末尾に
+    // セキュリティが付き週次でも入れ替わる＝merged と同じく version-security.json（週次がこのファイルだけを書く）。
 
     private let versionJSONWithSecond = Data("""
     {
       "generated_at": "2026-10-01T07:06:49Z",
       "rule_count": 148800,
       "blocker_list_sha256": "f5930c6c49864305ac6c7c29dd293448c6ee86f49f53114bb36d8bffcd3e8a8a",
-      "second_ads_sec_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
       "second_ads_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
     }
     """.utf8)
 
-    func test_second_remainders_are_planned_from_version_json() throws {
+    private let versionSecurityJSONWithSecond = Data("""
+    {
+      "security-rules_sha256": "15e3e836898bf646e25518e0e2e36bfd895c09a56d50f9610f677a9299ec951f",
+      "merged-rules_sha256": "9a4fa4818e2bce46236096dea6745270a3addb45d32988f02480cab33679feaa",
+      "empty-rules_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "second-ads-sec_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "generated_at": "2026-10-04T00:05:04.311961Z"
+    }
+    """.utf8)
+
+    func test_second_remainders_are_planned_from_their_own_manifests() throws {
         let plans = try RuleUpdatePlanner.plans(
-            versionJSON: versionJSONWithSecond, versionSecurityJSON: versionSecurityJSON)
+            versionJSON: versionJSONWithSecond, versionSecurityJSON: versionSecurityJSONWithSecond)
         let sec = try XCTUnwrap(plan("second-ads-sec.json", in: plans))
         XCTAssertEqual(sec.downloadURL.absoluteString,
                        "https://kureho.github.io/AdblockKeshi/cdn/second-ads-sec.json")
         XCTAssertEqual(sec.expectedSHA256, "1111111111111111111111111111111111111111111111111111111111111111")
-        XCTAssertEqual(sec.generatedAt, RuleUpdatePlanner.parseISO8601("2026-10-01T07:06:49Z"))
+        XCTAssertEqual(sec.generatedAt, RuleUpdatePlanner.parseISO8601("2026-10-04T00:05:04.311961Z"))
         let ads = try XCTUnwrap(plan("second-ads.json", in: plans))
         XCTAssertEqual(ads.downloadURL.absoluteString,
                        "https://kureho.github.io/AdblockKeshi/cdn/second-ads.json")
         XCTAssertEqual(ads.expectedSHA256, "2222222222222222222222222222222222222222222222222222222222222222")
+        XCTAssertEqual(ads.generatedAt, RuleUpdatePlanner.parseISO8601("2026-10-01T07:06:49Z"))
         XCTAssertEqual(plans.count, 6)
     }
 
     /// 月次がまだ新しい形で走っていない CDN（キーが無い）でも、今までの 4 つは今までどおり更新する。
-    func test_no_second_plans_when_version_json_has_no_second_keys() throws {
+    func test_no_second_plans_when_the_manifests_have_no_second_keys() throws {
         let plans = try RuleUpdatePlanner.plans(
             versionJSON: versionJSON, versionSecurityJSON: versionSecurityJSON)
         XCTAssertNil(plan("second-ads-sec.json", in: plans))
         XCTAssertNil(plan("second-ads.json", in: plans))
+        XCTAssertEqual(plans.count, 4)
     }
 
     func test_second_remainder_baselines_reject_clearly_broken_files() throws {
         let plans = try RuleUpdatePlanner.plans(
-            versionJSON: versionJSONWithSecond, versionSecurityJSON: versionSecurityJSON)
+            versionJSON: versionJSONWithSecond, versionSecurityJSON: versionSecurityJSONWithSecond)
         // 今の件数（5.4 万 / 2.4 万）の約 4 割。半分未満（1 万 / 5 千）なら壊れたファイルとして捨てる
         XCTAssertEqual(plan("second-ads-sec.json", in: plans)?.defaultBaselineRuleCount, 20_000)
         XCTAssertEqual(plan("second-ads.json", in: plans)?.defaultBaselineRuleCount, 10_000)

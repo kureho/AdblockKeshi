@@ -1,9 +1,11 @@
 {
   "security-rules_sha256": "e59b49b06b46c7cccfa5937f6e2ec7cd42be7b416deaf86f203fc009a3f03929",
   "security-rules_bytes": 3513068,
-  "merged-rules_sha256": "6a3002ba6150cfa522275e32f2eb7156b29b57a3563476c4e8b97280f1711edb",
-  "merged-rules_bytes": 28584377,
+  "merged-rules_sha256": "c316799217faeb57851f7765d14b311a2aa38e04739af32041337674a9e8be56",
+  "merged-rules_bytes": 28320463,
   "empty-rules_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "empty-rules_bytes": 2,
-  "generated_at": "2026-09-27T09:26:20Z"
+  "generated_at": "2026-09-27T10:11:29Z",
+  "second-ads-sec_sha256": "f4b4d987696997fb19ec1821efafa253c3ca0d8885d6c3acfec9d45455694d5b",
+  "second-ads-sec_bytes": 12604374
 }

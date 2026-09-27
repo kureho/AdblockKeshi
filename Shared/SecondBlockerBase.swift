@@ -25,6 +25,16 @@ enum SecondBlockerBase {
         return try CombinedRuleListMerge.concatenate(adsRemainder, popunder)
     }
 
+    /// 2 本目を作る。残りを載せた版が作れなければ（コンパイル失敗など）、ポップアップ対策だけで作り直す。
+    /// 残りは CDN から毎月入れ替わる新しい失敗源。失敗したまま古い 2 本目を残すと、新しい報告も
+    /// 「このサイトで一時オフ」も 2 本目に届かない（開けないサイトを開けなくなる）ので、残りを諦めて一時オフを通す。
+    /// `rebuild(base, keepWhenNoReported)` は CombinedRuleListBuilder.rebuildIfNeeded を呼ぶ口。
+    static func rebuild<Outcome>(composed: Data?, popunder: Data,
+                                 using rebuild: (_ base: Data, _ keepWhenNoReported: Bool) throws -> Outcome) -> Outcome? {
+        if let composed, let outcome = try? rebuild(composed, true) { return outcome }
+        return try? rebuild(popunder, false)
+    }
+
     /// ルール更新で残りのファイルが差し替わったら、2 本目を作り直す必要がある。
     static func needsRegenerate(afterApplying applied: [String]) -> Bool {
         applied.contains(where: remainderFilenames.contains)

@@ -10,9 +10,11 @@
   2 本の合わせ技は上限なしの 1 本と同じ効き方になる。
   ❌ 例外を末尾へ集める → 変換器が「直前の汎用要素隠しだけを消す」位置に置いた
   `.*`＋`if-domain` の例外が、そのサイトの遮断まで全部消してしまう（9/27 の C3 案で発覚）。
-- 基本保護は 2 本目が無効な人の唯一の守りなので、重要ルール → 要素隠し → 遮断の順
-  （変換器の並びどおり＝今の配信と同じ優先順）で埋める。セキュリティは基本保護の末尾
-  （広告の例外に打ち消されない位置）。
+- 基本保護は 2 本目が無効な人（旧版アプリも）の唯一の守りなので、広告ルールだけで埋める
+  （重要ルール → 要素隠し → 遮断＝変換器の並びどおり・今の配信と同じ優先順）。
+- セキュリティは 2 本目（両方オン）の末尾（広告の例外に打ち消されない位置）。
+  ❌ 基本保護にセキュリティ 3 万件の枠を取る → その分の広告ルールが 2 本目へ押し出され、基本保護だけの人の
+  漏れが今の 2 倍（9/27 計測 164.5 対 79.0）。今の merged はセキュリティ 0 件なので、2 本目に置いても誰も減らない。
 
 設計: tasks/a88-design-2026-09-27.md §1 / tasks/todo.md ①
 """
@@ -29,6 +31,7 @@ from pathlib import Path
 # と Shared/SiteExceptionsStore.swift（maxDomains 200）。
 BASIC_CAP = 149_000 - 200
 SECOND_CAP = 149_000 - 2_000 - 1_000   # ポップアップ（今 40 件）の伸び代 1,000
+SECOND_TOTAL_CAP = 149_000 - 2_000      # 2 本目のうち報告の予約を除いた枠（残り＋ポップアップ対策）
 SECURITY_BUDGET = 30_000               # build-security-rules.yml の --limit と同じ
 
 
@@ -83,14 +86,15 @@ def _is_protected(rule: dict, protected_hosts) -> bool:
     return h is not None and any(h == p or h.endswith("." + p) for p in protected_hosts)
 
 
-def _priority(rules: list[dict], protected_hosts=frozenset()) -> list[int]:
+def _priority(rules: list[dict], protected_hosts=frozenset(), first_seen: list[int] | None = None) -> list[int]:
     """例外以外のルールの位置を、基本保護に入れる優先順に並べる。
 
     変換器の並びは 要素隠し → 遮断 → 例外 → 重要な遮断 → 重要な例外（SafariCbBuilder.createEntries）。
     1. ポップアップ対策の例外が通すホスト宛てのルール（2 本目に置くと、後ろに並ぶ
        ポップアップ対策の例外に打ち消される＝今日は効いている遮断が外れる）
     2. 「最初の遮断より後ろに出てくる最初の例外」より後ろにある例外以外のルール＝重要ルール
-    3. 残りを並び順のまま（上限で切るときの今の優先順と同じ）
+    3. 残りを並び順のまま（上限で切るときの今の優先順と同じ）。重複を消して後ろのコピーを残したルールは、
+       `first_seen`（重複除去前の最初のコピーの位置）で並べる＝上限で切った今の 1 本に入っていたものが先
     """
     first_block = next((i for i, r in enumerate(rules) if r["action"]["type"] == "block"), len(rules))
     tail_start = next(
@@ -100,6 +104,8 @@ def _priority(rules: list[dict], protected_hosts=frozenset()) -> list[int]:
     taken = set(protected)
     important = [i for i in candidates if i >= tail_start and i not in taken]
     rest = [i for i in candidates if i < tail_start and i not in taken]
+    if first_seen is not None:
+        rest.sort(key=lambda i: first_seen[i])
     return protected + important + rest
 
 
@@ -117,10 +123,14 @@ def split_rules(
       （省略時は実際の件数）を引いて決める。
     - 2 本目が上限を超えたら、優先順の最後（並びの最後の遮断）から捨てる。例外は捨てない。
     - `protected_hosts` 宛てのルールは基本保護に最優先で入れる（`_priority` の 1）。
-    - 重複は後ろのコピーだけ残す（`dedup_keep_last`）。
+    - 重複は後ろのコピーだけ残す（`dedup_keep_last`）。基本保護に入れる優先順は前のコピーの位置で決める。
     - Returns: (基本保護, 2 本目, 2 本目で捨てた件数)
     """
+    first_copy: dict[str, int] = {}
+    for i, r in enumerate(full):
+        first_copy.setdefault(json.dumps(r, sort_keys=True), i)
     full = dedup_keep_last(full)
+    first_seen = [first_copy[json.dumps(r, sort_keys=True)] for r in full]
     exceptions = [i for i, r in enumerate(full) if _is_exception(r)]
     reserved_security = len(security) if security_budget is None else security_budget
     if len(security) > reserved_security:
@@ -134,7 +144,7 @@ def split_rules(
     if second_room < 0:
         raise SplitError(f"second cap {second_cap} cannot hold {len(exceptions)} exceptions")
 
-    order = _priority(full, protected_hosts)
+    order = _priority(full, protected_hosts, first_seen)
     to_basic = set(order[:basic_room])
     to_second = order[basic_room:]
     dropped = max(0, len(to_second) - second_room)
@@ -156,25 +166,33 @@ def build_outputs(
     second_cap: int = SECOND_CAP,
     popunder: list[dict] | None = None,
     dropped: dict[str, int] | None = None,
+    second_total_cap: int = SECOND_TOTAL_CAP,
 ) -> dict[str, list[dict]]:
     """トグル（広告・セキュリティ）別の 4 リストを作る。
 
     - basic-ads-sec / second-ads-sec: 広告とセキュリティ両方オン（既定）
     - basic-ads / second-ads: 広告だけオン
-    セキュリティの枠は実際の件数ではなく `security_budget` で固定する
-    （週ごとのセキュリティ件数の増減で広告の振り分けが揺れない＝2 本目は月 1 回しか変わらない）。
+    基本保護は両方とも同じ（広告ルールだけ）。セキュリティは second-ads-sec の末尾に付ける。
+    その枠は実際の件数ではなく `security_budget` で固定する
+    （週ごとのセキュリティ件数の増減で広告の振り分けが揺れない＝週次は末尾だけ入れ替える）。
     `popunder` を渡すと、その例外が通すホスト宛てのルールを基本保護に寄せる（アプリは
     2 本目の後ろにポップアップ対策を並べるため）。
     `dropped` を渡すと、2 本目にも入り切らず捨てた件数を 2 本目のファイル名ごとに書き込む。
     """
     protected = l2_allowed_hosts(popunder or [])
-    basic_sec, second_sec, dropped_sec = split_rules(
-        full, security, basic_cap=basic_cap, second_cap=second_cap, security_budget=security_budget,
-        protected_hosts=protected)
+    if len(security) > security_budget:
+        raise SplitError(f"security {len(security)} exceeds budget {security_budget}")
     basic_ads, second_ads, dropped_ads = split_rules(full, [], basic_cap=basic_cap, second_cap=second_cap,
                                                      protected_hosts=protected)
+    basic_sec, second_sec, dropped_sec = split_rules(
+        full, [], basic_cap=basic_cap, second_cap=second_cap - security_budget, protected_hosts=protected)
+    second_sec = second_sec + list(security)
     if dropped is not None:
         dropped.update({"second-ads-sec": dropped_sec, "second-ads": dropped_ads})
+    # アプリは残りの後ろにポップアップ対策をそのまま並べる（件数では切らない）。伸び代を超えたら止める
+    for name, second in (("second-ads-sec", second_sec), ("second-ads", second_ads)):
+        if len(second) + len(popunder or []) > second_total_cap:
+            raise SplitError(f"{name} {len(second)} + popunder {len(popunder or [])} exceeds {second_total_cap}")
     return {
         "basic-ads-sec": basic_sec,
         "second-ads-sec": second_sec,
@@ -184,21 +202,21 @@ def build_outputs(
 
 
 def replace_security_tail(
-    basic_ads_sec: list[dict],
+    second_ads_sec: list[dict],
     old_security: list[dict],
     new_security: list[dict],
     security_budget: int = SECURITY_BUDGET,
 ) -> list[dict]:
-    """週次のセキュリティ更新: 基本保護（両方オン）の末尾のセキュリティ部分だけを入れ替える。
+    """週次のセキュリティ更新: 2 本目（両方オン）の末尾のセキュリティ部分だけを入れ替える。
 
     末尾が前回のセキュリティと一致しないとき（手で直した・月次が未実行等）は入れ替えずに止める。
     """
     if len(new_security) > security_budget:
         raise SplitError(f"security {len(new_security)} exceeds budget {security_budget}")
     n = len(old_security)
-    if n > len(basic_ads_sec) or basic_ads_sec[len(basic_ads_sec) - n:] != old_security:
-        raise SplitError("basic-ads-sec does not end with the previous security rules")
-    return basic_ads_sec[: len(basic_ads_sec) - n] + list(new_security)
+    if n > len(second_ads_sec) or second_ads_sec[len(second_ads_sec) - n:] != old_security:
+        raise SplitError("second-ads-sec does not end with the previous security rules")
+    return second_ads_sec[: len(second_ads_sec) - n] + list(new_security)
 
 
 def _load(path: Path) -> list[dict]:
@@ -220,8 +238,8 @@ def main() -> None:
                    help="2 本目の後ろに並ぶポップアップ対策（docs/cdn/popunder-rules.json）")
     b.add_argument("--out-dir", required=True, type=Path)
 
-    s = sub.add_parser("swap-security", help="基本保護（両方オン）の末尾のセキュリティだけ入れ替える（週次）")
-    s.add_argument("--basic", required=True, type=Path)
+    s = sub.add_parser("swap-security", help="2 本目（両方オン）の末尾のセキュリティだけ入れ替える（週次）")
+    s.add_argument("--second", required=True, type=Path, help="docs/cdn/second-ads-sec.json")
     s.add_argument("--old-security", required=True, type=Path)
     s.add_argument("--new-security", required=True, type=Path)
     s.add_argument("--output", required=True, type=Path)
@@ -238,9 +256,9 @@ def main() -> None:
             print(f"{name}: {len(rules)} rules{note}")
     else:
         swapped = replace_security_tail(
-            _load(args.basic), _load(args.old_security), _load(args.new_security))
+            _load(args.second), _load(args.old_security), _load(args.new_security))
         _dump(swapped, args.output)
-        print(f"basic-ads-sec: {len(swapped)} rules")
+        print(f"second-ads-sec: {len(swapped)} rules")
 
 
 if __name__ == "__main__":

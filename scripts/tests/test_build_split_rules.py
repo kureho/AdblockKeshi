@@ -185,24 +185,29 @@ def test_fails_when_second_cannot_even_hold_the_exceptions():
         split_rules(FULL, security=[], basic_cap=6, second_cap=2)
 
 
-def test_build_outputs_makes_four_files_with_a_fixed_security_budget():
+def test_build_outputs_puts_security_at_the_end_of_the_second_list():
+    # 9/27 計測: セキュリティ 3 万件を基本保護に入れると、その分の広告ルールが 2 本目へ押し出され、
+    # 基本保護だけの人（2 本目が無効・旧版アプリ）の漏れが今の 2 倍になった。今の配信の merged は
+    # セキュリティ 0 件（旧 build_merged_rules.py が広告の後ろで打ち切っていた）＝2 本目に置いても誰からも減らない
     out = build_outputs(FULL, SECURITY, security_budget=3, basic_cap=9, second_cap=100)
     assert set(out) == {"basic-ads-sec", "second-ads-sec", "basic-ads", "second-ads"}
-    # セキュリティの枠は実際の件数（2）ではなく固定の 3 で確保する＝週ごとの件数で振り分けが揺れない
-    sec_ads = [r for r in out["basic-ads-sec"] if not is_exc(r) and r not in SECURITY]
-    assert len(sec_ads) == 9 - 3 - 3  # 上限 9 − 例外 3 − セキュリティ枠 3
-    assert out["basic-ads-sec"][-2:] == SECURITY
+    assert out["basic-ads-sec"] == out["basic-ads"]
     assert len(out["basic-ads"]) == 9
+    assert not any(r in SECURITY for r in out["basic-ads-sec"])
+    assert out["second-ads-sec"][-2:] == SECURITY
+    assert out["second-ads-sec"][:-2] == out["second-ads"]
     assert_same_as_single_list([out["basic-ads-sec"], out["second-ads-sec"]], FULL + SECURITY)
     assert_same_as_single_list([out["basic-ads"], out["second-ads"]], FULL)
 
 
-def test_build_outputs_reports_rules_that_fit_neither_list():
-    # 2 本目も溢れたら捨てた件数を返す（月次のログに出して、上限の見直しに気づけるようにする）
+def test_build_outputs_reserves_a_fixed_security_budget_in_the_second_list():
+    # 2 本目（両方オン）はセキュリティの枠を実際の件数（2）ではなく固定の 3 で空ける＝週ごとの件数で振り分けが揺れない。
+    # 溢れたら捨てた件数を返す（月次のログに出して、上限の見直しに気づけるようにする）
     dropped: dict[str, int] = {}
-    build_outputs(FULL, SECURITY, security_budget=3, basic_cap=9, second_cap=4, dropped=dropped)
+    out = build_outputs(FULL, SECURITY, security_budget=3, basic_cap=5, second_cap=7, dropped=dropped)
     ads = len([r for r in FULL if not is_exc(r)])
-    assert dropped == {"second-ads-sec": ads - (9 - 3 - 3) - (4 - 3), "second-ads": ads - (9 - 3) - (4 - 3)}
+    assert dropped == {"second-ads-sec": ads - (5 - 3) - (7 - 3 - 3), "second-ads": ads - (5 - 3) - (7 - 3)}
+    assert len(out["second-ads-sec"]) == 7 - 3 + 2
 
 
 def test_build_outputs_rejects_security_over_budget():
@@ -213,15 +218,15 @@ def test_build_outputs_rejects_security_over_budget():
 def test_replace_security_tail_swaps_only_the_security_part():
     out = build_outputs(FULL, SECURITY, security_budget=3, basic_cap=9, second_cap=100)
     new_sec = [block("phish3.example")]
-    swapped = replace_security_tail(out["basic-ads-sec"], old_security=SECURITY, new_security=new_sec)
-    assert swapped[:-1] == out["basic-ads-sec"][:-2]
+    swapped = replace_security_tail(out["second-ads-sec"], old_security=SECURITY, new_security=new_sec)
+    assert swapped[:-1] == out["second-ads-sec"][:-2]
     assert swapped[-1:] == new_sec
 
 
 def test_replace_security_tail_refuses_when_tail_does_not_match():
     out = build_outputs(FULL, SECURITY, security_budget=3, basic_cap=9, second_cap=100)
     with pytest.raises(SplitError):
-        replace_security_tail(out["basic-ads-sec"], old_security=[block("other.example")],
+        replace_security_tail(out["second-ads-sec"], old_security=[block("other.example")],
                               new_security=SECURITY)
 
 
@@ -229,7 +234,7 @@ def test_replace_security_tail_refuses_new_security_over_budget():
     out = build_outputs(FULL, SECURITY, security_budget=3, basic_cap=9, second_cap=100)
     too_many = [block(f"p{i}.example") for i in range(4)]
     with pytest.raises(SplitError):
-        replace_security_tail(out["basic-ads-sec"], old_security=SECURITY, new_security=too_many,
+        replace_security_tail(out["second-ads-sec"], old_security=SECURITY, new_security=too_many,
                               security_budget=3)
 
 
@@ -291,6 +296,18 @@ def test_build_outputs_protects_l2_allowed_hosts_in_both_toggle_variants():
                                       L2_REQUESTS + REQUESTS)
 
 
+
+def test_build_outputs_fails_when_popunder_does_not_fit_behind_the_remainder():
+    # アプリは 2 本目に「残り → ポップアップ対策 → 報告（予約 2,000）→ 一時オフ」と並べ、件数では切らない。
+    # ポップアップ対策が伸び代（1,000）を超えて伸びたら、配信を止めて気づかせる（15 万件超えで 2 本目が壊れる）
+    out = build_outputs(FULL, SECURITY, security_budget=3, basic_cap=8, second_cap=100, popunder=POPUNDER)
+    fits = max(len(out["second-ads-sec"]), len(out["second-ads"])) + len(POPUNDER)
+    build_outputs(FULL, SECURITY, security_budget=3, basic_cap=8, second_cap=100, popunder=POPUNDER,
+                  second_total_cap=fits)
+    with pytest.raises(SplitError):
+        build_outputs(FULL, SECURITY, security_budget=3, basic_cap=8, second_cap=100, popunder=POPUNDER,
+                      second_total_cap=fits - 1)
+
 # ── 全量の重複（同じルールが複数のフィルタから来る。実データで 6.2 万件）──
 # 同じルールが 2 つあるとき、後ろのコピーだけ残せば 1 本のリストとしての効き方は変わらない
 # （前のコピーが効く場面では、その後ろに打ち消しが無い限り後ろのコピーも効く）。
@@ -317,3 +334,14 @@ def test_dedup_keeps_the_single_list_behavior(basic_cap):
     assert_same_as_single_list([basic, second], FULL_DUP)
     # 重要ルールとしての ima が残っている＝動画サイトでも止まる（前のコピーを残すと通ってしまう）
     assert evaluate(FULL_DUP, "https://ima.example/x.js", "video.example")[0] is True
+
+
+def test_a_rule_repeated_later_keeps_the_priority_of_its_first_copy():
+    # 同じ遮断が前のフィルタ（日本語）と後ろのフィルタ（汎用）の両方にあると、重複除去で後ろのコピーが残る。
+    # 基本保護に入れる優先順は前のコピーの位置で決める＝上限で切った今の 1 本に入っていたルールを落とさない
+    # （9/27 計測: 後ろのコピーの位置で並べたら fluct・openx・Google の広告タグが 2 本目に回り、
+    #   基本保護だけの人の漏れが今の 2 倍になった）
+    full = [block("a.example"), block("dup.example"), block("b.example"), block("c.example"), block("dup.example")]
+    basic, second, _ = split_rules(full, security=[], basic_cap=2, second_cap=100)
+    assert block("dup.example") in basic and block("dup.example") not in second
+    assert_same_as_single_list([basic, second], full)

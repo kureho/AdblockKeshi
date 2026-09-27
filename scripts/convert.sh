@@ -7,9 +7,11 @@ set -euo pipefail
 #
 # 出力（docs/cdn/）:
 #   blockerList.json   = 基本保護（広告だけオン）。旧版アプリの ad-rules.json もこれを取る
-#   merged-rules.json  = 基本保護（広告＋セキュリティ）。旧版アプリも同じ名前で取る
-#   second-ads.json / second-ads-sec.json = 2 本目に載せる広告の残り（4.4.0〜）
-#   version.json / version-security.json の該当 sha
+#   merged-rules.json  = 基本保護（広告＋セキュリティ）。中身は blockerList.json と同じ（広告ルールだけ）。
+#                        旧版アプリも同じ名前で取る
+#   second-ads.json     = 2 本目に載せる広告の残り（広告だけオン・4.4.0〜）→ version.json に sha
+#   second-ads-sec.json = 同（両方オン）。末尾にセキュリティ（週次が入れ替える）→ version-security.json に sha
+#   セキュリティを基本保護に入れない理由は build_split_rules.py 冒頭（9/27 計測で基本保護だけの人の漏れが倍増）
 # ConverterTool は 15 万件で打ち切らない版を使う（monthly-filter-update.yml が上限を外してビルドする）。
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,12 +49,16 @@ declare -a LICENSES=()
 while IFS=$'\t' read -r name url license; do
   echo "  - $name ($license): $url"
   out="$TMP_DIR/${name}.txt"
-  if curl -fsSL --max-time 60 "$url" -o "$out"; then
+  # A-88 ①: 1 本でも取れなければ止める（CDN は前の月のまま）。基本保護と 2 本目の残りは対で作るので、
+  # 欠けた全量で振り分けると残りだけが大きく痩せ、アプリの件数チェック（前回の半分未満は捨てる）で
+  # 残りだけ古い月のまま＝対が崩れる。以前は 15 万件で打ち切る 1 本だったので飛ばしても害が小さかった。
+  if curl -fsSL --max-time 60 --retry 3 --retry-delay 10 "$url" -o "$out"; then
     FILES+=("$out")
     NAMES+=("$name")
     LICENSES+=("$license")
   else
-    echo "[WARN] $name fetch failed, skipping"
+    echo "[ERROR] $name fetch failed; stopping so the CDN keeps last month's pair" >&2
+    exit 1
   fi
 done < <(parse_filters)
 
@@ -109,7 +115,6 @@ JSON_BYTES=$(wc -c < "$CDN_DIR/blockerList.json" | tr -d ' ')
 # version.json 生成（jq で構築）
 SHA256=$(shasum -a 256 "$CDN_DIR/blockerList.json" | awk '{print $1}')
 SECOND_ADS_SHA256=$(shasum -a 256 "$CDN_DIR/second-ads.json" | awk '{print $1}')
-SECOND_ADS_SEC_SHA256=$(shasum -a 256 "$CDN_DIR/second-ads-sec.json" | awk '{print $1}')
 GENERATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # filters 配列を jq で組み立て
@@ -136,18 +141,21 @@ jq -n \
   --argjson filters "$FILTERS_JSON" \
   --argjson reported "$EXISTING_REPORTED" \
   --arg second_ads_sha256 "$SECOND_ADS_SHA256" \
-  --arg second_ads_sec_sha256 "$SECOND_ADS_SEC_SHA256" \
   '{generated_at: $generated_at, rule_count: $rule_count, size_bytes: $size_bytes, blocker_list_sha256: $sha256, filters: $filters,
-    second_ads_sha256: $second_ads_sha256, second_ads_sec_sha256: $second_ads_sec_sha256}
+    second_ads_sha256: $second_ads_sha256}
    + (if $reported != null then {reported: $reported} else {} end)' \
   > "$CDN_DIR/version.json"
 
-# merged-rules.json もここで作り直したので、アプリが見る version-security.json の sha と日時を合わせる
-# （security / empty の sha は週次の担当なのでそのまま残す）
+# merged-rules.json と second-ads-sec.json もここで作り直したので、アプリが見る version-security.json の
+# sha と日時を合わせる（security / empty の sha は週次の担当なのでそのまま残す）
 MERGED_SHA256=$(shasum -a 256 "$CDN_DIR/merged-rules.json" | awk '{print $1}')
 MERGED_BYTES=$(wc -c < "$CDN_DIR/merged-rules.json" | tr -d ' ')
+SECOND_ADS_SEC_SHA256=$(shasum -a 256 "$CDN_DIR/second-ads-sec.json" | awk '{print $1}')
+SECOND_ADS_SEC_BYTES=$(wc -c < "$CDN_DIR/second-ads-sec.json" | tr -d ' ')
 jq --arg sha "$MERGED_SHA256" --argjson bytes "$MERGED_BYTES" --arg at "$GENERATED_AT" \
-  '."merged-rules_sha256" = $sha | ."merged-rules_bytes" = $bytes | .generated_at = $at' \
+  --arg ssha "$SECOND_ADS_SEC_SHA256" --argjson sbytes "$SECOND_ADS_SEC_BYTES" \
+  '."merged-rules_sha256" = $sha | ."merged-rules_bytes" = $bytes
+   | ."second-ads-sec_sha256" = $ssha | ."second-ads-sec_bytes" = $sbytes | .generated_at = $at' \
   "$CDN_DIR/version-security.json" > "$TMP_DIR/version-security.json"
 mv "$TMP_DIR/version-security.json" "$CDN_DIR/version-security.json"
 

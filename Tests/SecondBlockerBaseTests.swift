@@ -75,4 +75,51 @@ final class SecondBlockerBaseTests: XCTestCase {
         XCTAssertFalse(SecondBlockerBase.needsRegenerate(afterApplying: ["merged-rules.json", "ad-rules.json"]))
         XCTAssertFalse(SecondBlockerBase.needsRegenerate(afterApplying: []))
     }
+
+    // MARK: - 残りを載せた作り直しに失敗したとき
+
+    private struct CompileFailed: Error {}
+    private let remainderBytes = Data(#"[{"remainder":1}]"#.utf8)
+    private let popunderBytes = Data(#"[{"popunder":1}]"#.utf8)
+
+    func test_rebuild_uses_the_remainder_when_it_compiles() {
+        var calls: [(Data, Bool)] = []
+        let result = SecondBlockerBase.rebuild(composed: remainderBytes, popunder: popunderBytes) { base, keep in
+            calls.append((base, keep)); return "built"
+        }
+        XCTAssertEqual(result, "built")
+        XCTAssertEqual(calls.map(\.0), [remainderBytes])
+        XCTAssertEqual(calls.map(\.1), [true])
+    }
+
+    /// 残りが壊れていて作れないと、古い 2 本目が残り続け、新しい報告も「このサイトで一時オフ」も
+    /// 2 本目に届かない。ポップアップ対策だけで作り直して、一時オフを効かせる。
+    func test_rebuild_falls_back_to_popunder_only_when_the_remainder_fails() {
+        var calls: [(Data, Bool)] = []
+        let result = SecondBlockerBase.rebuild(composed: remainderBytes, popunder: popunderBytes) { base, keep in
+            calls.append((base, keep))
+            if base == self.remainderBytes { throw CompileFailed() }
+            return "popunder only"
+        }
+        XCTAssertEqual(result, "popunder only")
+        XCTAssertEqual(calls.map(\.0), [remainderBytes, popunderBytes])
+        XCTAssertEqual(calls.map(\.1), [true, false])
+    }
+
+    func test_rebuild_without_a_remainder_builds_popunder_only_once() {
+        var calls: [(Data, Bool)] = []
+        let result = SecondBlockerBase.rebuild(composed: nil, popunder: popunderBytes) { base, keep in
+            calls.append((base, keep)); return "popunder only"
+        }
+        XCTAssertEqual(result, "popunder only")
+        XCTAssertEqual(calls.map(\.0), [popunderBytes])
+        XCTAssertEqual(calls.map(\.1), [false])
+    }
+
+    func test_rebuild_gives_up_when_both_fail() {
+        let result: String? = SecondBlockerBase.rebuild(composed: remainderBytes, popunder: popunderBytes) { _, _ in
+            throw CompileFailed()
+        }
+        XCTAssertNil(result)
+    }
 }
