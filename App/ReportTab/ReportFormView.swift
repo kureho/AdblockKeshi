@@ -227,13 +227,28 @@ struct ReportFormView: View {
                 switch result {
                 case .success(let token):
                     Task { await viewModel.completeSubmit(turnstileResponse: token) }
-                case .failure:
-                    viewModel.cancelTurnstile()
+                case .failure(let error):
+                    // 送信エラー修正①: 失敗・タイムアウトを黙って idle に戻さず、
+                    // エラーとして見せる（`tasks/report-pipeline-audit-2026-09-27.md` ③）。
+                    viewModel.failTurnstile((error as? APIError) ?? .turnstileVerificationFailed)
                 }
             }
         }
         .alert(isPresented: errorBinding) {
-            Alert(
+            if isRetryableTurnstileFailure {
+                // 既存の Alert 部品はそのまま・ボタンの文言と動作だけを差し替える
+                // （「もう一度」に当たる専用ボタンが無いため、送信ボタンを再度呼び出す形で流用する）。
+                return Alert(
+                    title: Text("送信に失敗しました"),
+                    message: Text(errorMessage),
+                    primaryButton: .default(Text("もう一度送信")) {
+                        viewModel.dismissError()
+                        viewModel.beginSubmit()
+                    },
+                    secondaryButton: .cancel(Text("閉じる")) { viewModel.dismissError() }
+                )
+            }
+            return Alert(
                 title: Text("送信に失敗しました"),
                 message: Text(errorMessage),
                 primaryButton: .default(Text("お問い合わせ")) {
@@ -279,6 +294,13 @@ struct ReportFormView: View {
             get: { if case .error = viewModel.state { return true }; return false },
             set: { if !$0 { viewModel.dismissError() } }
         )
+    }
+
+    /// Turnstile の失敗・タイムアウトだけ「もう一度送信」ボタンにする
+    /// （このアプリのバグではなく確認そのものの失敗なので、お問い合わせより再送信が先）。
+    private var isRetryableTurnstileFailure: Bool {
+        if case .error(.turnstileVerificationFailed) = viewModel.state { return true }
+        return false
     }
 
     private var errorMessage: String {

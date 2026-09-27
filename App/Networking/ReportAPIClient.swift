@@ -92,8 +92,14 @@ final class ReportAPIClient: ReportAPIClientProtocol {
             case 200..<300:
                 do { return try decoder.decode(T.self, from: data) }
                 catch { throw APIError.decodingFailed }
-            case 401, 403:
+            case 401:
                 throw APIError.unauthorized
+            case 403:
+                // ワークスペース内で 403 を返すのは送信停止中 (banned) の 1 箇所のみ
+                // (`workers/src/handlers/submit.ts:123`)。401 と一律 unauthorized にすると
+                // 「認証エラーです。アプリを再起動してください」という、再起動しても直らない
+                // 誤った案内になる（点検記録 `tasks/report-pipeline-audit-2026-09-27.md` ③）。
+                throw try APIError.fromBody(data: data, statusCode: 403)
             case 429:
                 throw try APIError.fromBody(data: data, statusCode: 429)
             case 400:

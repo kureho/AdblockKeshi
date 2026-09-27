@@ -94,6 +94,15 @@ final class ReportFormViewModel: ObservableObject {
         if case .awaitingTurnstile = state { state = .idle }
     }
 
+    /// Turnstile の検証が失敗した、または 30 秒でタイムアウトした。
+    /// 送信エラー修正①: 黙って `.idle` に戻すと「押しても送れない」に見える
+    /// （点検記録 `tasks/report-pipeline-audit-2026-09-27.md` ③）ため、エラーとして見せる。
+    /// 入力は消さないので、既存の送信ボタンでそのまま「もう一度送信」できる。
+    func failTurnstile(_ error: APIError) {
+        guard case .awaitingTurnstile = state else { return }
+        state = .error(error)
+    }
+
     /// Turnstile widget produced a response token. Exchange it for an HMAC
     /// token, then send the report.
     func completeSubmit(turnstileResponse: String) async {
