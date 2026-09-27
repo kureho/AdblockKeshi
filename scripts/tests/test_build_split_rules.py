@@ -184,6 +184,15 @@ def test_fails_when_exceptions_do_not_fit_in_basic():
         split_rules(FULL, basic_cap=2, second_cap=100)
 
 
+def test_basic_holds_only_the_exceptions_when_they_fill_the_cap_exactly():
+    # 例外の件数 == 上限（余り 0）は失敗ではない。基本保護は例外だけ、広告は全部 2 本目
+    n_exc = sum(1 for r in FULL if is_exc(r))
+    basic, second, dropped = split_rules(FULL, basic_cap=n_exc, second_cap=100)
+    assert all(is_exc(r) for r in basic) and len(basic) == n_exc
+    assert [r for r in second if not is_exc(r)] == [r for r in FULL if not is_exc(r)]
+    assert dropped == 0
+
+
 def test_fails_when_second_cannot_even_hold_the_exceptions():
     with pytest.raises(SplitError):
         split_rules(FULL, basic_cap=6, second_cap=2)

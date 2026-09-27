@@ -65,4 +65,35 @@ final class CombinedRuleListMergeTests: XCTestCase {
         let out = try CombinedRuleListMerge.truncatedMerge(standardRules: standard, keepStandard: 0, reported: reported)
         XCTAssertEqual(try decode(out), reported)
     }
+
+    // MARK: - concatenate（2 本目 = 広告の残り → ポップアップ対策をデコードせずに繋ぐ）
+
+    func test_concatenate_keeps_first_then_second_order() throws {
+        let a = try JSONEncoder().encode([block("a.test"), block("b.test")])
+        let b = try JSONEncoder().encode([cosmetic("c.test")])
+        XCTAssertEqual(try decode(CombinedRuleListMerge.concatenate(a, b)),
+                       [block("a.test"), block("b.test"), cosmetic("c.test")])
+    }
+
+    func test_concatenate_with_an_empty_side_does_not_leave_a_stray_comma() throws {
+        let one = try JSONEncoder().encode([block("a.test")])
+        let empty = Data(" [ \n ] ".utf8)
+        XCTAssertEqual(try decode(CombinedRuleListMerge.concatenate(empty, one)), [block("a.test")])
+        XCTAssertEqual(try decode(CombinedRuleListMerge.concatenate(one, empty)), [block("a.test")])
+        XCTAssertEqual(try decode(CombinedRuleListMerge.concatenate(empty, empty)), [])
+    }
+
+    func test_concatenate_tolerates_surrounding_whitespace() throws {
+        let a = Data("\n  ".utf8) + (try JSONEncoder().encode([block("a.test")])) + Data("\n".utf8)
+        let b = Data("\t".utf8) + (try JSONEncoder().encode([block("b.test")])) + Data("  \r\n".utf8)
+        XCTAssertEqual(try decode(CombinedRuleListMerge.concatenate(a, b)), [block("a.test"), block("b.test")])
+    }
+
+    func test_concatenate_rejects_non_arrays() {
+        let arr = Data("[]".utf8)
+        for bad in ["{}", "", "   ", "[", "]", "null"] {
+            XCTAssertThrowsError(try CombinedRuleListMerge.concatenate(Data(bad.utf8), arr), bad)
+            XCTAssertThrowsError(try CombinedRuleListMerge.concatenate(arr, Data(bad.utf8)), bad)
+        }
+    }
 }
