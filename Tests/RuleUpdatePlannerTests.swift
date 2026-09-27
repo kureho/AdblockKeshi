@@ -216,6 +216,21 @@ final class RuleUpdatePlannerTests: XCTestCase {
         XCTAssertEqual(plans.count, 4)
     }
 
+    /// 2 つの版情報は別々に取るので、配信の切り替わりをまたぐと片方だけ新しい形になりうる。
+    /// 片方にしかキーが無ければ、その残りだけを計画し、もう片方は次の回に回す（更新全体は止めない）。
+    func test_second_plans_follow_each_manifest_independently() throws {
+        let onlyVersion = try RuleUpdatePlanner.plans(
+            versionJSON: versionJSONWithSecond, versionSecurityJSON: versionSecurityJSON)
+        XCTAssertNotNil(plan("second-ads.json", in: onlyVersion))
+        XCTAssertNil(plan("second-ads-sec.json", in: onlyVersion))
+        XCTAssertEqual(onlyVersion.count, 5)
+        let onlySecurity = try RuleUpdatePlanner.plans(
+            versionJSON: versionJSON, versionSecurityJSON: versionSecurityJSONWithSecond)
+        XCTAssertNil(plan("second-ads.json", in: onlySecurity))
+        XCTAssertNotNil(plan("second-ads-sec.json", in: onlySecurity))
+        XCTAssertEqual(onlySecurity.count, 5)
+    }
+
     func test_second_remainder_baselines_reject_clearly_broken_files() throws {
         let plans = try RuleUpdatePlanner.plans(
             versionJSON: versionJSONWithSecond, versionSecurityJSON: versionSecurityJSONWithSecond)

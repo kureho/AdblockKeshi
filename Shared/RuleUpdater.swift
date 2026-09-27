@@ -306,6 +306,10 @@ actor RuleUpdater {
         let store = AppliedRulesStore(directory: directory)
         var records = store.read()
         var outcome = RuleUpdateOutcome()
+        // 同じ中身の variant（A-88 ①以降は blockerList.json と merged-rules.json が同一）は 1 回だけ取得する。
+        // 2,700 万バイト級を 2 回落とすと、バックグラウンド更新の持ち時間内に後ろの variant まで届かないことがある。
+        let sharedSHAs = Set(Dictionary(grouping: plans, by: \.expectedSHA256).filter { $0.value.count > 1 }.keys)
+        var fetchedBySHA: [String: Data] = [:]
 
         for plan in plans {
             let variant = plan.variantFilename
@@ -333,9 +337,15 @@ actor RuleUpdater {
             }
 
             do {
-                let data = try await fetch(plan.downloadURL)
-                guard RuleUpdatePlanner.sha256Hex(data) == plan.expectedSHA256 else {
-                    throw UpdateError.shaMismatch(variant)
+                let data: Data
+                if let cached = fetchedBySHA[plan.expectedSHA256] {
+                    data = cached
+                } else {
+                    data = try await fetch(plan.downloadURL)
+                    guard RuleUpdatePlanner.sha256Hex(data) == plan.expectedSHA256 else {
+                        throw UpdateError.shaMismatch(variant)
+                    }
+                    if sharedSHAs.contains(plan.expectedSHA256) { fetchedBySHA[plan.expectedSHA256] = data }
                 }
                 guard let count = ruleCount(of: data) else {
                     throw UpdateError.notARuleArray(variant)

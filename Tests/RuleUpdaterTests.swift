@@ -158,6 +158,24 @@ final class RuleUpdaterTests: XCTestCase {
         )
     }
 
+    /// A-88 ①: 基本保護は広告だけで作るので merged-rules.json と blockerList.json は同じ中身（各 2,800 万バイト）。
+    /// 同じ sha のファイルは 1 回だけ取得して両方に書く（毎月の通信量と、バックグラウンドで途中で止められる時間を減らす）。
+    func test_downloads_identical_variants_only_once() async throws {
+        let basic = rulesPayload(count: 148_800, marker: "basic.example")
+        let security = rulesPayload(count: 30_000, marker: "sec.example")
+        let stub = stubAllEndpoints(ad: basic, merged: basic, security: security)
+
+        let outcome = try await makeUpdater(stub: stub).updateIfNeeded()
+
+        XCTAssertTrue(Set(outcome.applied).isSuperset(of: ["ad-rules.json", "merged-rules.json"]))
+        XCTAssertEqual(try Data(contentsOf: tempDir.appendingPathComponent("ad-rules.json")), basic)
+        XCTAssertEqual(try Data(contentsOf: tempDir.appendingPathComponent("merged-rules.json")), basic)
+        let basicFetches = stub.requested.filter {
+            $0.hasSuffix("/blockerList.json") || $0.hasSuffix("/merged-rules.json")
+        }
+        XCTAssertEqual(basicFetches.count, 1)
+    }
+
     func test_updates_only_changed_variant() async throws {
         let ad = rulesPayload(count: 150_000)
         let merged = rulesPayload(count: 130_000)

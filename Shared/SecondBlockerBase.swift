@@ -28,11 +28,27 @@ enum SecondBlockerBase {
     /// 2 本目を作る。残りを載せた版が作れなければ（コンパイル失敗など）、ポップアップ対策だけで作り直す。
     /// 残りは CDN から毎月入れ替わる新しい失敗源。失敗したまま古い 2 本目を残すと、新しい報告も
     /// 「このサイトで一時オフ」も 2 本目に届かない（開けないサイトを開けなくなる）ので、残りを諦めて一時オフを通す。
+    /// ただしコンパイル待ちの時間切れのような一時的な失敗（`isTransient`）では作り直さず nil を返し、前回の 2 本目を残す。
+    /// 中身が壊れているわけではないので、ポップアップ対策だけにすると残りの広告と詐欺サイト対策を無駄に失う
+    /// （報告 0 件・一時オフ 0 件なら 2 本目がポップアップ対策だけに縮む）。次の作り直しで戻る。
     /// `rebuild(base, keepWhenNoReported)` は CombinedRuleListBuilder.rebuildIfNeeded を呼ぶ口。
     static func rebuild<Outcome>(composed: Data?, popunder: Data,
+                                 isTransient: (Error) -> Bool = { _ in false },
                                  using rebuild: (_ base: Data, _ keepWhenNoReported: Bool) throws -> Outcome) -> Outcome? {
-        if let composed, let outcome = try? rebuild(composed, true) { return outcome }
-        return try? rebuild(popunder, false)
+        if let composed {
+            do {
+                return try rebuild(composed, true)
+            } catch {
+                print("[SecondBlockerBase] remainder rebuild failed: \(error)")
+                if isTransient(error) { return nil }
+            }
+        }
+        do {
+            return try rebuild(popunder, false)
+        } catch {
+            print("[SecondBlockerBase] popunder-only rebuild failed: \(error)")
+            return nil
+        }
     }
 
     /// ルール更新で残りのファイルが差し替わったら、2 本目を作り直す必要がある。

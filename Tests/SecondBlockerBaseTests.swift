@@ -116,6 +116,20 @@ final class SecondBlockerBaseTests: XCTestCase {
         XCTAssertEqual(calls.map(\.1), [false])
     }
 
+    /// コンパイル待ちのタイムアウト（バックグラウンドで止められた等）は一時的な失敗。ここでポップアップ対策だけで
+    /// 作り直すと、報告も一時オフも無い人は 2 本目の combined が消え、次に作り直すまで広告の残りと
+    /// 詐欺サイト対策が効かなくなる。前の 2 本目を残して何もしない。
+    func test_rebuild_keeps_the_previous_list_when_the_remainder_fails_transiently() {
+        struct Timeout: Error {}
+        var calls: [Data] = []
+        let result: String? = SecondBlockerBase.rebuild(composed: remainderBytes, popunder: popunderBytes,
+                                                        isTransient: { $0 is Timeout }) { base, _ in
+            calls.append(base); throw Timeout()
+        }
+        XCTAssertNil(result)
+        XCTAssertEqual(calls, [remainderBytes])
+    }
+
     func test_rebuild_gives_up_when_both_fail() {
         let result: String? = SecondBlockerBase.rebuild(composed: remainderBytes, popunder: popunderBytes) { _, _ in
             throw CompileFailed()

@@ -63,7 +63,11 @@ enum CombinedRuleListCoordinator {
             try? SecondBlockerBase.compose(adsRemainder: $0, popunder: baseData)
         }
         // 残りを載せた版が作れなければポップアップ対策だけで作り直す（一時オフと新しい報告を止めない）。
-        let outcome = SecondBlockerBase.rebuild(composed: composed, popunder: baseData) { base, keepWhenNoReported in
+        // コンパイル待ちの時間切れ（中断されたバックグラウンド等）は一時的なので作り直さず前回の 2 本目を残す。
+        let outcome = SecondBlockerBase.rebuild(
+            composed: composed, popunder: baseData,
+            isTransient: { ($0 as? CoordinatorError) == .compileTimeout }
+        ) { base, keepWhenNoReported in
             try builder.rebuildIfNeeded(
                 variantFilename: PopunderRulesResolver.filename,
                 baseData: base,
