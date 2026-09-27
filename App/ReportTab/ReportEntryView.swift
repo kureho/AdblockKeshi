@@ -7,6 +7,9 @@ struct ReportEntryView: View {
     /// A-88 進め方5: 「通常 7〜14 日でブロックリストに追加」は“必ず追加される”と読める断定表現
     /// だったため、実態（週1回の判定・結果は履歴で分かる）に合わせて書き換える。
     /// static にしてテスト（`ReportEntryWordingTests`）から直接文言を検証できるようにする。
+    /// 画面上部の説明文。テスト（`ReportEntryWordingTests`）から文言を検証できるよう static にする。
+    static let headerSubtitle = "URL を送信するだけ。内容を確認して、消せる広告はブロックに反映します。"
+
     static let flowStep3Subtitle = "週1回内容を確認し、結果を履歴でお知らせします（本体アプリの更新は不要）。"
 
     var body: some View {
@@ -37,7 +40,7 @@ struct ReportEntryView: View {
             Text("他のブロッカーで\n消えない広告を見つけた？")
                 .font(.title2.bold())
                 .multilineTextAlignment(.center)
-            Text("URL を送信するだけ。自動で検証して、ブロックリストへ追加します。")
+            Text(Self.headerSubtitle)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

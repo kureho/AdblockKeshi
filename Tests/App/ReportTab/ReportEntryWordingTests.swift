@@ -18,4 +18,13 @@ final class ReportEntryWordingTests: XCTestCase {
         XCTAssertTrue(ReportEntryView.flowStep3Subtitle.contains("履歴"),
                       "結果は履歴で分かる旨を書く")
     }
+
+    /// 画面上部の説明文も同じ約束をしていた（「自動で検証して、ブロックリストへ追加します」）。
+    /// 報告は週1回の判定を通り、アプリ内広告・サイト自身の広告などは追加されない＝断定しない。
+    func test_headerSubtitle_noLongerPromisesGuaranteedAddition() {
+        XCTAssertFalse(ReportEntryView.headerSubtitle.contains("ブロックリストへ追加します"),
+                       "「必ず追加される」と読める断定表現を残さない")
+        XCTAssertTrue(ReportEntryView.headerSubtitle.contains("確認"),
+                      "内容を確認してから反映する流れを書く")
+    }
 }
