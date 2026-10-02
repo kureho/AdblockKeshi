@@ -3,14 +3,10 @@
 ## 次版で必ず反映
 
 - [x] **リンク到着で購入画面（設定タブの Pro 購入画面）を閉じる**（2026-10-02・電光掲示板 1.0.1 と同じ漏れ。広告欄の「広告を消す」は無いアプリ）→ 53bce7a。次の版に同乗する。
-
-## ★次版で必ず反映: DL 診断 v2 第 2 群の keywords（台帳 A-81・2026-10-01 kureho 承認）
-
-kureho「推奨で進めていいよ」（10/1）＝**4.4.0 の次の版に同乗**（keywords だけの版は作らない）。提出版の ja localization に PATCH → GET で一致を確認 → `fastlane/metadata/ja/keywords.txt` も同じ値に揃える。
-
-- **keywords**（88/100字・機械計測）: `消す,アプリ内広告,他アプリ,うざい,詐欺,フィッシング,セキュリティ,ポップアップ,迷惑広告,詐欺サイト,広告非表示,全画面広告,バナー,動画広告,勝手に開く,広告ブロッカー`
-- name / subtitle は変えない。スクショ 1 枚目の副題（課金の条件を 1 語）は**保留継続**（画像は今回の範囲外）
-- 正典 `/Users/oharakureho/claude/tasks/dl-diagnosis-2026-09-22/v2/08-execution-list.md` §13
+- [ ] **DL 診断 v2 第 2 群の keywords**（台帳 A-81・2026-10-01 kureho 承認「推奨で進めていいよ」）＝4.4.0 の次の版に同乗（keywords だけの版は作らない）。提出版の ja localization に PATCH → GET で一致を確認 → `fastlane/metadata/ja/keywords.txt` も同じ値に揃える。
+  - **keywords**（88/100字・機械計測）: `消す,アプリ内広告,他アプリ,うざい,詐欺,フィッシング,セキュリティ,ポップアップ,迷惑広告,詐欺サイト,広告非表示,全画面広告,バナー,動画広告,勝手に開く,広告ブロッカー`
+  - name / subtitle は変えない。スクショ 1 枚目の副題（課金の条件を 1 語）は**保留継続**（画像は今回の範囲外）
+  - 正典 `/Users/oharakureho/claude/tasks/dl-diagnosis-2026-09-22/v2/08-execution-list.md` §13
 
 ## ★A-88: 報告→ブロックの作り直し（2026-09-27 kureho 方針確定・4.4.0 で出す）
 
@@ -61,7 +57,9 @@ kureho「この形で進める（推奨）」＝**土台の修理 → 週 1 回�
 
 オンボーディングの案内が旧経路「Safari → 機能拡張」のまま（`App/OnboardingView.swift:48`）。✅**9/27 確定**: Apple 公式ユーザガイド（support.apple.com/ja-jp/guide/iphone/iphab0432bf6/ios・iOS 27 版・9/27 取得）の手順は「設定 →『アプリ』→『Safari』→『機能拡張』」＝「アプリ」が抜けている。さらに下のボタン（`UIApplication.openSettingsURLString`）は「設定 → アプリ → 広告消し」に着地するので、そこから「アプリ」へ 1 つ戻る案内が要る。→ 4.4.0 の段 4（文言）で直し、kureho に見せる画面に含める。正典 `/Users/oharakureho/claude/tasks/owned-channels-2026-09-24/phase2/30-deliverables.md`「アプリ側の別タスク」。
 
-## ★次版で必ず反映: ja keywords に「ポップアップ」（B7）
+## ✅（4.4.0 で消化）★次版で必ず反映: ja keywords に「ポップアップ」（B7）
+
+（2026-10-02 確認: 4.4.0 の提出コミット 0db3b8f の `fastlane/metadata/ja/keywords.txt` 末尾に `ポップアップ` あり）
 
 ★2026-09-23 kureho 承認（獲得調査 段 1・台帳 C-91）。**この変更だけのために版を作らない**＝理由を問わず次に出す通常版に載せる（A-81 の画像待ちとは無関係・待たない）。**段 2（A-81 本体の name/subtitle/keywords）は今回承認外＝混ぜない**。提出版の localization へ keywords を PATCH → 提出前に GET で読み直して一致を確認 → 載せたら台帳 C-91 の該当アプリを消す。根拠 `/Users/oharakureho/claude/tasks/acquisition-research-2026-09-23/06-decision-package.md`
 - **審査中の 4.3.0 には触らない**。4.3.0 の次の通常版に載せる
@@ -70,7 +68,9 @@ kureho「この形で進める（推奨）」＝**土台の修理 → 週 1 回�
 - 変更後: 上の末尾に `,ポップアップ`（56 字）
 - ★このリポジトリは `fastlane/metadata/ja/keywords.txt` もある＝提出経路が deliver なら同じ値をそこにも入れる
 
-## 2026-09-23: ディープリンク `adblockkeshi://<host>` 実装済み（C-88・次の版に同乗）
+## ✅（4.4.0 で消化）2026-09-23: ディープリンク `adblockkeshi://<host>` 実装済み（C-88・次の版に同乗）
+
+（2026-10-02 確認: 実装コミット 9d32363 は 4.4.0 の提出コミット 0db3b8f に含まれる）
 
 対応 host: `home`（ブロッカータブ）/ `report`（報告タブ）/ `settings`（設定タブ）。
 アプリ内イベントの deepLink には `adblockkeshi://home` 等を使う。
