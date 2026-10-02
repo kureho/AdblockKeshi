@@ -36,6 +36,10 @@ struct ProPaywallSheet: View {
                 .onChange(of: store.isPro) { _, isPro in
                     if isPro { dismiss() }
                 }
+                // リンク到着時は購入画面の下でタブだけが切り替わるので自分で閉じる（DeepLink.didArrive）。
+                .onReceive(NotificationCenter.default.publisher(for: DeepLink.didArrive)) { _ in
+                    dismiss()
+                }
         }
         .fittingSheetHeight()
     }

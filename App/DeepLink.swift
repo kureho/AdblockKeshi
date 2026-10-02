@@ -6,6 +6,10 @@ import Foundation
 enum DeepLink {
     static let scheme = "adblockkeshi"
 
+    /// リンク到着の通知。開いている購入画面（`ProPaywallSheet`）が受けて自分を閉じる。
+    /// ルートの処理は設定タブが持つシートまで届かず、タブ切替が購入画面の下で起きて行き先が見えないため。
+    static let didArrive = Notification.Name("AdblockKeshi.DeepLink.didArrive")
+
     static func tab(for url: URL) -> AppTab? {
         guard url.scheme?.lowercased() == scheme else { return nil }
         switch url.host?.lowercased() {
