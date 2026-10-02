@@ -232,6 +232,9 @@ actor RuleUpdater {
     let versionSecurityURL: URL
     let fetch: Fetch
     let bundledFileURL: @Sendable (String) -> URL?
+    /// 最初の variant を書き換える直前に 1 回だけ呼ぶ（呼び出し側が「読み込みが要る」印を付ける口）。
+    /// 書き込みの後〜`reload` までに終了されると、次は sha が記録と一致して取得も読み込みも起きないため。
+    let willApply: (@Sendable () async -> Void)?
     let reload: (@Sendable () async -> Void)?
     let now: @Sendable () -> Date
 
@@ -241,6 +244,7 @@ actor RuleUpdater {
         versionSecurityURL: URL = RuleUpdater.defaultVersionSecurityURL,
         fetch: @escaping Fetch = RuleUpdater.defaultFetch,
         bundledFileURL: @escaping @Sendable (String) -> URL? = RuleUpdater.defaultBundledFileURL,
+        willApply: (@Sendable () async -> Void)? = nil,
         reload: (@Sendable () async -> Void)? = nil,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
@@ -249,6 +253,7 @@ actor RuleUpdater {
         self.versionSecurityURL = versionSecurityURL
         self.fetch = fetch
         self.bundledFileURL = bundledFileURL
+        self.willApply = willApply
         self.reload = reload
         self.now = now
     }
@@ -256,12 +261,13 @@ actor RuleUpdater {
     /// App Group コンテナを directory にする convenience initializer（本番用）。
     init?(
         appGroupIdentifier: String = "group.com.kureho.adblockkeshi.shared",
+        willApply: (@Sendable () async -> Void)? = nil,
         reload: (@Sendable () async -> Void)? = nil
     ) {
         guard let container = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)
         else { return nil }
-        self.init(directory: container, reload: reload)
+        self.init(directory: container, willApply: willApply, reload: reload)
     }
 
     static func defaultFetch(_ url: URL) async throws -> Data {
@@ -310,6 +316,7 @@ actor RuleUpdater {
         // 2,700 万バイト級を 2 回落とすと、バックグラウンド更新の持ち時間内に後ろの variant まで届かないことがある。
         let sharedSHAs = Set(Dictionary(grouping: plans, by: \.expectedSHA256).filter { $0.value.count > 1 }.keys)
         var fetchedBySHA: [String: Data] = [:]
+        var announcedApply = false
 
         for plan in plans {
             let variant = plan.variantFilename
@@ -355,6 +362,10 @@ actor RuleUpdater {
                     throw UpdateError.ruleCountRejected(variant, count: count, baseline: baseline)
                 }
                 // atomic write: Extension が torn read しない。失敗時はここまで到達しない = 既存維持。
+                if !announcedApply {
+                    announcedApply = true
+                    await willApply?()
+                }
                 try data.write(to: directory.appendingPathComponent(variant), options: [.atomic])
                 records[variant] = AppliedRulesRecord(
                     sha256: plan.expectedSHA256,
@@ -374,7 +385,8 @@ actor RuleUpdater {
         try? versionData.write(
             to: directory.appendingPathComponent("version.json"), options: [.atomic])
 
-        if !outcome.applied.isEmpty {
+        // 書き換えを知らせたら、書き込みが失敗していても読み込みまで行う（印を付けたまま終わらせない）。
+        if !outcome.applied.isEmpty || announcedApply {
             await reload?()
             outcome.reloaded = true
         }

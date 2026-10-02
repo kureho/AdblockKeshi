@@ -40,14 +40,11 @@ enum BackgroundTaskManager {
             do {
                 // CDN manifest の sha 差分がある variant のみ DL → 検証 → App Group 適用 → reload。
                 // 旧実装の「週次 22MB blockerList.json DL（読む者がいない）」は RuleUpdater が廃止・掃除する。
-                guard let updater = RuleUpdater(reload: {
-                    await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-                        SFContentBlockerManager.reloadContentBlocker(
-                            withIdentifier: extensionIdentifier
-                        ) { _ in
-                            cont.resume()
-                        }
-                    }
+                // 書き換えの直前に印を付け、書き換え中は前面復帰のやり直しで印が消えないようにする（ContentBlockerReloader 参照）。
+                guard let updater = RuleUpdater(willApply: {
+                    await ContentBlockerReloader.shared.beginModification(extensionIdentifier)
+                }, reload: {
+                    await ContentBlockerReloader.shared.finishModificationAndReload(extensionIdentifier)
                 }) else {
                     print("[BGTask] App Group container unavailable")
                     task.setTaskCompleted(success: false)

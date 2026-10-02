@@ -33,8 +33,9 @@ actor FilterDownloader {
     }
 
     /// 最新フィルタを取得して App Group コンテナに atomic write。成功時にバイト数を返す。
+    /// `willReplace` は中身が変わるときだけ、書き込みの直前に呼ぶ（呼び出し側が「読み込みが要る」印を付ける口）。
     @discardableResult
-    func downloadAndStore() async throws -> Int {
+    func downloadAndStore(willReplace: () async -> Void = {}) async throws -> Int {
         let (data, response) = try await session.data(from: blockerListURL)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
@@ -59,7 +60,12 @@ actor FilterDownloader {
         }
 
         let destination = containerURL.appendingPathComponent(filename)
-        try data.write(to: destination, options: [.atomic])
+        // 同じ中身なら書かない。同じ中身を書くだけの書き込みには印が付かないので、別の同期と重なると
+        //「同じ」と判断した後で、相手が書いた中身を古い中身で印なしに書き戻しうる。
+        if (try? Data(contentsOf: destination)) != data {
+            await willReplace()
+            try data.write(to: destination, options: [.atomic])
+        }
 
         // version.json は補助情報。失敗しても blockerList の DL 結果は維持する。
         // 2つ目以降のインスタンス（popunder 等）は syncsVersion=false で本体 version.json を上書きしない。

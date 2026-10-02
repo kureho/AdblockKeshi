@@ -40,13 +40,15 @@ struct CombinedRuleListBuilder {
     /// basic（標準 variant）の combined-* と .meta を全て削除し、何か消したら true を返す。
     /// 報告ルールを報告反映(popunder)へ移したので basic は bundle variant に戻す（combined を持たない）。
     /// popunder の combined（combined-popunder-rules.json）は allVariants に含まれないので消さない。
+    /// `willModify` は最初の 1 件を消す直前に 1 回だけ呼ぶ（呼び出し側が「読み込みが要る」印を付ける口）。
     @discardableResult
-    func removeBasicCombined() -> Bool {
+    func removeBasicCombined(willModify: () -> Void = {}) -> Bool {
         var removedAny = false
         for variant in Self.allVariants {
             let name = Self.combinedFilename(forVariant: variant)
             let combined = directory.appendingPathComponent(name)
             if fileManager.fileExists(atPath: combined.path) {
+                if !removedAny { willModify() }
                 try? fileManager.removeItem(at: combined)
                 removedAny = true
             }
@@ -80,6 +82,9 @@ struct CombinedRuleListBuilder {
     ///   - mayTruncate: ad-only（標準が上限ちょうど）なら true。false なら byte-splice。
     ///   - reportedSafe: 安全化済み・dedup 済み reported（報告順）。
     ///   - compileVerify: 生成データの検証（iOS: WKContentRuleListStore。テスト: stub）。throw すると install しない。
+    ///   - willModify: combined を書き込む・消す直前に 1 回だけ呼ぶ（変化なし・検証失敗では呼ばない）。
+    ///     呼び出し側が「読み込みが要る」印を付ける口＝書き換えの後〜読み込みの依頼の前にアプリが終了しても、
+    ///     次の起動で読み込み直せる（meta が一致すると作り直しも読み込みも起きないため）。
     /// - Returns: 再生成して install したら rebuilt=true（呼び出し側が reload）。変化なしは false。
     ///   - keepWhenNoReported: 報告ルールが 0 件でも combined を作る（A-88 ①: 2 本目の土台に広告の残りが
     ///     入っているとき。combined が無いと拡張は同梱のポップアップ対策だけを読み、残りが効かない）。
@@ -90,11 +95,12 @@ struct CombinedRuleListBuilder {
         mayTruncate: Bool,
         reportedSafe: [ContentBlockerRule],
         keepWhenNoReported: Bool = false,
-        compileVerify: (Data) throws -> Void = { _ in }
+        compileVerify: (Data) throws -> Void = { _ in },
+        willModify: () -> Void = {}
     ) throws -> Outcome {
         // 自己学習が空なら標準を読む前に済ませる（標準は数 MB〜）。
         if reportedSafe.isEmpty && !keepWhenNoReported {
-            return removeCombinedIfPresent(variantFilename: variantFilename)
+            return removeCombinedIfPresent(variantFilename: variantFilename, willModify: willModify)
         }
         return try rebuildIfNeeded(
             variantFilename: variantFilename,
@@ -102,7 +108,8 @@ struct CombinedRuleListBuilder {
             mayTruncate: mayTruncate,
             reportedSafe: reportedSafe,
             keepWhenNoReported: keepWhenNoReported,
-            compileVerify: compileVerify)
+            compileVerify: compileVerify,
+            willModify: willModify)
     }
 
     /// 土台をバイト列で渡す版（2 本目は「広告の残り＋ポップアップ対策」を呼び出し側で繋いでから渡す）。
@@ -113,14 +120,15 @@ struct CombinedRuleListBuilder {
         mayTruncate: Bool,
         reportedSafe: [ContentBlockerRule],
         keepWhenNoReported: Bool = false,
-        compileVerify: (Data) throws -> Void = { _ in }
+        compileVerify: (Data) throws -> Void = { _ in },
+        willModify: () -> Void = {}
     ) throws -> Outcome {
         let combinedName = Self.combinedFilename(forVariant: variantFilename)
         let combinedURL = directory.appendingPathComponent(combinedName)
         let metaURL = directory.appendingPathComponent(combinedName + ".meta")
 
         if reportedSafe.isEmpty && !keepWhenNoReported {
-            return removeCombinedIfPresent(variantFilename: variantFilename)
+            return removeCombinedIfPresent(variantFilename: variantFilename, willModify: willModify)
         }
 
         // base は CDN(PopunderGlobalSync / RuleUpdater)で runtime 更新され得るため、
@@ -165,6 +173,7 @@ struct CombinedRuleListBuilder {
         try compileVerify(combined)
 
         // atomic install（torn write 防止）→ meta 更新（combined 成功後）。
+        willModify()
         try combined.write(to: combinedURL, options: [.atomic])
         try key.write(to: metaURL, atomically: true, encoding: .utf8)
 
@@ -174,12 +183,13 @@ struct CombinedRuleListBuilder {
     /// 自己学習が空: combined を作らない（標準と同一の複製を App Group に残さない）。
     /// 既存 combined があれば削除して resolver を bundle 標準へフォールバックさせる
     /// （reported 無し時は bundle 標準が正しい。migration purge で空になった端末の stale combined も除去）。
-    private func removeCombinedIfPresent(variantFilename: String) -> Outcome {
+    private func removeCombinedIfPresent(variantFilename: String, willModify: () -> Void) -> Outcome {
         let combinedURL = directory.appendingPathComponent(Self.combinedFilename(forVariant: variantFilename))
         let metaURL = directory.appendingPathComponent(Self.combinedFilename(forVariant: variantFilename) + ".meta")
         guard fileManager.fileExists(atPath: combinedURL.path) else {
             return Outcome(rebuilt: false, droppedStandard: 0, droppedReported: 0)
         }
+        willModify()
         try? fileManager.removeItem(at: combinedURL)
         try? fileManager.removeItem(at: metaURL)
         return Outcome(rebuilt: true, droppedStandard: 0, droppedReported: 0)

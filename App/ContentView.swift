@@ -77,15 +77,37 @@ struct ContentView: View {
         }
         #endif
         isChecking = true
+        // 状態確認が返ってこなくても（XPC が止まった等）、読み込み直しは時間を置いて始める。
+        // 通常は状態確認の後に 1 回だけ（状態確認の XPC と並べない）。
+        let resumeOnce = RunOnce()
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
+            resumeOnce { resumePendingReloads() }
+        }
         checker.fetchState { state in
             DispatchQueue.main.async {
                 self.blockerState = state
                 self.isChecking = false
                 // 報告反映の ON/OFF も取り直す（Safari の設定から戻ったとき用）。基本保護の確認が
                 // 終わってから続けて呼ぶ＝状態確認の XPC を並列にしない（ContentRuleListState.swift 参照）。
-                Task { await appState.refresh() }
+                // 読み込み直しも状態確認が全部終わってから。
+                Task {
+                    await appState.refresh()
+                    resumeOnce { resumePendingReloads() }
+                }
             }
         }
+    }
+
+    /// 起動時・前面復帰時（状態確認の後）: 前回の起動やバックグラウンド中に Safari の読み込みが
+    /// 終わらなかったブロッカーを読み込み直す（トグル直後にアプリを閉じられた等。ContentBlockerReloader.swift 参照）。
+    /// 更新後の初回起動では 2 本とも 1 回読み込み直す＝この仕組みが無かった版で止まったまま残った端末を治す。
+    /// force 系 flag 中は refreshState が手前で戻るので呼ばれない。
+    private func resumePendingReloads() {
+        let build = (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "0"
+        ContentBlockerReloader.shared.scheduleOnceForBuild(
+            build, identifiers: [SFContentBlockerStateChecker.baseID, SFContentBlockerStateChecker.popunderID])
+        ContentBlockerReloader.shared.resumePending()
     }
 
     private func openAppSettings() {
@@ -99,7 +121,10 @@ struct ContentView: View {
     private func downloadAndReload() async {
         do {
             let identifier = extensionIdentifier
-            if let updater = RuleUpdater(reload: { await reloadBasicBlocker(identifier: identifier) }) {
+            // 書き換えの直前に印を付け、書き換え中は前面復帰のやり直しで印が消えないようにする（ContentBlockerReloader 参照）。
+            if let updater = RuleUpdater(willApply: {
+                await ContentBlockerReloader.shared.beginModification(identifier)
+            }, reload: { await reloadBasicBlocker(identifier: identifier) }) {
                 let outcome = try await updater.updateIfNeeded()
                 print("[RuleUpdater] applied=\(outcome.applied) recorded=\(outcome.recordedWithoutDownload) skipped=\(outcome.skipped) failed=\(outcome.failed)")
                 // A-88 ①: 2 本目に載せる広告の残りが差し替わったら、報告反映の combined を作り直す
@@ -123,18 +148,9 @@ struct ContentView: View {
     }
 }
 
-/// 基本保護 ContentBlocker の reload（完了待ち版）。RuleUpdater の reload closure から使う。
+/// 基本保護 ContentBlocker の reload（完了待ち版）。RuleUpdater の reload closure から使う＝書き換え中を終えてから読み込む。
 private func reloadBasicBlocker(identifier: String) async {
-    await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-        SFContentBlockerManager.reloadContentBlocker(withIdentifier: identifier) { error in
-            if let error = error {
-                print("[reload] error: \(error.localizedDescription)")
-            } else {
-                print("[reload] success")
-            }
-            cont.resume()
-        }
-    }
+    await ContentBlockerReloader.shared.finishModificationAndReload(identifier)
 }
 
 struct CompletedView: View {
@@ -163,12 +179,11 @@ struct CompletedView: View {
         _controlVM = StateObject(
             wrappedValue: BlockerControlViewModel(
                 store: store,
+                markPending: { identifier in
+                    ContentBlockerReloader.shared.markPending(identifier)
+                },
                 reloader: { identifier in
-                    SFContentBlockerManager.reloadContentBlocker(withIdentifier: identifier) { error in
-                        if let error = error {
-                            print("[reload] error: \(error.localizedDescription)")
-                        }
-                    }
+                    await ContentBlockerReloader.shared.reload(identifier)
                 }
             )
         )

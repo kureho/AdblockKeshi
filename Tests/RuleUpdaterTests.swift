@@ -176,6 +176,75 @@ final class RuleUpdaterTests: XCTestCase {
         XCTAssertEqual(basicFetches.count, 1)
     }
 
+    /// 書き込み後〜読み込みの依頼までに終了されると、次は sha が記録と一致して取得も読み込みも起きない
+    /// （2026-10-03）。最初のファイルを書き換える前に 1 回だけ知らせる（呼び出し側が「読み込みが要る」印を付ける）。
+    func test_最初のファイルを書き換える前に1回だけ知らせる() async throws {
+        let stub = stubAllEndpoints(ad: rulesPayload(count: 150_000), merged: rulesPayload(count: 130_000),
+                                    security: rulesPayload(count: 30_000))
+        let dir = tempDir!
+        let spy = WillApplySpy()
+        let updater = RuleUpdater(
+            directory: dir,
+            fetch: { url in try await stub.fetch(url) },
+            bundledFileURL: { _ in nil },
+            willApply: { spy.record(writtenFiles: ["ad-rules.json", "merged-rules.json", "security-rules.json", "empty-rules.json"].filter {
+                FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }) },
+            reload: {}
+        )
+        let outcome = try await updater.updateIfNeeded()
+        XCTAssertEqual(outcome.applied.count, 4)
+        XCTAssertEqual(spy.calls, [[]], "書き込みの前に 1 回だけ")
+    }
+
+    func test_何も書き換えないときは知らせない() async throws {
+        let ad = rulesPayload(count: 150_000)
+        let merged = rulesPayload(count: 130_000)
+        let security = rulesPayload(count: 30_000)
+        _ = try await makeUpdater(stub: stubAllEndpoints(ad: ad, merged: merged, security: security)).updateIfNeeded()
+        let stub = stubAllEndpoints(ad: ad, merged: merged, security: security)
+        let spy = WillApplySpy()
+        let outcome = try await RuleUpdater(
+            directory: tempDir,
+            fetch: { url in try await stub.fetch(url) },
+            bundledFileURL: { _ in nil },
+            willApply: { spy.record(writtenFiles: []) }
+        ).updateIfNeeded()
+        XCTAssertTrue(outcome.applied.isEmpty)
+        XCTAssertTrue(spy.calls.isEmpty)
+    }
+
+    /// 書き換えを知らせた（＝呼び出し側が「書き換え中」を始めた）なら、書き込みが全部失敗しても読み込みまで行う
+    /// （行かないと「書き換え中」が終わらず、そのプロセスの間ずっと印が消えず、前面復帰のやり直しも止まる）。
+    func test_書き換えを知らせた後に書き込みが失敗しても_読み込みまで行う() async throws {
+        let stub = stubAllEndpoints(ad: rulesPayload(count: 150_000), merged: rulesPayload(count: 130_000),
+                                    security: rulesPayload(count: 30_000))
+        // 書き込み先に中身入りのフォルダを置いて、atomic write を失敗させる
+        for name in ["ad-rules.json", "merged-rules.json", "security-rules.json", "empty-rules.json"] {
+            let blocker = tempDir.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: blocker, withIntermediateDirectories: true)
+            try Data("x".utf8).write(to: blocker.appendingPathComponent("keep"))
+        }
+        let spy = WillApplySpy()
+        let reloadSpy = ReloadSpy()
+        let outcome = try await RuleUpdater(
+            directory: tempDir,
+            fetch: { url in try await stub.fetch(url) },
+            bundledFileURL: { _ in nil },
+            willApply: { spy.record(writtenFiles: []) },
+            reload: { reloadSpy.reload() }
+        ).updateIfNeeded()
+        XCTAssertTrue(outcome.applied.isEmpty)
+        XCTAssertFalse(outcome.failed.isEmpty)
+        XCTAssertEqual(spy.calls.count, 1)
+        XCTAssertEqual(reloadSpy.count, 1, "書き換え中を終えるために読み込みまで行く")
+    }
+
+    private final class WillApplySpy: @unchecked Sendable {
+        private(set) var calls: [[String]] = []
+        private let lock = NSLock()
+        func record(writtenFiles: [String]) { lock.lock(); calls.append(writtenFiles); lock.unlock() }
+    }
+
     func test_updates_only_changed_variant() async throws {
         let ad = rulesPayload(count: 150_000)
         let merged = rulesPayload(count: 130_000)

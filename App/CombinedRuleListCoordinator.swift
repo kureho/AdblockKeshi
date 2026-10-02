@@ -6,7 +6,7 @@ import WebKit
 ///
 /// 報告追加 / トグル変更 / global sync / 起動 migration の各トリガーから呼ぶ。
 /// 重い処理（decode/splice/write/compile-verify）を含むため **off-main で実行する**
-/// （`scheduleRegenerate()` 経由なら自動で global queue に載る）。reload のみ main。
+/// （`scheduleRegenerate()` 経由なら自動で global queue に載る）。reload は main の `ContentBlockerReloader` 経由。
 /// App ターゲット専用（WKContentRuleListStore / SFContentBlockerManager を使うため Shared に置かない）。
 enum CombinedRuleListCoordinator {
     enum CoordinatorError: Error { case encoding, compileTimeout }
@@ -64,7 +64,8 @@ enum CombinedRuleListCoordinator {
         }
         // 残りを載せた版が作れなければポップアップ対策だけで作り直す（一時オフと新しい報告を止めない）。
         // コンパイル待ちの時間切れ（中断されたバックグラウンド等）は一時的なので作り直さず前回の 2 本目を残す。
-        let outcome = SecondBlockerBase.rebuild(
+        let popunderModification = ModificationScope(SFContentBlockerStateChecker.popunderID)
+        _ = SecondBlockerBase.rebuild(
             composed: composed, popunder: baseData,
             isTransient: { ($0 as? CoordinatorError) == .compileTimeout }
         ) { base, keepWhenNoReported in
@@ -74,15 +75,11 @@ enum CombinedRuleListCoordinator {
                 mayTruncate: false,                     // 残り ≤ 14.6 万 + popunder + reported + 例外 ≤ 149,000（生成側で保証）
                 reportedSafe: reportedForPopunder + exceptionRules,
                 keepWhenNoReported: keepWhenNoReported, // 残りがあれば報告 0 件でも combined が要る
-                compileVerify: compileVerify
+                compileVerify: compileVerify,
+                willModify: popunderModification.willModify
             )
         }
-        if outcome?.rebuilt == true {
-            DispatchQueue.main.async {
-                SFContentBlockerManager.reloadContentBlocker(
-                    withIdentifier: SFContentBlockerStateChecker.popunderID) { _ in }
-            }
-        }
+        popunderModification.finish()
 
         // 2) 基本保護:
         //    - 例外あり → combined-<activeVariant> = 標準 + 例外ルール（resolver の combined 最優先で拾われる）
@@ -93,24 +90,20 @@ enum CombinedRuleListCoordinator {
            let standardURL = BlockerListResolver().standardRulesURL(for: togglesState) {
             // 非アクティブ variant の孤児 combined を消してから、アクティブだけ再生成する。
             builder.cleanupCombined(except: plan.variantFilename)
-            let basicOutcome = try? builder.rebuildIfNeeded(
+            let basicModification = ModificationScope(SFContentBlockerStateChecker.baseID)
+            _ = try? builder.rebuildIfNeeded(
                 variantFilename: plan.variantFilename,
                 standardRulesURL: standardURL,
                 mayTruncate: plan.mayTruncate,   // ad-only は標準が上限ちょうど（budget 必須）
                 reportedSafe: exceptionRules,
-                compileVerify: compileVerify
+                compileVerify: compileVerify,
+                willModify: basicModification.willModify
             )
-            if basicOutcome?.rebuilt == true {
-                DispatchQueue.main.async {
-                    SFContentBlockerManager.reloadContentBlocker(
-                        withIdentifier: SFContentBlockerStateChecker.baseID) { _ in }
-                }
-            }
-        } else if builder.removeBasicCombined() {
-            DispatchQueue.main.async {
-                SFContentBlockerManager.reloadContentBlocker(
-                    withIdentifier: SFContentBlockerStateChecker.baseID) { _ in }
-            }
+            basicModification.finish()
+        } else {
+            let basicModification = ModificationScope(SFContentBlockerStateChecker.baseID)
+            builder.removeBasicCombined(willModify: basicModification.willModify)
+            basicModification.finish()
         }
     }
 
@@ -130,6 +123,37 @@ enum CombinedRuleListCoordinator {
         } else {
             DispatchQueue.main.async(execute: body)
         }
+    }
+
+    /// 1 回の作り直しで combined を書き換えたかを持つ。最初の書き換えの直前（builder の `willModify`）に
+    /// 「書き換え中」を始め（＝読み込みが要る印を付け）、作り直しの最後に、書き込みが失敗していても必ず終える。
+    /// 書き換え（meta 含む）の後〜読み込みの依頼までの間にアプリが終了すると、次の起動では meta が
+    /// 一致して作り直しも読み込みも起きず、Safari に古いルールが残り続けるため（ContentBlockerReloader 参照）。
+    /// どちらも main でその場で済ませる（`Task` で後回しにすると、印や依頼の前に終了されうる）。
+    private final class ModificationScope {
+        private let identifier: String
+        private var began = false
+
+        init(_ identifier: String) { self.identifier = identifier }
+
+        func willModify() {
+            guard !began else { return }
+            began = true
+            let identifier = identifier
+            onMainActorNow { ContentBlockerReloader.shared.beginModification(identifier) }
+        }
+
+        func finish() {
+            guard began else { return }
+            let identifier = identifier
+            onMainActorNow { ContentBlockerReloader.shared.finishModification(identifier) }
+        }
+    }
+
+    /// 再生成キューから main の処理をその場で済ませる（main から再生成キューを同期で待つ経路は無いので deadlock しない）。
+    private static func onMainActorNow(_ body: @escaping @MainActor () -> Void) {
+        let run = { MainActor.assumeIsolated(body) }
+        if Thread.isMainThread { run() } else { DispatchQueue.main.sync(execute: run) }
     }
 
     private static func appBuildVersion() -> String {

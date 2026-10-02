@@ -174,6 +174,71 @@ final class CombinedRuleListBuilderTests: XCTestCase {
         XCTAssertFalse(combinedExists("ad-rules.json"))      // 非アクティブは削除
     }
 
+    // MARK: - 書き換えの直前の合図（2026-10-03: 書き換え後〜読み込みの依頼前に終了されると、Safari に古いルールが残った）
+
+    func test_書き込む直前に_書き換えの合図を出す() throws {
+        let std = try writeStandard([block("a.test")], "merged-rules.json")
+        let b = CombinedRuleListBuilder(directory: dir, appBuildVersion: "100")
+        var existedAtSignal: [Bool] = []
+        _ = try b.rebuildIfNeeded(variantFilename: "merged-rules.json", standardRulesURL: std,
+                                  mayTruncate: false, reportedSafe: [block("c.test")],
+                                  willModify: { existedAtSignal.append(self.combinedExists("merged-rules.json")) })
+        XCTAssertEqual(existedAtSignal, [false], "書き込みの前に 1 回だけ")
+        XCTAssertTrue(combinedExists("merged-rules.json"))
+    }
+
+    func test_変化なし_検証失敗のときは_書き換えの合図を出さない() throws {
+        let std = try writeStandard([block("a.test")], "merged-rules.json")
+        let b = CombinedRuleListBuilder(directory: dir, appBuildVersion: "100")
+        _ = try b.rebuildIfNeeded(variantFilename: "merged-rules.json", standardRulesURL: std,
+                                  mayTruncate: false, reportedSafe: [block("c.test")])
+        var signals = 0
+        _ = try b.rebuildIfNeeded(variantFilename: "merged-rules.json", standardRulesURL: std,
+                                  mayTruncate: false, reportedSafe: [block("c.test")],
+                                  willModify: { signals += 1 })
+        struct CompileFail: Error {}
+        _ = try? b.rebuildIfNeeded(variantFilename: "merged-rules.json", standardRulesURL: std,
+                                   mayTruncate: false, reportedSafe: [block("d.test")],
+                                   compileVerify: { _ in throw CompileFail() },
+                                   willModify: { signals += 1 })
+        XCTAssertEqual(signals, 0)
+    }
+
+    /// 最後の報告・例外を消したとき（combined を消して同梱の標準に戻す）も、消す前に合図を出す。
+    func test_combinedを消す直前に_書き換えの合図を出す() throws {
+        let b = CombinedRuleListBuilder(directory: dir, appBuildVersion: "100")
+        let base = try JSONEncoder().encode([block("pop.test")])
+        _ = try b.rebuildIfNeeded(variantFilename: "popunder-rules.json", baseData: base,
+                                  mayTruncate: false, reportedSafe: [block("c.test")])
+        var existedAtSignal: [Bool] = []
+        let out = try b.rebuildIfNeeded(variantFilename: "popunder-rules.json", baseData: base,
+                                        mayTruncate: false, reportedSafe: [],
+                                        willModify: { existedAtSignal.append(self.combinedExists("popunder-rules.json")) })
+        XCTAssertTrue(out.rebuilt)
+        XCTAssertEqual(existedAtSignal, [true], "消す前に 1 回だけ")
+        XCTAssertFalse(combinedExists("popunder-rules.json"))
+
+        var signals = 0
+        _ = try b.rebuildIfNeeded(variantFilename: "popunder-rules.json", baseData: base,
+                                  mayTruncate: false, reportedSafe: [], willModify: { signals += 1 })
+        XCTAssertEqual(signals, 0, "消すものが無ければ合図しない")
+    }
+
+    func test_基本保護のcombinedを一掃する直前に_1回だけ書き換えの合図を出す() throws {
+        let b = CombinedRuleListBuilder(directory: dir, appBuildVersion: "100")
+        try Data("[]".utf8).write(to: dir.appendingPathComponent("combined-merged-rules.json"))
+        try Data("[]".utf8).write(to: dir.appendingPathComponent("combined-ad-rules.json"))
+        var existedAtSignal: [Bool] = []
+        XCTAssertTrue(b.removeBasicCombined(willModify: {
+            existedAtSignal.append(self.combinedExists("merged-rules.json") && self.combinedExists("ad-rules.json"))
+        }))
+        XCTAssertEqual(existedAtSignal, [true])
+
+        var signals = 0
+        XCTAssertFalse(b.removeBasicCombined(willModify: { signals += 1 }))
+        XCTAssertEqual(signals, 0, "消すものが無ければ合図しない")
+    }
+
     /// mayTruncate 経路（小入力では truncation 起きず prefix+reported）。truncation 算術は ReportedRuleBudgetTests が担保。
     func test_truncate_path_small_input_no_truncation() throws {
         let std = try writeStandard((0..<5).map { block("s\($0).test") }, "ad-rules.json")

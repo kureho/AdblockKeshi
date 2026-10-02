@@ -72,8 +72,14 @@ final class SecondBlockerBaseTests: XCTestCase {
     func test_regenerate_after_a_remainder_file_is_updated() {
         XCTAssertTrue(SecondBlockerBase.needsRegenerate(afterApplying: ["merged-rules.json", "second-ads.json"]))
         XCTAssertTrue(SecondBlockerBase.needsRegenerate(afterApplying: ["second-ads-sec.json"]))
-        XCTAssertFalse(SecondBlockerBase.needsRegenerate(afterApplying: ["merged-rules.json", "ad-rules.json"]))
         XCTAssertFalse(SecondBlockerBase.needsRegenerate(afterApplying: []))
+    }
+
+    /// 例外（このサイトで一時オフ）入りの基本保護は標準の variant から作るので、標準だけ差し替わっても作り直す。
+    /// 作り直さないと Safari は古い標準入りの combined を読み続け、読み込みの成功で印も消える（2026-10-03）。
+    func test_regenerate_after_a_standard_variant_is_updated() {
+        XCTAssertTrue(SecondBlockerBase.needsRegenerate(afterApplying: ["security-rules.json"]))
+        XCTAssertTrue(SecondBlockerBase.needsRegenerate(afterApplying: ["merged-rules.json", "ad-rules.json"]))
     }
 
     // MARK: - 残りを載せた作り直しに失敗したとき

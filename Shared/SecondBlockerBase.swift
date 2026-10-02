@@ -10,7 +10,6 @@ import Foundation
 enum SecondBlockerBase {
     static let adsAndSecurityRemainder = "second-ads-sec.json"
     static let adsOnlyRemainder = "second-ads.json"
-    static let remainderFilenames: Set<String> = [adsAndSecurityRemainder, adsOnlyRemainder]
 
     /// 基本保護の variant と対になる残りのファイル名。広告オフなら残りは無い（ポップアップ対策だけ）。
     static func adsRemainderFilename(for state: BlockerTogglesState) -> String? {
@@ -51,8 +50,11 @@ enum SecondBlockerBase {
         }
     }
 
-    /// ルール更新で残りのファイルが差し替わったら、2 本目を作り直す必要がある。
+    /// ルール更新でどのファイルが差し替わっても作り直しを予約する: 2 本目は残りのファイルから、
+    /// 例外（このサイトで一時オフ）入りの基本保護は標準の variant から作る。作り直しは入力の内容ハッシュで
+    /// 判定するので、関係しない分は何もしない。標準だけの差し替えで作り直さないと、Safari は古い標準入りの
+    /// combined を読み続け、その読み込みの成功で「読み込みが要る」印も消える（2026-10-03）。
     static func needsRegenerate(afterApplying applied: [String]) -> Bool {
-        applied.contains(where: remainderFilenames.contains)
+        !applied.isEmpty
     }
 }
