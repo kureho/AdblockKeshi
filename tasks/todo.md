@@ -1,5 +1,9 @@
 # AdblockKeshi v3 - 永続 TODO
 
+## 次版で必ず反映
+
+- [x] **リンク到着で購入画面（設定タブの Pro 購入画面）を閉じる**（2026-10-02・電光掲示板 1.0.1 と同じ漏れ。広告欄の「広告を消す」は無いアプリ）→ 53bce7a。次の版に同乗する。
+
 ## ★次版で必ず反映: DL 診断 v2 第 2 群の keywords（台帳 A-81・2026-10-01 kureho 承認）
 
 kureho「推奨で進めていいよ」（10/1）＝**4.4.0 の次の版に同乗**（keywords だけの版は作らない）。提出版の ja localization に PATCH → GET で一致を確認 → `fastlane/metadata/ja/keywords.txt` も同じ値に揃える。
