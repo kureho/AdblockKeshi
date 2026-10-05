@@ -143,6 +143,89 @@ final class CombinedRuleListBuilderTests: XCTestCase {
         XCTAssertEqual(try combinedRules("merged-rules.json"), good)
     }
 
+    // MARK: - 拡張が Safari に渡せる大きさ（2026-10-05: 27.6MB を渡した拡張が実機でメモリ上限により強制終了）
+
+    func test_default_byte_limit_is_the_extension_limit() {
+        XCTAssertEqual(CombinedRuleListBuilder(directory: dir, appBuildVersion: "100").maxListBytes,
+                       ReportedRuleBudget.maxListBytes)
+    }
+
+    /// 土台だけで上限を超えるなら combined は書かず、合図も出さず、前回の combined を残す。
+    func test_combined_over_byte_limit_is_not_installed_and_keeps_last_known_good() throws {
+        let std = try writeStandard([block("a.test")], "merged-rules.json")
+        _ = try CombinedRuleListBuilder(directory: dir, appBuildVersion: "100")
+            .rebuildIfNeeded(variantFilename: "merged-rules.json", standardRulesURL: std,
+                             mayTruncate: false, reportedSafe: [block("c.test")])
+        let url = dir.appendingPathComponent(CombinedRuleListBuilder.combinedFilename(forVariant: "merged-rules.json"))
+        let good = try Data(contentsOf: url)
+        let bigger = try writeStandard([block("a.test"), block("b.test")], "merged-rules.json")
+        let biggerSize = try Data(contentsOf: bigger).count
+        let limited = CombinedRuleListBuilder(directory: dir, appBuildVersion: "100", maxListBytes: biggerSize - 1)
+        var signals = 0
+        XCTAssertThrowsError(try limited.rebuildIfNeeded(
+            variantFilename: "merged-rules.json", standardRulesURL: bigger, mayTruncate: false,
+            reportedSafe: [block("c.test"), block("d.test")], willModify: { signals += 1 })) { error in
+            XCTAssertEqual(error as? CombinedRuleListBuilder.BuildError,
+                           .tooLarge(bytes: biggerSize, limit: biggerSize - 1))
+        }
+        XCTAssertEqual(try Data(contentsOf: url), good)
+        XCTAssertEqual(signals, 0)
+    }
+
+    /// 報告・一時オフを足すと上限を超えるときは、古い方から落として収める（土台＝広告の残りとセキュリティは守る）。
+    /// 投げると 2 本目はポップアップ対策だけに作り直され、広告の残りとセキュリティ 3 万件を丸ごと失う（Codex 指摘 2026-10-05）。
+    func test_reported_over_byte_limit_drops_oldest_first_and_keeps_the_base() throws {
+        let std = try writeStandard([block("a.test")], "merged-rules.json")
+        let fits = CombinedRuleListBuilder(directory: dir, appBuildVersion: "probe")
+        _ = try fits.rebuildIfNeeded(variantFilename: "merged-rules.json", standardRulesURL: std,
+                                     mayTruncate: false, reportedSafe: [block("c.test"), block("d.test")])
+        let limit = try Data(contentsOf: dir.appendingPathComponent("combined-merged-rules.json")).count
+        let out = try CombinedRuleListBuilder(directory: dir, appBuildVersion: "100", maxListBytes: limit)
+            .rebuildIfNeeded(variantFilename: "merged-rules.json", standardRulesURL: std, mayTruncate: false,
+                             reportedSafe: [block("b.test"), block("c.test"), block("d.test")])
+        XCTAssertTrue(out.rebuilt)
+        XCTAssertEqual(out.droppedReported, 1)
+        XCTAssertEqual(try combinedRules("merged-rules.json"), [block("a.test"), block("c.test"), block("d.test")])
+    }
+
+    /// 報告を全部落としても土台が上限を超えるなら投げる（呼び出し側がポップアップ対策だけで作り直す）。
+    func test_throws_when_base_alone_exceeds_byte_limit_even_without_reported() throws {
+        let std = try writeStandard([block("a.test"), block("b.test")], "merged-rules.json")
+        let limit = try Data(contentsOf: std).count - 1
+        XCTAssertThrowsError(try CombinedRuleListBuilder(directory: dir, appBuildVersion: "100", maxListBytes: limit)
+            .rebuildIfNeeded(variantFilename: "merged-rules.json", standardRulesURL: std, mayTruncate: false,
+                             reportedSafe: [block("c.test")]))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("combined-merged-rules.json").path))
+    }
+
+    /// 広告だけ ON（mayTruncate）でも、件数を切り詰めないときは配信ファイルのバイト列をそのまま使う。
+    /// 書き直すと JSONEncoder が「/」を「\/」に直し、19.5MB の配信ファイルが約 45 万バイト膨らんで上限に迫る（Codex 指摘 2026-10-05）。
+    func test_ad_only_keeps_standard_bytes_as_published_when_no_truncation_is_needed() throws {
+        let raw = #"[{"trigger":{"url-filter":"^https?://a.test/ads/"},"action":{"type":"block"}}]"#
+        let std = dir.appendingPathComponent("ad-rules.json")
+        try Data(raw.utf8).write(to: std)
+        _ = try CombinedRuleListBuilder(directory: dir, appBuildVersion: "100")
+            .rebuildIfNeeded(variantFilename: "ad-rules.json", standardRulesURL: std,
+                             mayTruncate: true, reportedSafe: [block("r.test")])
+        let combined = try Data(contentsOf: dir.appendingPathComponent("combined-ad-rules.json"))
+        XCTAssertTrue(combined.starts(with: Data(raw.dropLast().utf8)))
+    }
+
+    func test_combined_at_byte_limit_is_installed() throws {
+        let std = try writeStandard([block("a.test")], "merged-rules.json")
+        let sized = CombinedRuleListBuilder(directory: dir, appBuildVersion: "100")
+        _ = try sized.rebuildIfNeeded(variantFilename: "merged-rules.json", standardRulesURL: std,
+                                      mayTruncate: false, reportedSafe: [block("c.test")])
+        let url = dir.appendingPathComponent(CombinedRuleListBuilder.combinedFilename(forVariant: "merged-rules.json"))
+        let size = try Data(contentsOf: url).count
+        try FileManager.default.removeItem(at: url)
+        let out = try CombinedRuleListBuilder(directory: dir, appBuildVersion: "100", maxListBytes: size)
+            .rebuildIfNeeded(variantFilename: "merged-rules.json", standardRulesURL: std,
+                             mayTruncate: false, reportedSafe: [block("c.test")])
+        XCTAssertTrue(out.rebuilt)
+    }
+
     /// base 内容が変わったら（CDN で popunder base が更新された等）combined を再生成する。
     /// change-key に base 内容ハッシュを含めるため検知できる（CDN 更新が stale combined にマスクされない）。
     func test_change_guard_rebuilds_when_base_content_changes() throws {

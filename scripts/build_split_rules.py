@@ -211,6 +211,7 @@ def build_outputs(
     basic_cap: int = BASIC_CAP,
     second_cap: int = SECOND_CAP,
     popunder: list[dict] | None = None,
+    popunder_bytes: int | None = None,
     dropped: dict[str, int] | None = None,
     second_total_cap: int = SECOND_TOTAL_CAP,
     list_max_bytes: int = LIST_MAX_BYTES,
@@ -225,6 +226,8 @@ def build_outputs(
     （週ごとのセキュリティ件数の増減で広告の振り分けが揺れない＝週次は末尾だけ入れ替える）。
     `popunder` を渡すと、その例外が通すホスト宛てのルールを基本保護に寄せる（アプリは
     2 本目の後ろにポップアップ対策を並べるため）。
+    `popunder_bytes` は配信中のポップアップ対策ファイルの実際の大きさ。アプリはファイルをそのまま繋ぐので、
+    整形（改行・字下げ）込みのこの大きさで予約する（省略時は詰め直した大きさ）。
     `dropped` を渡すと、2 本目にも入り切らず捨てた件数を 2 本目のファイル名ごとに書き込む。
     """
     protected = l2_allowed_hosts(popunder or [])
@@ -234,7 +237,7 @@ def build_outputs(
         raise SplitError(f"security {list_bytes(security)} bytes exceeds {security_max_bytes}")
     # リストの後ろに別のリストを繋ぐと、繋いだ側のバイト数 - 1（括弧 2 つが消え、区切り 1 つが増える）だけ増える。
     # 2 本目はアプリが後ろにポップアップ対策を並べ、両方オンはセキュリティを予算いっぱいで数える。
-    popunder_add = list_bytes(popunder) - 1 if popunder else 0
+    popunder_add = (popunder_bytes if popunder_bytes is not None else list_bytes(popunder)) - 1 if popunder else 0
     security_add = security_max_bytes - 1
     basic_ads, second_ads, dropped_ads = split_rules(
         full, basic_cap=basic_cap, second_cap=second_cap, protected_hosts=protected,
@@ -264,12 +267,14 @@ def replace_security_tail(
     new_security: list[dict],
     security_budget: int = SECURITY_BUDGET,
     security_max_bytes: int = SECURITY_MAX_BYTES,
+    list_max_bytes: int = LIST_MAX_BYTES,
 ) -> list[dict]:
     """週次のセキュリティ更新: 2 本目（両方オン）の末尾のセキュリティ部分だけを入れ替える。
 
     末尾が前回のセキュリティと一致しないとき（手で直した・月次が未実行等）は入れ替えずに止める。
     新しい件数が前回の半分未満のときも止める（アプリも前回の半分未満のファイルは捨てる＝配信すると
     2 本目を毎回ダウンロードしては捨てることになる。止めれば CDN は前の週のまま）。
+    入れ替えた結果が 1 本の枠（`list_max_bytes`）を超えるときも止める（月次を通さないので前半の大きさは保証されない）。
     """
     if len(new_security) > security_budget:
         raise SplitError(f"security {len(new_security)} exceeds budget {security_budget}")
@@ -280,7 +285,10 @@ def replace_security_tail(
     n = len(old_security)
     if n > len(second_ads_sec) or second_ads_sec[len(second_ads_sec) - n:] != old_security:
         raise SplitError("second-ads-sec does not end with the previous security rules")
-    return second_ads_sec[: len(second_ads_sec) - n] + list(new_security)
+    swapped = second_ads_sec[: len(second_ads_sec) - n] + list(new_security)
+    if list_bytes(swapped) > list_max_bytes:
+        raise SplitError(f"second-ads-sec {list_bytes(swapped)} bytes exceeds {list_max_bytes}")
+    return swapped
 
 
 def check_not_shrunk(name: str, old_count: int, new_count: int) -> None:
@@ -326,6 +334,7 @@ def main() -> None:
     if args.cmd == "build":
         dropped: dict[str, int] = {}
         outs = build_outputs(_load(args.full), _load(args.security), popunder=_load(args.popunder),
+                            popunder_bytes=args.popunder.stat().st_size,
                              dropped=dropped)
         args.out_dir.mkdir(parents=True, exist_ok=True)
         for name, rules in outs.items():

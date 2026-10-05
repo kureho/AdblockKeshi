@@ -75,6 +75,9 @@ enum CombinedRuleListMerge {
                                keepStandard: Int,
                                reported: [ContentBlockerRule]) throws -> Data {
         let kept = Array(standardRules.prefix(max(0, keepStandard)))
-        return try JSONEncoder().encode(kept + reported)
+        // 配信ファイルと同じく「/」をそのまま書く（既定の「\/」は 1 文字ごとに 1 バイト膨らむ）。
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        return try encoder.encode(kept + reported)
     }
 }

@@ -14,6 +14,11 @@ enum ReportedRuleBudget {
     static let totalCap = webKitLimit - safetyMargin        // 149,000
     static let reportedReserve = 2_000
     static let standardFloor = totalCap - reportedReserve   // 147,000
+    /// 拡張が Safari に渡す 1 本のファイルの上限（バイト）。件数の上限とは別。拡張はファイルを丸ごとメモリに
+    /// 載せて渡すので、大きすぎると実機でメモリ上限により強制終了し、Safari に何も入らない
+    /// （2026-10-05: 27.6MB で強制終了・20.6MB / 22.5MB は数か月読めていた。シミュレータには上限が無い）。
+    /// 配信側は 1 本 19.5MB に収める（scripts/build_split_rules.py LIST_MAX_BYTES）＝報告・一時オフを足す余白 0.5MB。
+    static let maxListBytes = 20_000_000
 
     struct Plan: Equatable {
         var standardKeep: Int

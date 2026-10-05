@@ -129,4 +129,100 @@ final class BlockerListResolverTests: XCTestCase {
         // resolve は stale "[]" を返さない（bundle no-op or nil）＝OFF が確実に効く
         XCTAssertNotEqual(resolver.resolve(for: emptyState), stale)
     }
+
+    // MARK: - 拡張が Safari に渡せる大きさ（2026-10-05: 27.6MB を渡した拡張が実機でメモリ上限により強制終了）
+
+    private func makeTempDir() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// 同梱ファイルの代わり（フォルダをそのまま bundle として読む）。
+    private func makeBundle(containing filename: String) throws -> (Bundle, URL) {
+        let dir = try makeTempDir()
+        let file = dir.appendingPathComponent(filename)
+        try Data("[]".utf8).write(to: file)
+        return (try XCTUnwrap(Bundle(url: dir)), file.resolvingSymlinksInPath())
+    }
+
+    private let overLimit = Data(repeating: 0x20, count: 11)
+
+    func test_default_byte_limit_is_the_extension_limit() {
+        XCTAssertEqual(BlockerListResolver().maxFileBytes, ReportedRuleBudget.maxListBytes)
+    }
+
+    func test_resolve_for_state_skips_app_group_variant_over_byte_limit_and_uses_bundle() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let state = BlockerTogglesState.default
+        let variant = BlockerListResolver().filename(for: state)
+        let (bundle, bundled) = try makeBundle(containing: variant)
+        defer { try? FileManager.default.removeItem(at: bundle.bundleURL) }
+        let resolver = BlockerListResolver(appGroupIdentifier: "group.test", bundle: bundle,
+                                           fileManager: MockContainerFileManager(container: dir),
+                                           maxFileBytes: 10)
+        try overLimit.write(to: dir.appendingPathComponent(variant))
+        XCTAssertEqual(resolver.resolve(for: state)?.resolvingSymlinksInPath(), bundled)
+        XCTAssertEqual(resolver.standardRulesURL(for: state)?.resolvingSymlinksInPath(), bundled)
+    }
+
+    func test_resolve_for_state_skips_combined_over_byte_limit() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let state = BlockerTogglesState.default
+        let resolver = BlockerListResolver(appGroupIdentifier: "group.test",
+                                           bundle: Bundle(for: type(of: self)),
+                                           fileManager: MockContainerFileManager(container: dir),
+                                           maxFileBytes: 10)
+        let variant = resolver.filename(for: state)
+        try overLimit.write(to: dir.appendingPathComponent("combined-" + variant))
+        let variantURL = dir.appendingPathComponent(variant)
+        try Data("[]".utf8).write(to: variantURL)
+        XCTAssertEqual(resolver.resolve(for: state), variantURL)
+    }
+
+    func test_resolve_keeps_app_group_file_at_byte_limit() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let state = BlockerTogglesState.default
+        let resolver = BlockerListResolver(appGroupIdentifier: "group.test",
+                                           bundle: Bundle(for: type(of: self)),
+                                           fileManager: MockContainerFileManager(container: dir),
+                                           maxFileBytes: 10)
+        let variantURL = dir.appendingPathComponent(resolver.filename(for: state))
+        try Data(repeating: 0x20, count: 10).write(to: variantURL)
+        XCTAssertEqual(resolver.resolve(for: state), variantURL)
+    }
+
+    func test_resolve_skips_popunder_app_group_files_over_byte_limit_and_uses_bundle() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let (bundle, bundled) = try makeBundle(containing: "popunder-rules.json")
+        defer { try? FileManager.default.removeItem(at: bundle.bundleURL) }
+        let resolver = BlockerListResolver(appGroupIdentifier: "group.test",
+                                           filterFilename: "popunder-rules.json", bundle: bundle,
+                                           fileManager: MockContainerFileManager(container: dir),
+                                           maxFileBytes: 10)
+        try overLimit.write(to: dir.appendingPathComponent("combined-popunder-rules.json"))
+        try overLimit.write(to: dir.appendingPathComponent("popunder-rules.json"))
+        XCTAssertEqual(resolver.resolve()?.resolvingSymlinksInPath(), bundled)
+    }
+
+    /// App Group の候補が大きすぎるファイルへの短いリンクでも飛ばす（リンク自身の大きさで判定しない・Codex 指摘 2026-10-05）。
+    func test_resolve_skips_symlink_to_file_over_byte_limit() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let state = BlockerTogglesState.default
+        let variant = BlockerListResolver().filename(for: state)
+        let (bundle, bundled) = try makeBundle(containing: variant)
+        defer { try? FileManager.default.removeItem(at: bundle.bundleURL) }
+        let resolver = BlockerListResolver(appGroupIdentifier: "group.test", bundle: bundle,
+                                           fileManager: MockContainerFileManager(container: dir),
+                                           maxFileBytes: 500)   // リンク自身（パスの長さ）より大きく、指す先より小さい
+        let target = dir.appendingPathComponent("big.json")
+        try Data(repeating: 0x20, count: 1_000).write(to: target)
+        try FileManager.default.createSymbolicLink(at: dir.appendingPathComponent(variant), withDestinationURL: target)
+        XCTAssertEqual(resolver.resolve(for: state)?.resolvingSymlinksInPath(), bundled)
+    }
 }

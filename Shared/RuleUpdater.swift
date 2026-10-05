@@ -172,6 +172,11 @@ enum RuleUpdatePlanner {
         return true
     }
 
+    /// バイト数ガード: 拡張が Safari に渡せる大きさ（`ReportedRuleBudget.maxListBytes`）を超えるファイルは受け取らない。
+    static func validateByteSize(_ bytes: Int) -> Bool {
+        bytes <= ReportedRuleBudget.maxListBytes
+    }
+
     static func sha256Hex(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
@@ -216,6 +221,7 @@ actor RuleUpdater {
         case shaMismatch(String)
         case notARuleArray(String)
         case ruleCountRejected(String, count: Int, baseline: Int)
+        case tooLarge(String, bytes: Int)
 
         var errorDescription: String? {
             switch self {
@@ -223,6 +229,8 @@ actor RuleUpdater {
             case .notARuleArray(let v): return "\(v): payload is not a JSON array"
             case .ruleCountRejected(let v, let count, let baseline):
                 return "\(v): rule count \(count) rejected (baseline \(baseline), webKitLimit \(ReportedRuleBudget.webKitLimit))"
+            case .tooLarge(let v, let bytes):
+                return "\(v): \(bytes) bytes rejected (extension limit \(ReportedRuleBudget.maxListBytes))"
             }
         }
     }
@@ -331,8 +339,15 @@ actor RuleUpdater {
             // DL せず記録のみ作る（新規インストール直後や記録欠損時の無駄 DL 回避）。
             if records[variant] == nil,
                let localData = localVariantData(variant),
-               RuleUpdatePlanner.sha256Hex(localData) == plan.expectedSHA256,
-               let localCount = ruleCount(of: localData) {
+               RuleUpdatePlanner.sha256Hex(localData) == plan.expectedSHA256 {
+                // 受け取りと同じ検証を通す。通らなければ記録も基準も作らず失敗として残す
+                // （配信も同じ中身なので、取り直しても同じ理由で拒むだけ＝更新のたびに落とし直さない）。
+                guard let localCount = ruleCount(of: localData),
+                      RuleUpdatePlanner.validateRuleCount(localCount, baseline: plan.defaultBaselineRuleCount),
+                      RuleUpdatePlanner.validateByteSize(localData.count) else {
+                    outcome.failed.append(variant)
+                    continue
+                }
                 records[variant] = AppliedRulesRecord(
                     sha256: plan.expectedSHA256,
                     generatedAt: plan.generatedAt,
@@ -360,6 +375,9 @@ actor RuleUpdater {
                 let baseline = records[variant]?.ruleCount ?? plan.defaultBaselineRuleCount
                 guard RuleUpdatePlanner.validateRuleCount(count, baseline: baseline) else {
                     throw UpdateError.ruleCountRejected(variant, count: count, baseline: baseline)
+                }
+                guard RuleUpdatePlanner.validateByteSize(data.count) else {
+                    throw UpdateError.tooLarge(variant, bytes: data.count)
                 }
                 // atomic write: Extension が torn read しない。失敗時はここまで到達しない = 既存維持。
                 if !announcedApply {

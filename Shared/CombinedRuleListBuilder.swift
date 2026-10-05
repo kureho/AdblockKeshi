@@ -13,11 +13,15 @@ struct CombinedRuleListBuilder {
     let directory: URL
     let fileManager: FileManager
     let appBuildVersion: String
+    /// これより大きい combined は作らない（拡張が Safari に渡せる大きさ・`ReportedRuleBudget.maxListBytes`）。
+    let maxListBytes: Int
 
-    init(directory: URL, fileManager: FileManager = .default, appBuildVersion: String) {
+    init(directory: URL, fileManager: FileManager = .default, appBuildVersion: String,
+         maxListBytes: Int = ReportedRuleBudget.maxListBytes) {
         self.directory = directory
         self.fileManager = fileManager
         self.appBuildVersion = appBuildVersion
+        self.maxListBytes = maxListBytes
     }
 
     init?(appGroupIdentifier: String = "group.com.kureho.adblockkeshi.shared",
@@ -29,6 +33,7 @@ struct CombinedRuleListBuilder {
         self.directory = container
         self.fileManager = fileManager
         self.appBuildVersion = appBuildVersion
+        self.maxListBytes = ReportedRuleBudget.maxListBytes
     }
 
     /// 標準 variant ファイル名（例 "merged-rules.json"）から combined ファイル名を導く。
@@ -73,6 +78,12 @@ struct CombinedRuleListBuilder {
         var rebuilt: Bool
         var droppedStandard: Int
         var droppedReported: Int
+    }
+
+    enum BuildError: Error, Equatable {
+        /// 拡張が Safari に渡せる大きさ（`maxListBytes`）を超えた。大きすぎるファイルは実機で拡張がメモリ上限により
+        /// 強制終了し、Safari に何も入らない（2026-10-05）。
+        case tooLarge(bytes: Int, limit: Int)
     }
 
     /// 必要時のみ combined を再生成する。
@@ -150,23 +161,39 @@ struct CombinedRuleListBuilder {
             return Outcome(rebuilt: false, droppedStandard: 0, droppedReported: 0)
         }
 
+        // ad-only: 標準が件数の上限に迫るときだけ decode して先頭 keep 件 + reported で書き直す。
+        // 切り詰めが要らなければ下の byte-splice（配信ファイルのバイト列をそのまま使う。書き直すと「/」が「\/」になり、
+        // 19.5MB の配信ファイルが約 45 万バイト膨らむ＝2026-10-05 に一時オフ 200 件で上限を超えていた）。
+        var truncated: (data: Data, droppedStandard: Int, droppedReported: Int)?
+        if mayTruncate {
+            let standardRules = try JSONDecoder().decode([ContentBlockerRule].self, from: standardJSON)
+            let plan = ReportedRuleBudget.plan(standardCount: standardRules.count, reportedSafe: reportedSafe)
+            if plan.needsTruncation {
+                truncated = (try CombinedRuleListMerge.truncatedMerge(
+                    standardRules: standardRules, keepStandard: plan.standardKeep, reported: plan.reportedKeep),
+                             plan.droppedStandard, plan.droppedReported)
+            }
+        }
         let combined: Data
         let droppedStandard: Int
         let droppedReported: Int
-        if mayTruncate {
-            // ad-only: 標準が上限ちょうど → decode して budget で先頭 keep 件 + reported。
-            let standardRules = try JSONDecoder().decode([ContentBlockerRule].self, from: standardJSON)
-            let plan = ReportedRuleBudget.plan(standardCount: standardRules.count, reportedSafe: reportedSafe)
-            combined = try CombinedRuleListMerge.truncatedMerge(
-                standardRules: standardRules, keepStandard: plan.standardKeep, reported: plan.reportedKeep)
-            droppedStandard = plan.droppedStandard
-            droppedReported = plan.droppedReported
+        if let truncated {
+            combined = truncated.data
+            droppedStandard = truncated.droppedStandard
+            droppedReported = truncated.droppedReported
         } else {
-            // truncation 不要 state: byte-splice（標準を decode しない）。
+            // byte-splice（標準を decode しない）。報告・一時オフで上限を超えるなら古い方から落として収める。
             let sel = ReportedRuleBudget.selectReported(reportedSafe)
-            combined = try CombinedRuleListMerge.splice(standardJSON: standardJSON, appending: sel.keep)
+            let fitted = try spliceWithinByteLimit(standardJSON: standardJSON, reported: sel.keep)
+            combined = fitted.data
             droppedStandard = 0
-            droppedReported = sel.dropped
+            droppedReported = sel.dropped + fitted.dropped
+        }
+
+        // 土台だけで拡張が Safari に渡せる大きさを超えたら書かない（既存 combined を保持＝last-known-good）。
+        // 2 本目は呼び出し側（SecondBlockerBase.rebuild）がポップアップ対策だけで作り直す。
+        guard combined.count <= maxListBytes else {
+            throw BuildError.tooLarge(bytes: combined.count, limit: maxListBytes)
         }
 
         // compile-verify → 失敗時は throw（既存 combined を保持＝last-known-good）。
@@ -178,6 +205,30 @@ struct CombinedRuleListBuilder {
         try key.write(to: metaURL, atomically: true, encoding: .utf8)
 
         return Outcome(rebuilt: true, droppedStandard: droppedStandard, droppedReported: droppedReported)
+    }
+
+    /// 標準の後ろに reported を繋ぎ、`maxListBytes` を超えるなら古い方（先頭）から落として収める。
+    /// 投げて 2 本目をポップアップ対策だけに作り直すと、広告の残りとセキュリティ 3 万件を丸ごと失うため、
+    /// 落とすのは報告側にする（一時オフは末尾＝新しい方なので最後まで残る）。全部落としても超えるなら土台のまま返す
+    /// （呼び出し側の上限検査で止める）。
+    private func spliceWithinByteLimit(standardJSON: Data,
+                                       reported: [ContentBlockerRule]) throws -> (data: Data, dropped: Int) {
+        var data = try CombinedRuleListMerge.splice(standardJSON: standardJSON, appending: reported)
+        guard data.count > maxListBytes else { return (data, 0) }
+        // 1 件あたりの大きさ（区切りの「,」込み）で、はみ出した分だけ先頭から落とす。
+        let encoder = JSONEncoder()
+        var excess = data.count - maxListBytes
+        var dropped = 0
+        while dropped < reported.count && excess > 0 {
+            excess -= try encoder.encode(reported[dropped]).count + 1
+            dropped += 1
+        }
+        data = try CombinedRuleListMerge.splice(standardJSON: standardJSON, appending: Array(reported.dropFirst(dropped)))
+        while data.count > maxListBytes && dropped < reported.count {   // 端数のずれは 1 件ずつ詰める
+            dropped += 1
+            data = try CombinedRuleListMerge.splice(standardJSON: standardJSON, appending: Array(reported.dropFirst(dropped)))
+        }
+        return (data, dropped)
     }
 
     /// 自己学習が空: combined を作らない（標準と同一の複製を App Group に残さない）。

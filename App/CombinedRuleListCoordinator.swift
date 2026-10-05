@@ -87,7 +87,7 @@ enum CombinedRuleListCoordinator {
         //    popunder base が取れている＝報告反映が機能する状態（combined or 直 base）なので安全。
         if let plan = BasicExceptionRegenPlan.plan(state: togglesState,
                                                    hasExceptions: !exceptionRules.isEmpty),
-           let standardURL = BlockerListResolver().standardRulesURL(for: togglesState) {
+           let standardURL = BlockerListResolver(bundle: standardRulesBundle()).standardRulesURL(for: togglesState) {
             // 非アクティブ variant の孤児 combined を消してから、アクティブだけ再生成する。
             builder.cleanupCombined(except: plan.variantFilename)
             let basicModification = ModificationScope(SFContentBlockerStateChecker.baseID)
@@ -154,6 +154,15 @@ enum CombinedRuleListCoordinator {
     private static func onMainActorNow(_ body: @escaping @MainActor () -> Void) {
         let run = { MainActor.assumeIsolated(body) }
         if Thread.isMainThread { run() } else { DispatchQueue.main.sync(execute: run) }
+    }
+
+    /// 基本保護の標準ルール（4 種）の同梱先＝基本保護の拡張（project.yml で拡張にだけ入れている・アプリ本体の直下には無い）。
+    /// App Group のファイルが無い・大きすぎて使えないときに同梱を見つけられないと、基本保護の combined を消して
+    /// 一時オフが効かなくなる（2026-10-05）。拡張が見つからなければ main。
+    static func standardRulesBundle() -> Bundle {
+        Bundle.main.builtInPlugInsURL
+            .map { $0.appendingPathComponent("ContentBlockerExtension.appex") }
+            .flatMap(Bundle.init(url:)) ?? .main
     }
 
     private static func appBuildVersion() -> String {

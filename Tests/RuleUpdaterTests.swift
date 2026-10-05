@@ -323,6 +323,69 @@ final class RuleUpdaterTests: XCTestCase {
             FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("ad-rules.json").path))
     }
 
+    /// 件数は通っても、拡張が Safari に渡せる大きさを超えるファイルは受け取らない（今のファイルを使い続ける）。
+    func test_payload_over_extension_byte_limit_is_rejected_and_keeps_existing_file() async throws {
+        let ad = rulesPayload(count: 150_000)
+        let merged = rulesPayload(count: 130_000)
+        let security = rulesPayload(count: 30_000)
+        _ = try await makeUpdater(stub: stubAllEndpoints(ad: ad, merged: merged, security: security))
+            .updateIfNeeded()
+
+        // 過去実績 130,000 の半分以上（件数は通る）で、バイト数だけが上限を超える
+        let oversized = rulesPayload(count: 70_000, marker: String(repeating: "a", count: 300) + ".example")
+        XCTAssertGreaterThan(oversized.count, ReportedRuleBudget.maxListBytes)
+        let stub = stubAllEndpoints(ad: ad, merged: oversized, security: security)
+        let outcome = try await makeUpdater(stub: stub).updateIfNeeded()
+
+        XCTAssertEqual(outcome.failed, ["merged-rules.json"])
+        XCTAssertEqual(
+            try Data(contentsOf: tempDir.appendingPathComponent("merged-rules.json")), merged)
+        // 記録（sha・件数の基準）も前のまま＝次に来る正しいファイルを取り違えて拒まない
+        let record = AppliedRulesStore(directory: tempDir).read()["merged-rules.json"]
+        XCTAssertEqual(record?.sha256, RuleUpdatePlanner.sha256Hex(merged))
+        XCTAssertEqual(record?.ruleCount, 130_000)
+        // 配信が直れば次の更新で入る
+        let fixed = rulesPayload(count: 111_516, marker: "fixed.example")
+        let recovered = try await makeUpdater(stub: stubAllEndpoints(ad: ad, merged: fixed, security: security))
+            .updateIfNeeded()
+        XCTAssertEqual(recovered.applied, ["merged-rules.json"])
+        XCTAssertEqual(try Data(contentsOf: tempDir.appendingPathComponent("merged-rules.json")), fixed)
+    }
+
+    /// 適用記録が無く、手元（App Group）の大きすぎるファイルが配信と同じ中身でも、「適用済み」と記録しない。
+    /// 記録すると以後は sha の比較だけで素通りし、拡張が使わないファイルを使っていることにしてしまう（Codex 指摘 2026-10-05）。
+    func test_local_file_matching_cdn_is_not_recorded_when_over_extension_byte_limit() async throws {
+        let ad = rulesPayload(count: 150_000)
+        let oversized = rulesPayload(count: 70_000, marker: String(repeating: "a", count: 300) + ".example")
+        let security = rulesPayload(count: 30_000)
+        try oversized.write(to: tempDir.appendingPathComponent("merged-rules.json"))
+        let stub = stubAllEndpoints(ad: ad, merged: oversized, security: security)
+
+        let outcome = try await makeUpdater(stub: stub).updateIfNeeded()
+
+        XCTAssertFalse(outcome.recordedWithoutDownload.contains("merged-rules.json"))
+        XCTAssertEqual(outcome.failed, ["merged-rules.json"])
+        XCTAssertNil(AppliedRulesStore(directory: tempDir).read()["merged-rules.json"])
+        // 手元と同じ中身（SHA 一致）を取り直しても同じ理由で拒むだけ＝更新のたびに 20MB を落とし直さない。
+        XCTAssertFalse(stub.requested.contains("\(Self.cdn)/merged-rules.json"))
+    }
+
+    /// 手元の一致でも件数の検証は通す（15 万件を超えるファイルを基準に記録すると、後の正しいファイルを半分未満として拒み続ける）。
+    func test_local_file_matching_cdn_is_not_recorded_when_rule_count_is_invalid() async throws {
+        let ad = rulesPayload(count: 150_000)
+        let tooMany = rulesPayload(count: ReportedRuleBudget.webKitLimit + 1, marker: "m")
+        let security = rulesPayload(count: 30_000)
+        try tooMany.write(to: tempDir.appendingPathComponent("merged-rules.json"))
+        let stub = stubAllEndpoints(ad: ad, merged: tooMany, security: security)
+
+        let outcome = try await makeUpdater(stub: stub).updateIfNeeded()
+
+        XCTAssertFalse(outcome.recordedWithoutDownload.contains("merged-rules.json"))
+        XCTAssertEqual(outcome.failed, ["merged-rules.json"])
+        XCTAssertNil(AppliedRulesStore(directory: tempDir).read()["merged-rules.json"])
+        XCTAssertFalse(stub.requested.contains("\(Self.cdn)/merged-rules.json"))
+    }
+
     func test_non_array_json_payload_is_rejected() async throws {
         let ad = Data(#"{"not": "an array"}"#.utf8)  // sha は一致させる（manifest から計算）
         let merged = rulesPayload(count: 130_000)

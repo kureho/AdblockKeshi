@@ -4,18 +4,22 @@ struct BlockerListResolver {
     let appGroupIdentifier: String
     let filterFilename: String
     let bundle: Bundle
+    /// App Group のファイルがこれより大きければ使わない（拡張が Safari に渡せる大きさ・`ReportedRuleBudget.maxListBytes`）。
+    let maxFileBytes: Int
     private let fileManager: FileManager
 
     init(
         appGroupIdentifier: String = "group.com.kureho.adblockkeshi.shared",
         filterFilename: String = "blockerList.json",
         bundle: Bundle = .main,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        maxFileBytes: Int = ReportedRuleBudget.maxListBytes
     ) {
         self.appGroupIdentifier = appGroupIdentifier
         self.filterFilename = filterFilename
         self.bundle = bundle
         self.fileManager = fileManager
+        self.maxFileBytes = maxFileBytes
     }
 
     /// App Group コンテナ優先 → Bundle フォールバック。
@@ -23,19 +27,30 @@ struct BlockerListResolver {
     func resolve() -> URL? {
         // 統合: App Group の `combined-<filename>`（popunder L1+L2 + 安全化 reported）を最優先。
         // 無ければ App Group の元ファイル（CDN 配信）→ bundle にフォールバック（fail-safe）。
+        // 拡張が渡せる大きさを超える App Group のファイルは飛ばす（`isUsableAppGroupFile`）。
         if let container = fileManager
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
             let combined = container.appendingPathComponent(
                 CombinedRuleListBuilder.combinedFilename(forVariant: filterFilename))
-            if fileManager.fileExists(atPath: combined.path) {
+            if isUsableAppGroupFile(combined) {
                 return combined
             }
             let direct = container.appendingPathComponent(filterFilename)
-            if fileManager.fileExists(atPath: direct.path) {
+            if isUsableAppGroupFile(direct) {
                 return direct
             }
         }
         return bundleURL()
+    }
+
+    /// App Group のファイルを拡張が Safari に渡してよいか: あって、`maxFileBytes` 以下であること。
+    /// 大きすぎるファイルを渡すと実機で拡張がメモリ上限により強制終了し、Safari に何も入らない（2026-10-05）。
+    /// 同梱ファイルは見ない（最後の砦。大きさは BundledRuleListSizeTests で縛る）。
+    /// リンクなら指す先の大きさで見る（拡張が読むのは指す先）。大きさが分からなければ使わない（同梱へ）。
+    private func isUsableAppGroupFile(_ url: URL) -> Bool {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.resolvingSymlinksInPath().path),
+              let size = (attributes[.size] as? NSNumber)?.intValue else { return false }
+        return size <= maxFileBytes
     }
 
     /// combined を考慮しない base 解決: App Group の `filterFilename`（CDN 配信）→ bundle。
@@ -75,7 +90,7 @@ struct BlockerListResolver {
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
             let combined = container.appendingPathComponent(
                 CombinedRuleListBuilder.combinedFilename(forVariant: variant))
-            if fileManager.fileExists(atPath: combined.path) {
+            if isUsableAppGroupFile(combined) {
                 return combined
             }
         }
@@ -110,7 +125,7 @@ struct BlockerListResolver {
         if let container = fileManager
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
             let candidate = container.appendingPathComponent(filename)
-            if fileManager.fileExists(atPath: candidate.path) {
+            if isUsableAppGroupFile(candidate) {
                 return candidate
             }
         }

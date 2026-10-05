@@ -96,4 +96,12 @@ final class CombinedRuleListMergeTests: XCTestCase {
             XCTAssertThrowsError(try CombinedRuleListMerge.concatenate(arr, Data(bad.utf8)), bad)
         }
     }
+
+    /// 切り詰めて書き直すときも「/」を「\/」にしない（配信ファイルと同じ書き方＝大きさが膨らまない）。
+    func test_truncatedMerge_does_not_escape_slashes() throws {
+        let rule = ContentBlockerRule(trigger: .init(urlFilter: "^https?://a.test/"), action: .init(type: "block"))
+        let out = try CombinedRuleListMerge.truncatedMerge(standardRules: [rule], keepStandard: 1, reported: [])
+        XCTAssertFalse(String(decoding: out, as: UTF8.self).contains(#"\/"#))
+    }
 }
+

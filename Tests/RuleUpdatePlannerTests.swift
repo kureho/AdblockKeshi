@@ -159,6 +159,16 @@ final class RuleUpdatePlannerTests: XCTestCase {
         XCTAssertTrue(RuleUpdatePlanner.validateRuleCount(0, baseline: 0))
     }
 
+    // MARK: - バイト数ガード（拡張が Safari に渡せる大きさ）
+
+    /// 2026-10-05: 基本保護の拡張は 27.6MB を Safari に渡そうとして実機でメモリ上限により強制終了した
+    /// （20.6MB・22.5MB は数か月読めていた）。件数が上限内でも、上限を超えるファイルは受け取らない。
+    func test_ruleList_over_extension_byte_limit_is_rejected() {
+        XCTAssertEqual(ReportedRuleBudget.maxListBytes, 20_000_000)
+        XCTAssertTrue(RuleUpdatePlanner.validateByteSize(ReportedRuleBudget.maxListBytes))
+        XCTAssertFalse(RuleUpdatePlanner.validateByteSize(ReportedRuleBudget.maxListBytes + 1))
+    }
+
     func test_default_baselines_come_from_ci_pipeline_limits() throws {
         let plans = try RuleUpdatePlanner.plans(
             versionJSON: versionJSON, versionSecurityJSON: versionSecurityJSON)

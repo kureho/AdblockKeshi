@@ -12,7 +12,7 @@ filters:
   #   LIST_MAX_BYTES）、遮断はこの並び順で詰めるので、先頭の EasyPrivacy が枠を取り EasyList の
   #   `||pagead2.googlesyndication.com^` 等が 2 本目に押し出された（adsbygoogle.js が通る）。
   #   並びを変えても 2 本を合わせた中身は同じ（変換器は種類ごとにまとめる・全量 216,609 件で一致）。
-  #   37 サイト計測の漏れ（基本保護だけ）: 並び変更前 78.5 / 変更後 35.5（9/27 以前の基本保護 52.0）・
+  #   31 サイト × 2 回計測の漏れ（基本保護だけ）: 並び変更前 78.5 / 変更後 35.5（9/27 以前の基本保護 52.0）・
   #   新たな崩れの疑いなし。記録 tasks/ads-not-blocked-2026-10-05.md
   - name: adguard-japanese
     url: https://filters.adtidy.org/extension/safari/filters/7.txt

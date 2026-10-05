@@ -472,3 +472,29 @@ def test_check_not_shrunk_accepts_half_or_more_of_the_published_count():
 def test_check_not_shrunk_refuses_below_half_of_the_published_count():
     with pytest.raises(SplitError):
         check_not_shrunk("merged-rules.json", old_count=148_800, new_count=74_399)
+
+
+# アプリは 2 本目の後ろに、配信中のポップアップ対策のファイルを**そのままのバイト列で**繋ぐ（整形済み 7,981 バイト）。
+# 詰め直した大きさ（5,163 バイト）で予約すると、その差だけ 2 本目が枠をはみ出す（Codex 指摘 2026-10-05）。
+def test_build_outputs_reserves_the_popunder_file_as_published_not_as_recompacted():
+    security_max = list_bytes(SECURITY) + 40
+    popunder_file_bytes = list_bytes(POPUNDER) + 500   # 整形（改行・字下げ）の分だけ大きい
+    for limit in range(list_bytes(EXCEPTIONS) + security_max + popunder_file_bytes,
+                       list_bytes(FULL + SECURITY) + popunder_file_bytes + 1, 11):
+        out = build_outputs(FULL, SECURITY, security_budget=3, basic_cap=100, second_cap=100,
+                            popunder=POPUNDER, popunder_bytes=popunder_file_bytes,
+                            list_max_bytes=limit, security_max_bytes=security_max)
+        assert list_bytes(out["second-ads"]) + popunder_file_bytes - 1 <= limit
+        second_ads_part = out["second-ads-sec"][:-len(SECURITY)]
+        assert list_bytes(second_ads_part) + security_max + popunder_file_bytes <= limit + 2
+
+
+# 週次の入れ替えは月次を通さない。手で直した等で前半が枠を超えていても、入れ替えた結果の大きさで止める。
+def test_replace_security_tail_refuses_when_the_whole_list_exceeds_the_byte_budget():
+    out = build_outputs(FULL, SECURITY, security_budget=3, basic_cap=9, second_cap=100)
+    whole = list_bytes(out["second-ads-sec"])
+    replace_security_tail(out["second-ads-sec"], old_security=SECURITY, new_security=SECURITY,
+                          security_budget=3, list_max_bytes=whole)
+    with pytest.raises(SplitError):
+        replace_security_tail(out["second-ads-sec"], old_security=SECURITY, new_security=SECURITY,
+                              security_budget=3, list_max_bytes=whole - 1)

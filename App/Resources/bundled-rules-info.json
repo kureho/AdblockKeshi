@@ -1,4 +1,4 @@
 {
-  "_comment": "同梱ルール（Extension/Resources の ad/merged/security/empty と App/Resources の second-ads(-sec)）の生成日時。scripts/convert.sh（月次と同じ手順）の出力を 2026-09-27 に同梱（A-88 ①）。同梱ルールを差し替えたら必ずこの generated_at も更新すること（フィルタ最終更新の bundle フォールバック表示に使われる）。",
-  "generated_at": "2026-09-27T10:54:48Z"
+  "_comment": "同梱ルール（Extension/Resources の ad/merged/security/empty と App/Resources の second-ads(-sec)）の生成日時。scripts/convert.sh（月次と同じ手順）の出力を 2026-10-05 に同梱（1 本 19.5MB に収めた版・tasks/ads-not-blocked-2026-10-05.md）。同梱ルールを差し替えたら必ずこの generated_at も更新すること（フィルタ最終更新の bundle フォールバック表示に使われる）。",
+  "generated_at": "2026-10-05T06:56:45Z"
 }

@@ -57,7 +57,7 @@ final class BlockerControlViewModel: ObservableObject {
             // 基本保護(.blocker)を新 state で reload（bundle variant を読む）。
             await reloader(identifier)
             // 報告反映(popunder)の combined を必要時のみ再生成（off-main・change-guard）。
-            // ★基本保護のコンパイル（約 15 万件）が終わってから＝重い処理を同時に走らせない
+            // ★基本保護のコンパイル（約 11 万件）が終わってから＝重い処理を同時に走らせない
             // （CDN 更新時の「基本保護へ適用 → 2 本目を作り直す」と同じ順番）。
             regenerate()
         }

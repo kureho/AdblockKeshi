@@ -5,7 +5,7 @@ import UIKit
 /// Safari のコンテンツブロッカーを読み込み直す唯一の窓口（全経路をここに集める）。
 ///
 /// 2026-10-03 発覚: トグルを OFF→ON した直後にアプリが閉じられると、Safari 側のコンパイル
-/// （基本保護は約 15 万件で数秒〜十数秒かかる）がアプリと一緒に止まり、Safari には直前の
+/// （基本保護は約 11 万件で数秒〜十数秒かかる）がアプリと一緒に止まり、Safari には直前の
 /// 「広告ブロックなし」のルールが残った。画面は ON のまま、アプリを開き直しても直らなかった。
 ///
 /// - 依頼した時点で「未完了」の印を残し、Safari から成功が返ったときだけ消す。印が残っていれば
@@ -19,7 +19,7 @@ final class ContentBlockerReloader {
     /// 実行延長を取り、返す処理を返す。
     typealias BackgroundGuard = @MainActor () -> (@MainActor () -> Void)
 
-    /// Safari の返事を待つ上限。基本保護（約 15 万件）のコンパイルは実機で十数秒かかるので十分に長く取る。
+    /// Safari の返事を待つ上限。基本保護（約 11 万件）のコンパイルは実機で十数秒かかるので十分に長く取る。
     static let defaultTimeout: TimeInterval = 120
 
     struct TimedOut: Error {}
