@@ -1,0 +1,15 @@
+{
+  "reviewed_at": "2026-10-05",
+  "results": [
+    {
+      "report_id": "aa0de394-0b8e-4012-94bb-296846d94dfb",
+      "outcome": "in_app_ad",
+      "note": "ほかのアプリの中の広告"
+    },
+    {
+      "report_id": "67c6c80d-1ad5-4acf-9488-3f46fbe2bd4b",
+      "outcome": "not_reproduced",
+      "note": "受付時は基本保護の読み込み不具合の期間（配信ルール 10/5 修正・4.4.2）。今の規則では広告の通信・表示なし"
+    }
+  ]
+}

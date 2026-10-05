@@ -15,9 +15,13 @@
 | 権限ダイアログ・エラー文・課金 | — | 無変更 | ✅ N/A |
 
 ## 実機での読み込み確認（シミュレータには拡張のメモリ上限が無い＝ここで見るしかない）
-- ⏳ KPhone の端末ログで、基本保護の読み込み成功・拡張の強制終了なしを確認（配信中の CDN 19.5MB で確認する。同梱も同じファイル）
+- ✅ **10/5 20:08 頃 kureho の目視で確認**: KPhone（4.4.1・配信中の 19.5MB）で広告ブロックを オフ→オン → Safari で広告が消えた。修正前は同じ操作で広告が 1 つも消えなかった。
+  端末ログでの裏付けは**取れていない**（録画ツールが止まらず記録が壊れた。後から端末のログを取り出すには Mac の管理者パスワードが要る・App Group のファイル一覧は App Store 版では読めない）。
+  読めた実績の大きさ（20.6 / 22.5MB）より小さい 19.5MB であることと合わせて確認済みとする。再確認のために kureho に操作を頼み直さない（10/5 指摘）
+- 以下は、次に端末ログが要ったときの手順（今回は使わなかった）
   - 再開手順（kureho の「ok」が来たら）: KPhone を USB で接続 → 背景で
-    `xcrun xctrace record --template Logging --device 00008150-001470823A23401C --all-processes --time-limit 180s --output <作業フォルダ>/kphone-verify.trace`
+    `xcrun xctrace record --template Logging --instrument 'Activity Monitor' --device 00008150-001470823A23401C --all-processes --time-limit 180s --output <作業フォルダ>/kphone-verify.trace < /dev/null > <作業フォルダ>/xctrace.log 2>&1`
+    ★背景で `| tail` につなぐ形は 10/5 に 3 分を過ぎても終わらず、Ctrl-C 相当でも止まらず録画が壊れた（読めない）。上の形（入力を /dev/null・出力はファイル）なら背景でも 15 秒の試し録りが正常終了することを確認済み。保存に 30 秒ほどかかる
     → kureho に「どうぞ」: ①アプリを開いて 30 秒待つ ②広告ブロックを オフ→オン して 20 秒待つ ③Safari で広告の多いサイトを開く
   - 見るもの: `Compiling ... succeeded`（基本保護）・`ContentBlockerExtension ... killed by jetsam` が出ないこと・2 本目も成功・kureho の目視で広告が消えていること
   - 約束（kureho 承認済み）: 録るのは 3 分だけ・この Mac の作業フォルダだけ・読むのは広告ブロック関係の行だけ・確認後すぐ削除・外部送信なし
