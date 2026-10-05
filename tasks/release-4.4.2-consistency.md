@@ -16,6 +16,11 @@
 
 ## 実機での読み込み確認（シミュレータには拡張のメモリ上限が無い＝ここで見るしかない）
 - ⏳ KPhone の端末ログで、基本保護の読み込み成功・拡張の強制終了なしを確認（配信中の CDN 19.5MB で確認する。同梱も同じファイル）
+  - 再開手順（kureho の「ok」が来たら）: KPhone を USB で接続 → 背景で
+    `xcrun xctrace record --template Logging --device 00008150-001470823A23401C --all-processes --time-limit 180s --output <作業フォルダ>/kphone-verify.trace`
+    → kureho に「どうぞ」: ①アプリを開いて 30 秒待つ ②広告ブロックを オフ→オン して 20 秒待つ ③Safari で広告の多いサイトを開く
+  - 見るもの: `Compiling ... succeeded`（基本保護）・`ContentBlockerExtension ... killed by jetsam` が出ないこと・2 本目も成功・kureho の目視で広告が消えていること
+  - 約束（kureho 承認済み）: 録るのは 3 分だけ・この Mac の作業フォルダだけ・読むのは広告ブロック関係の行だけ・確認後すぐ削除・外部送信なし
 
 ## 積み残し（`tasks/todo.md` の「次版で必ず反映」）
 - なし
