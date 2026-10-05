@@ -15,8 +15,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from build_split_rules import (  # noqa: E402
     SplitError,
+    _dump,
     build_outputs,
+    check_not_shrunk,
     l2_allowed_hosts,
+    list_bytes,
     replace_security_tail,
     split_rules,
 )
@@ -370,3 +373,102 @@ def test_replace_security_tail_refuses_new_security_below_half_of_the_previous()
     replace_security_tail(out["second-ads-sec"], old_security=old, new_security=old[:2], security_budget=4)
     with pytest.raises(SplitError):
         replace_security_tail(out["second-ads-sec"], old_security=old, new_security=old[:1], security_budget=4)
+
+
+# ── バイトの上限（2026-10-05）──
+# 拡張はルールのファイルを丸ごとメモリに載せて Safari に渡す。A-88 で基本保護が 20.6MB → 27.6MB になり、
+# 実機（iPhone 17 Pro・iOS 26.6.2）で拡張がメモリ上限で強制終了（jetsam per-process-limit）＝広告ブロックが
+# 全く入らなかった。件数の上限（15 万）とは別に、1 本のバイト数にも上限を持つ。
+# シミュレータには拡張のメモリ上限が無いので、ここで縛らないと見つけられない。
+EXCEPTIONS = [r for r in FULL if is_exc(r)]
+BIG = 10**9
+
+
+def test_list_bytes_is_the_size_of_the_published_file(tmp_path):
+    rules = FULL + [css(".広告-枠")]
+    path = tmp_path / "x.json"
+    _dump(rules, path)
+    assert list_bytes(rules) == path.stat().st_size
+    assert list_bytes([]) == 2
+
+
+def test_basic_never_exceeds_its_byte_budget():
+    for budget in range(list_bytes(EXCEPTIONS), list_bytes(FULL) + 1, 7):
+        basic, second, dropped = split_rules(FULL, basic_cap=100, second_cap=100,
+                                             basic_max_bytes=budget, second_max_bytes=BIG)
+        assert list_bytes(basic) <= budget
+        assert [r for r in basic if is_exc(r)] == EXCEPTIONS
+        assert dropped == 0
+        assert_same_as_single_list([basic, second], FULL)
+
+
+def test_byte_budget_fills_basic_in_the_same_priority_order_as_the_count_cap():
+    # 基本保護に入る順番は件数の上限と同じ（重要 → 遮断 → 汎用の要素隠し → サイト別の要素隠し）。
+    # バイトの枠が「件数の上限で入るものちょうど」なら、入るものも同じ
+    for cap in range(len(EXCEPTIONS), len(FULL)):
+        by_count, _, _ = split_rules(FULL, basic_cap=cap, second_cap=100)
+        by_bytes, _, _ = split_rules(FULL, basic_cap=100, second_cap=100,
+                                     basic_max_bytes=list_bytes(by_count), second_max_bytes=BIG)
+        assert by_bytes == by_count
+
+
+def test_second_over_its_byte_budget_drops_from_the_end_of_the_priority_order():
+    _, by_count, dropped_by_count = split_rules(FULL, basic_cap=6, second_cap=6)
+    _, by_bytes, dropped_by_bytes = split_rules(FULL, basic_cap=6, second_cap=100,
+                                                basic_max_bytes=BIG, second_max_bytes=list_bytes(by_count))
+    assert by_bytes == by_count
+    assert dropped_by_bytes == dropped_by_count > 0
+    assert list_bytes(by_bytes) <= list_bytes(by_count)
+
+
+def test_fails_when_the_exceptions_alone_exceed_a_byte_budget():
+    with pytest.raises(SplitError):
+        split_rules(FULL, basic_cap=100, second_cap=100,
+                    basic_max_bytes=list_bytes(EXCEPTIONS) - 1, second_max_bytes=BIG)
+    with pytest.raises(SplitError):
+        split_rules(FULL, basic_cap=100, second_cap=100,
+                    basic_max_bytes=BIG, second_max_bytes=list_bytes(EXCEPTIONS) - 1)
+
+
+def test_build_outputs_keeps_what_the_extensions_hand_to_safari_within_the_byte_budget():
+    # 2 本目はアプリが後ろにポップアップ対策を並べる。両方オンの 2 本目はセキュリティを予算いっぱいで数える
+    # （週次は月次を通さずに末尾だけ入れ替える）
+    security_max = list_bytes(SECURITY) + 40
+    for limit in range(list_bytes(EXCEPTIONS) + security_max + list_bytes(POPUNDER),
+                       list_bytes(FULL + SECURITY + POPUNDER) + 1, 11):
+        out = build_outputs(FULL, SECURITY, security_budget=3, basic_cap=100, second_cap=100,
+                            popunder=POPUNDER, list_max_bytes=limit, security_max_bytes=security_max)
+        assert list_bytes(out["basic-ads"]) <= limit
+        assert list_bytes(out["basic-ads-sec"]) <= limit
+        assert list_bytes(out["second-ads"] + POPUNDER) <= limit
+        second_ads_part = out["second-ads-sec"][:-len(SECURITY)]
+        assert list_bytes(second_ads_part) + security_max + list_bytes(POPUNDER) <= limit + 2
+
+
+def test_build_outputs_rejects_security_over_its_byte_budget():
+    with pytest.raises(SplitError):
+        build_outputs(FULL, SECURITY, security_budget=3, basic_cap=100, second_cap=100,
+                      list_max_bytes=BIG, security_max_bytes=list_bytes(SECURITY) - 1)
+
+
+def test_replace_security_tail_refuses_new_security_over_its_byte_budget():
+    out = build_outputs(FULL, SECURITY, security_budget=3, basic_cap=9, second_cap=100)
+    longer = [block("phish1-much-longer-name.example"), block("phish2-much-longer-name.example")]
+    replace_security_tail(out["second-ads-sec"], old_security=SECURITY, new_security=longer,
+                          security_budget=3, security_max_bytes=list_bytes(longer))
+    with pytest.raises(SplitError):
+        replace_security_tail(out["second-ads-sec"], old_security=SECURITY, new_security=longer,
+                              security_budget=3, security_max_bytes=list_bytes(longer) - 1)
+
+
+# アプリ（RuleUpdatePlanner.validateRuleCount）は、前回入れたファイルの半分未満の件数のファイルを
+# 壊れたものとして捨てる。バイトの枠で件数が減ったときに半分を割ると、配っても誰にも入らない
+# （今の 27.6MB を持ったまま＝広告ブロックが入らないまま）。配信前に同じ線で止める。
+def test_check_not_shrunk_accepts_half_or_more_of_the_published_count():
+    check_not_shrunk("merged-rules.json", old_count=148_800, new_count=74_400)
+    check_not_shrunk("merged-rules.json", old_count=0, new_count=10)
+
+
+def test_check_not_shrunk_refuses_below_half_of_the_published_count():
+    with pytest.raises(SplitError):
+        check_not_shrunk("merged-rules.json", old_count=148_800, new_count=74_399)

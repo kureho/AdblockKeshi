@@ -40,6 +40,24 @@ SECOND_CAP = 149_000 - 2_000 - 1_000   # ポップアップ（今 40 件）の�
 SECOND_TOTAL_CAP = 149_000 - 2_000      # 2 本目のうち報告の予約を除いた枠（残り＋ポップアップ対策）
 SECURITY_BUDGET = 30_000               # build-security-rules.yml の --limit と同じ
 
+# 1 本のバイト数の上限（2026-10-05）。拡張はファイルを丸ごとメモリに載せて Safari に渡すので、
+# バイト数がそのまま拡張のメモリになる。実機で読めた実績 = 20.6MB（A-88 前の基本保護・数か月）・12.6MB、
+# 読めなかった = 27.6MB（A-88 ①の基本保護。拡張が jetsam per-process-limit で強制終了＝広告ブロックが全く入らない）。
+# 実績の下に置き、アプリが実行時に足す分（報告ルール 2,000 件・ポップアップ対策・一時オフ 200 件）用に 0.5MB 空ける
+# ＝拡張が渡す最終の大きさは 20MB（Shared/ReportedRuleBudget.swift の maxListBytes）以下。
+# シミュレータには拡張のメモリ上限が無いので、ここで縛らないと見つけられない（tasks/ads-not-blocked-2026-10-05.md）。
+LIST_MAX_BYTES = 19_500_000
+SECURITY_MAX_BYTES = 4_000_000         # セキュリティ 3 万件の今の大きさ 3.5MB に 1 割強の余裕
+
+
+def _rule_bytes(rule: dict) -> int:
+    return len(json.dumps(rule, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def list_bytes(rules: list[dict]) -> int:
+    """配信するファイル（`_dump` の書き方）のバイト数＝拡張が Safari に渡すときに載せるメモリの目安。"""
+    return 2 + sum(_rule_bytes(r) for r in rules) + max(0, len(rules) - 1)
+
 
 class SplitError(Exception):
     """振り分けられない（上限に収まらない・入力が想定と違う）。配信を止めて気づかせる。"""
@@ -131,9 +149,12 @@ def split_rules(
     basic_cap: int = BASIC_CAP,
     second_cap: int = SECOND_CAP,
     protected_hosts: set[str] | frozenset[str] = frozenset(),
+    basic_max_bytes: int = LIST_MAX_BYTES,
+    second_max_bytes: int = LIST_MAX_BYTES,
 ) -> tuple[list[dict], list[dict], int]:
     """全量 `full`（変換器の並び）を 基本保護 / 2 本目 に振り分ける（広告ルールだけ。セキュリティは build_outputs）。
 
+    - 件数（`*_cap`）とバイト数（`*_max_bytes`）の両方の枠に収める。優先順の先頭から入る分だけ入れる。
     - 2 本目が上限を超えたら、優先順の最後（サイト別の要素隠しの最後）から捨てる。例外は捨てない。
     - `protected_hosts` 宛てのルールは基本保護に最優先で入れる（`_priority` の 1）。
     - 重複は後ろのコピーだけ残す（`dedup_keep_last`）。基本保護に入れる優先順は前のコピーの位置で決める。
@@ -152,12 +173,29 @@ def split_rules(
     if second_room < 0:
         raise SplitError(f"second cap {second_cap} cannot hold {len(exceptions)} exceptions")
 
+    exception_bytes = list_bytes([full[i] for i in exceptions])
+    if exception_bytes > basic_max_bytes:
+        raise SplitError(f"basic max bytes {basic_max_bytes} cannot hold exceptions of {exception_bytes} bytes")
+    if exception_bytes > second_max_bytes:
+        raise SplitError(f"second max bytes {second_max_bytes} cannot hold exceptions of {exception_bytes} bytes")
+
+    def take(candidates: list[int], room: int, room_bytes: int) -> list[int]:
+        """優先順の先頭から、件数とバイトの枠に入る分だけ（1 件足すごとに区切りの "," が 1 バイト増える）。"""
+        taken, used = [], 0
+        for i in candidates:
+            size = _rule_bytes(full[i]) + 1
+            if len(taken) >= room or used + size > room_bytes:
+                break
+            taken.append(i)
+            used += size
+        return taken
+
     order = _priority(full, protected_hosts, first_seen)
-    to_basic = set(order[:basic_room])
-    to_second = order[basic_room:]
-    dropped = max(0, len(to_second) - second_room)
-    if dropped:
-        to_second = to_second[:second_room]
+    basic_taken = take(order, basic_room, basic_max_bytes - exception_bytes)
+    to_basic = set(basic_taken)
+    rest = order[len(basic_taken):]
+    to_second = take(rest, second_room, second_max_bytes - exception_bytes)
+    dropped = len(rest) - len(to_second)
     to_second_set = set(to_second)
     exception_set = set(exceptions)
 
@@ -175,6 +213,8 @@ def build_outputs(
     popunder: list[dict] | None = None,
     dropped: dict[str, int] | None = None,
     second_total_cap: int = SECOND_TOTAL_CAP,
+    list_max_bytes: int = LIST_MAX_BYTES,
+    security_max_bytes: int = SECURITY_MAX_BYTES,
 ) -> dict[str, list[dict]]:
     """トグル（広告・セキュリティ）別の 4 リストを作る。
 
@@ -190,10 +230,18 @@ def build_outputs(
     protected = l2_allowed_hosts(popunder or [])
     if len(security) > security_budget:
         raise SplitError(f"security {len(security)} exceeds budget {security_budget}")
-    basic_ads, second_ads, dropped_ads = split_rules(full, basic_cap=basic_cap, second_cap=second_cap,
-                                                     protected_hosts=protected)
+    if list_bytes(security) > security_max_bytes:
+        raise SplitError(f"security {list_bytes(security)} bytes exceeds {security_max_bytes}")
+    # リストの後ろに別のリストを繋ぐと、繋いだ側のバイト数 - 1（括弧 2 つが消え、区切り 1 つが増える）だけ増える。
+    # 2 本目はアプリが後ろにポップアップ対策を並べ、両方オンはセキュリティを予算いっぱいで数える。
+    popunder_add = list_bytes(popunder) - 1 if popunder else 0
+    security_add = security_max_bytes - 1
+    basic_ads, second_ads, dropped_ads = split_rules(
+        full, basic_cap=basic_cap, second_cap=second_cap, protected_hosts=protected,
+        basic_max_bytes=list_max_bytes, second_max_bytes=list_max_bytes - popunder_add)
     basic_sec, second_sec_ads, dropped_sec = split_rules(
-        full, basic_cap=basic_cap, second_cap=second_cap - security_budget, protected_hosts=protected)
+        full, basic_cap=basic_cap, second_cap=second_cap - security_budget, protected_hosts=protected,
+        basic_max_bytes=list_max_bytes, second_max_bytes=list_max_bytes - popunder_add - security_add)
     second_sec = second_sec_ads + list(security)
     if dropped is not None:
         dropped.update({"second-ads-sec": dropped_sec, "second-ads": dropped_ads})
@@ -215,6 +263,7 @@ def replace_security_tail(
     old_security: list[dict],
     new_security: list[dict],
     security_budget: int = SECURITY_BUDGET,
+    security_max_bytes: int = SECURITY_MAX_BYTES,
 ) -> list[dict]:
     """週次のセキュリティ更新: 2 本目（両方オン）の末尾のセキュリティ部分だけを入れ替える。
 
@@ -224,12 +273,24 @@ def replace_security_tail(
     """
     if len(new_security) > security_budget:
         raise SplitError(f"security {len(new_security)} exceeds budget {security_budget}")
+    if list_bytes(new_security) > security_max_bytes:
+        raise SplitError(f"security {list_bytes(new_security)} bytes exceeds {security_max_bytes}")
     if len(new_security) * 2 < len(old_security):
         raise SplitError(f"security {len(new_security)} is below half of the previous {len(old_security)}")
     n = len(old_security)
     if n > len(second_ads_sec) or second_ads_sec[len(second_ads_sec) - n:] != old_security:
         raise SplitError("second-ads-sec does not end with the previous security rules")
     return second_ads_sec[: len(second_ads_sec) - n] + list(new_security)
+
+
+def check_not_shrunk(name: str, old_count: int, new_count: int) -> None:
+    """新しいファイルの件数が今配信中の半分未満なら止める。
+
+    アプリ（RuleUpdatePlanner.validateRuleCount）は前回入れたファイルの半分未満を壊れたものとして捨てる
+    ＝配っても誰にも入らない。同じ線で配信前に止めて気づかせる。
+    """
+    if new_count * 2 < old_count:
+        raise SplitError(f"{name}: {new_count} rules is below half of the published {old_count}")
 
 
 def _load(path: Path) -> list[dict]:
@@ -251,6 +312,10 @@ def main() -> None:
                    help="2 本目の後ろに並ぶポップアップ対策（docs/cdn/popunder-rules.json）")
     b.add_argument("--out-dir", required=True, type=Path)
 
+    c = sub.add_parser("check-shrink", help="新しいファイルが今配信中の半分未満の件数なら止める")
+    c.add_argument("--published", required=True, type=Path, help="今配信中のファイル（無ければ確かめない）")
+    c.add_argument("--new", required=True, type=Path)
+
     s = sub.add_parser("swap-security", help="2 本目（両方オン）の末尾のセキュリティだけ入れ替える（週次）")
     s.add_argument("--second", required=True, type=Path, help="docs/cdn/second-ads-sec.json")
     s.add_argument("--old-security", required=True, type=Path)
@@ -266,7 +331,10 @@ def main() -> None:
         for name, rules in outs.items():
             _dump(rules, args.out_dir / f"{name}.json")
             note = f" (dropped {dropped[name]} that fit neither list)" if dropped.get(name) else ""
-            print(f"{name}: {len(rules)} rules{note}")
+            print(f"{name}: {len(rules)} rules, {list_bytes(rules)} bytes{note}")
+    elif args.cmd == "check-shrink":
+        old = len(_load(args.published)) if args.published.exists() else 0
+        check_not_shrunk(args.published.name, old_count=old, new_count=len(_load(args.new)))
     else:
         swapped = replace_security_tail(
             _load(args.second), _load(args.old_security), _load(args.new_security))

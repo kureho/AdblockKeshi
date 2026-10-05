@@ -1,13 +1,9 @@
 {
-  "generated_at": "2026-10-01T09:39:58Z",
-  "rule_count": 148800,
-  "size_bytes": 27639668,
-  "blocker_list_sha256": "2e061de498e895f03c1861d53cae3d4a5461c0a2fb34a72889d575cce4ca403a",
+  "generated_at": "2026-10-05T06:56:45Z",
+  "rule_count": 111516,
+  "size_bytes": 19499946,
+  "blocker_list_sha256": "22f4074094a95d0753fb4a2777881309a875ba40fa499855c321fa61d69742b5",
   "filters": [
-    {
-      "name": "easyprivacy",
-      "license": "CC-BY-SA-3.0"
-    },
     {
       "name": "adguard-japanese",
       "license": "GPL-3.0"
@@ -19,9 +15,13 @@
     {
       "name": "easylist",
       "license": "CC-BY-SA-3.0"
+    },
+    {
+      "name": "easyprivacy",
+      "license": "CC-BY-SA-3.0"
     }
   ],
-  "second_ads_sha256": "1ea0f4561ad534035e4b5a46f6aa8ff32df93864f53322e539970dbc797a6830",
+  "second_ads_sha256": "f3325443a40b635835543e3f81f45855cbcb60d8361678ab9c1b7a70142dc918",
   "reported": {
     "rule_count": 8,
     "added_last_month": 8

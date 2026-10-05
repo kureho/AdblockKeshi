@@ -104,6 +104,13 @@ for name in basic-ads-sec basic-ads second-ads-sec second-ads; do
 done
 
 # 出力
+# アプリは前回入れたファイルの半分未満の件数を壊れたものとして捨てる＝配っても入らない。同じ線で止める
+# （バイトの上限〈build_split_rules.py LIST_MAX_BYTES〉で件数が減ったときの見落とし防止・2026-10-05）
+for pair in basic-ads:blockerList basic-ads-sec:merged-rules second-ads:second-ads second-ads-sec:second-ads-sec; do
+  python3 "$SCRIPT_DIR/build_split_rules.py" check-shrink \
+    --published "$CDN_DIR/${pair#*:}.json" --new "$TMP_DIR/split/${pair%%:*}.json"
+done
+
 mv "$TMP_DIR/split/basic-ads.json" "$CDN_DIR/blockerList.json"
 mv "$TMP_DIR/split/basic-ads-sec.json" "$CDN_DIR/merged-rules.json"
 mv "$TMP_DIR/split/second-ads.json" "$CDN_DIR/second-ads.json"
