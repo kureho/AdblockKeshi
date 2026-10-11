@@ -215,6 +215,19 @@ def _env() -> dict:
     return env
 
 
+def _wrangler_error(proc) -> str:
+    """失敗した wrangler の理由を短く取り出す（stdout の JSON → stderr → stdout の末尾の順）。"""
+    try:
+        err = json.loads(proc.stdout).get("error") or {}
+        parts = [err.get("text", "")] + [n.get("text", "") for n in err.get("notes", [])]
+        text = " / ".join(p for p in parts if p)
+        if text:
+            return text[-300:]
+    except (ValueError, AttributeError):
+        pass
+    return (proc.stderr.strip() or proc.stdout.strip())[-300:]
+
+
 def d1_select(sql: str) -> list[dict]:
     """wrangler（この Mac のログイン）で本番 D1 に SELECT を 1 本流す。書き込みはしない。"""
     if not sql.lstrip().upper().startswith("SELECT"):
@@ -224,7 +237,9 @@ def d1_select(sql: str) -> list[dict]:
         cwd=WORKERS, env=_env(), capture_output=True, text=True, timeout=120,
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"wrangler d1 execute が失敗（exit {proc.returncode}）: {proc.stderr.strip()[-300:]}")
+        # wrangler は --json のとき失敗の理由を stdout の JSON（error.text と error.notes）に出し、
+        # stderr は空になる（2026-10-12 実測）。stderr だけ見ていたので理由が毎回空だった。
+        raise RuntimeError(f"wrangler d1 execute が失敗（exit {proc.returncode}）: {_wrangler_error(proc)}")
     data = json.loads(proc.stdout)
     return data[0]["results"] if data else []
 

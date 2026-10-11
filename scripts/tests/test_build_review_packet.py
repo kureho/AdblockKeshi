@@ -175,3 +175,24 @@ def test_packets_to_prune_keeps_newest_and_ignores_other_names(tmp_path):
 def test_packets_to_prune_nothing_when_under_keep(tmp_path):
     (tmp_path / "2026-09-22").mkdir()
     assert packets_to_prune(tmp_path, keep=8) == []
+
+
+# --- _wrangler_error: 失敗の理由を空にしない（2026-10-12） ---
+
+def test_wrangler_error_reads_reason_from_stdout_json():
+    # wrangler は --json のとき理由を stdout の JSON に出し、stderr は空（実測）。
+    # stderr だけ見ていた頃は朝のレポートの失敗理由が毎回空だった。
+    from types import SimpleNamespace
+    import build_review_packet as b
+    proc = SimpleNamespace(stderr="", stdout=json.dumps({"error": {
+        "text": "A request to the Cloudflare API failed.",
+        "notes": [{"text": "no such table: x: SQLITE_ERROR [code: 7500]"}]}}))
+    assert b._wrangler_error(proc) == ("A request to the Cloudflare API failed. / "
+                                       "no such table: x: SQLITE_ERROR [code: 7500]")
+
+
+def test_wrangler_error_falls_back_to_stderr_then_stdout():
+    from types import SimpleNamespace
+    import build_review_packet as b
+    assert b._wrangler_error(SimpleNamespace(stdout="", stderr="You are not logged in.")) == "You are not logged in."
+    assert b._wrangler_error(SimpleNamespace(stdout="not json", stderr="")) == "not json"
