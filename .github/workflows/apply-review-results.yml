@@ -37,12 +37,16 @@ jobs:
       - run: cd workers && npm ci
       - name: Apply review results to D1 (reports.review_outcome / reviewed_at)
         run: |
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+          if [ "$DRY_RUN" = "true" ]; then
             cd workers && npx tsx ../scripts/review/run-apply-review-results.ts --dry-run
           else
             cd workers && npx tsx ../scripts/review/run-apply-review-results.ts
           fi
         env:
+          # 手動実行の入力は shell に直接埋め込まず env 経由で渡す（push 起動では空＝本番書き込み）。
+          # boolean 型なので悪用はできないが、毎朝の GitHub 監査が run: 内の inputs を一律に
+          # 「重大」と出し、9/28 から本物の警告と見分けられなくなっていた（2026-10-12）。
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_DATABASE_ID: 91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4

@@ -8,7 +8,7 @@ name: Monthly Filter Update
 
 on:
   schedule:
-    - cron: '0 3 1 * *'  # 毎月1日 03:00 UTC (JST 12:00)
+    - cron: '43 3 1 * *'  # 毎月1日 03:43 UTC (JST 12:43)（0 分は GitHub が混み遅れるのでずらした。2026-10-12）
   workflow_dispatch:
 
 permissions:

@@ -5,7 +5,7 @@ name: Weekly Security Rules Update
 
 on:
   schedule:
-    - cron: '0 0 * * 0'  # 毎週日曜 0:00 UTC
+    - cron: '13 0 * * 0'  # 毎週日曜 0:13 UTC（0 分は GitHub が混み遅れるのでずらした。2026-10-12）
   workflow_dispatch:
 
 permissions:

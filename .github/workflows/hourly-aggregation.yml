@@ -6,7 +6,7 @@
 name: hourly-aggregation
 on:
   schedule:
-    - cron: '0 * * * *'  # :00 hourly
+    - cron: '7 * * * *'  # :07 hourly（毎時 0 分は GitHub が混んで遅れる・捨てられるので避ける。2026-10-12）
   workflow_dispatch:
 
 concurrency:

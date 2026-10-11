@@ -7,7 +7,7 @@
 name: weekly-cdn-sync
 on:
   schedule:
-    - cron: '0 5 * * 2'  # weekly Tuesday 05:00 UTC
+    - cron: '23 5 * * 2'  # weekly Tuesday 05:23 UTC（0 分は GitHub が混み 3〜7 時間遅れていたのでずらした。2026-10-12）
   workflow_dispatch:
   # A-88 §2: 週1回の判定で書いたサイト限定ルールを、火曜を待たずに配信する
   push:

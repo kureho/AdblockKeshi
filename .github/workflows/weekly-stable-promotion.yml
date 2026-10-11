@@ -2,7 +2,7 @@
 name: weekly-stable-promotion
 on:
   schedule:
-    - cron: '0 4 * * 1'  # weekly Monday 04:00 UTC
+    - cron: '19 4 * * 1'  # weekly Monday 04:19 UTC（0 分は GitHub が混み 5〜7 時間遅れていたのでずらした。2026-10-12）
   workflow_dispatch:
 
 concurrency:
