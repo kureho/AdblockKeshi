@@ -1,0 +1,13 @@
+{
+  "reviewed_at": "2026-10-12",
+  "results": [
+    {
+      "report_id": "d5d5a9a1-5374-41e1-8a56-b270b59cd4e4",
+      "outcome": "site_own_ad",
+      "note": "今の規則で外部の広告通信は全部止まる。残る固定の帯はサイト自身のアプリ宣伝"
+    }
+  ],
+  "candidates": [
+    { "candidate_id": "8f26d0d5-1bd2-401c-bf8d-dc9eb6566827", "decision": "closed" }
+  ]
+}
