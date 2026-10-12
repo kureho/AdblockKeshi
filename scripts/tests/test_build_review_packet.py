@@ -196,3 +196,101 @@ def test_wrangler_error_falls_back_to_stderr_then_stdout():
     import build_review_packet as b
     assert b._wrangler_error(SimpleNamespace(stdout="", stderr="You are not logged in.")) == "You are not logged in."
     assert b._wrangler_error(SimpleNamespace(stdout="not json", stderr="")) == "not json"
+
+
+# --- d1_select: ログインの自動更新の直後に 7403 で断られた 1 回だけ取り直す（2026-10-12） ---
+
+def _fake_run(results):
+    """subprocess.run の代わり。呼ばれるたびに results を先頭から 1 つずつ返す（例外なら投げる）。"""
+    from types import SimpleNamespace
+    calls = []
+
+    def run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        r = results[len(calls) - 1]
+        if isinstance(r, BaseException):
+            raise r
+        code, stdout = r
+        return SimpleNamespace(returncode=code, stdout=stdout, stderr="")
+    return run, calls
+
+
+def _refused(note: str) -> str:
+    return json.dumps({"error": {"text": "A request to the Cloudflare API failed.", "notes": [{"text": note}]}})
+
+
+_REFUSED_7403 = _refused("The given account is not valid or is not authorized to access this service [code: 7403]")
+
+
+def test_d1_select_retries_once_after_refused_right_after_login_refresh(monkeypatch):
+    # wrangler が 1 時間ごとのログイン更新をした回の問い合わせは約半分が 7403 で断られる
+    # （wrangler の実行ログ 79 回の実測: 更新した 23 回のうち 12 回・更新しなかった回はゼロ）。
+    import build_review_packet as b
+    run, calls = _fake_run([(1, _REFUSED_7403), (0, json.dumps([{"results": [{"n": 3}]}]))])
+    waits = []
+    monkeypatch.setattr(b.subprocess, "run", run)
+    monkeypatch.setattr(b.time, "sleep", waits.append)
+    assert b.d1_select("SELECT 3 AS n") == [{"n": 3}]
+    assert waits == [10]
+    # 2 回とも本番（--remote）の同じ DB に同じ SQL を、同じ条件で流す
+    for cmd, kwargs in calls:
+        assert cmd == ["npx", "wrangler", "d1", "execute", "adblockkeshi-reports", "--remote", "--json",
+                       "--command", "SELECT 3 AS n"]
+        assert kwargs["cwd"] == b.WORKERS and kwargs["timeout"] == 120
+    assert len(calls) == 2
+
+
+def test_d1_select_retry_recognizes_code_field_only(monkeypatch):
+    # 理由の文に [code: 7403] が無くても、error.code が 7403 なら取り直す
+    import build_review_packet as b
+    refused = json.dumps({"error": {"text": "A request to the Cloudflare API failed.", "code": 7403}})
+    run, calls = _fake_run([(1, refused), (0, json.dumps([{"results": []}]))])
+    monkeypatch.setattr(b.subprocess, "run", run)
+    monkeypatch.setattr(b.time, "sleep", lambda s: None)
+    assert b.d1_select("SELECT 1") == []
+    assert len(calls) == 2
+
+
+def test_d1_select_gives_up_after_second_failure_with_second_reason(monkeypatch):
+    import pytest
+    import build_review_packet as b
+    run, calls = _fake_run([(1, _REFUSED_7403), (1, _refused("second failure [code: 7403]"))])
+    monkeypatch.setattr(b.subprocess, "run", run)
+    monkeypatch.setattr(b.time, "sleep", lambda s: None)
+    with pytest.raises(RuntimeError, match=r"second failure \[code: 7403\]"):
+        b.d1_select("SELECT 1")
+    assert len(calls) == 2
+
+
+def test_d1_select_does_not_retry_other_failures(monkeypatch):
+    # 表が無い・SQL の誤りのような直らない失敗は待たずにすぐ止める（朝のレポートを待たせない）
+    import pytest
+    import build_review_packet as b
+    run, calls = _fake_run([(1, _refused("no such table: reports: SQLITE_ERROR [code: 7500]"))])
+    monkeypatch.setattr(b.subprocess, "run", run)
+    monkeypatch.setattr(b.time, "sleep", lambda s: (_ for _ in ()).throw(AssertionError("待たない")))
+    with pytest.raises(RuntimeError, match=r"code: 7500"):
+        b.d1_select("SELECT 1")
+    assert len(calls) == 1
+
+
+def test_d1_select_does_not_retry_timeout(monkeypatch):
+    # 120 秒のタイムアウトは取り直さずそのまま上げる（取り直すと最悪 4 分待たせる）
+    import subprocess
+    import pytest
+    import build_review_packet as b
+    run, calls = _fake_run([subprocess.TimeoutExpired(cmd="npx", timeout=120)])
+    monkeypatch.setattr(b.subprocess, "run", run)
+    monkeypatch.setattr(b.time, "sleep", lambda s: (_ for _ in ()).throw(AssertionError("待たない")))
+    with pytest.raises(subprocess.TimeoutExpired):
+        b.d1_select("SELECT 1")
+    assert len(calls) == 1
+
+
+def test_d1_select_does_not_retry_when_first_call_succeeds(monkeypatch):
+    import build_review_packet as b
+    run, calls = _fake_run([(0, json.dumps([{"results": []}]))])
+    monkeypatch.setattr(b.subprocess, "run", run)
+    monkeypatch.setattr(b.time, "sleep", lambda s: (_ for _ in ()).throw(AssertionError("待たない")))
+    assert b.d1_select("SELECT 1") == []
+    assert len(calls) == 1

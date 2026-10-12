@@ -30,6 +30,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -37,6 +38,11 @@ REPO = Path(__file__).resolve().parents[2]
 WORKERS = REPO / "workers"
 PACKETS_ROOT = REPO / ".review-packets"
 D1_DATABASE = "adblockkeshi-reports"
+# wrangler が 1 時間ごとのログイン更新をした回の問い合わせは、約半分が 7403（このアカウントには権限が無い）で
+# 断られる（2026-10-12 に wrangler の実行ログ 79 回で実測: 更新した 23 回のうち 12 回が 7403・更新しなかった回の
+# 7403 はゼロ）。断られる内部の理由は未確認（実際に送ったトークンはログに残らない）。失敗の次の呼び出しが更新なしなら
+# 4 組とも通ったので、7403 のときだけ待って 1 回取り直す。10 秒は暫定値（秒単位で取り直した実例は約 5 秒の 1 組だけ）。
+D1_RETRY_WAIT_SEC = 10
 JST = dt.timezone(dt.timedelta(hours=9))
 
 # launchd から呼ばれても npx / swiftc / git が見つかるようにする
@@ -228,14 +234,32 @@ def _wrangler_error(proc) -> str:
     return (proc.stderr.strip() or proc.stdout.strip())[-300:]
 
 
+def _refused_7403(proc) -> bool:
+    """ログイン更新の直後に断られた失敗か（stdout の JSON の error.code、または理由の文の [code: 7403]）。"""
+    try:
+        if (json.loads(proc.stdout).get("error") or {}).get("code") == 7403:
+            return True
+    except (ValueError, AttributeError):
+        pass
+    return "[code: 7403]" in _wrangler_error(proc)
+
+
 def d1_select(sql: str) -> list[dict]:
-    """wrangler（この Mac のログイン）で本番 D1 に SELECT を 1 本流す。書き込みはしない。"""
+    """wrangler（この Mac のログイン）で本番 D1 に SELECT を 1 本流す。書き込みはしない。
+
+    取り直すのは 7403 で断られた 1 回だけ（D1_RETRY_WAIT_SEC の注）。表が無い・SQL の誤りのような
+    直らない失敗はすぐ止める（朝のレポートを待たせない）。120 秒のタイムアウトも取り直さずそのまま上げる。
+    """
     if not sql.lstrip().upper().startswith("SELECT"):
         raise ValueError("読み取り（SELECT）以外は流さない")
-    proc = subprocess.run(
-        ["npx", "wrangler", "d1", "execute", D1_DATABASE, "--remote", "--json", "--command", sql],
-        cwd=WORKERS, env=_env(), capture_output=True, text=True, timeout=120,
-    )
+    for attempt in (1, 2):
+        proc = subprocess.run(
+            ["npx", "wrangler", "d1", "execute", D1_DATABASE, "--remote", "--json", "--command", sql],
+            cwd=WORKERS, env=_env(), capture_output=True, text=True, timeout=120,
+        )
+        if proc.returncode == 0 or attempt == 2 or not _refused_7403(proc):
+            break
+        time.sleep(D1_RETRY_WAIT_SEC)
     if proc.returncode != 0:
         # wrangler は --json のとき失敗の理由を stdout の JSON（error.text と error.notes）に出し、
         # stderr は空になる（2026-10-12 実測）。stderr だけ見ていたので理由が毎回空だった。
