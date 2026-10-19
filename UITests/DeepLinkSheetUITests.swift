@@ -124,4 +124,20 @@ final class DeepLinkSheetUITests: XCTestCase {
         XCTAssertTrue(again.waitForExistence(timeout: 5), "③報告フォームが閉じている")
         XCTAssertEqual(again.value as? String, "https://example.com/ad", "③打ち込んだ URL が消えている")
     }
+    // MARK: 報告履歴（一覧・見るだけ）は report のリンクで戻る（D-150 Codex 2 回目 #24）
+
+    @MainActor
+    func test_報告履歴はreportのリンクで戻って報告タブの根が見える() {
+        let app = launch(["--show-report-tab"])
+        let history = app.buttons["これまでの報告履歴"]
+        XCTAssertTrue(history.waitForExistence(timeout: 8), "報告タブの履歴の入口が無い")
+        history.tap()
+        let historyBar = app.navigationBars["報告履歴"]
+        XCTAssertTrue(historyBar.waitForExistence(timeout: 8), "報告履歴が押し込まれない")
+
+        open("adblockkeshi://report")
+        XCTAssertTrue(historyBar.waitForNonExistence(timeout: 8), "②report のリンクの後も報告履歴が残っている")
+        let cta = app.buttons["広告を報告する"]
+        XCTAssertTrue(cta.waitForExistence(timeout: 5) && cta.isHittable, "①行き先（報告タブの根）が見えない")
+    }
 }

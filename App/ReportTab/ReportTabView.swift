@@ -22,6 +22,12 @@ struct ReportTabView: View {
             )
             .navigationTitle("報告")
             .navigationBarTitleDisplayMode(.inline)
+            // `report` のリンクが届いたら、押し込んだ見るだけの画面（報告履歴・送信完了）を根元まで戻して報告タブの根を見せる。
+            // 報告フォーム（書きかけの入力）が一番上に出ている時は戻さない（打った URL を消さない・D-150）。
+            .onReceive(NotificationCenter.default.publisher(for: DeepLink.didArrive)) { notification in
+                guard DeepLink.destinationTab(of: notification) == .report else { return }
+                if path.last != .form { path.removeAll() }
+            }
             .navigationDestination(for: ReportTabRoute.self) { route in
                 switch route {
                 case .form:
