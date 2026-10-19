@@ -13,8 +13,11 @@ struct ContentView: View {
     private let checker = ContentBlockerStateChecker()
     private let extensionIdentifier = "com.kureho.adblockkeshi.blocker"
 
+    /// ブロッカータブに押し込んでいる画面。`home` のリンクが届いたら根元まで戻す。
+    @State private var pushed: [PushedScreen] = []
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $pushed) {
             Group {
                 switch blockerState {
                 case .enabled:
@@ -48,6 +51,10 @@ struct ContentView: View {
         .onAppear(perform: refreshState)
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
             refreshState()
+        }
+        // `home` のリンクが届いたら、押し込んだ画面（購入画面・停止中サイト・このアプリについて）を根元まで戻す。
+        .onReceive(NotificationCenter.default.publisher(for: DeepLink.didArrive)) { notification in
+            if DeepLink.destinationTab(of: notification) == .blocker { pushed.removeAll() }
         }
     }
 
@@ -276,11 +283,7 @@ struct CompletedView: View {
 
                 // v4.2.0: 壊れ報告から「一時オフ」にしたサイトの管理導線（例外がある時だけ）。
                 if !siteExceptionDomains.isEmpty {
-                    NavigationLink {
-                        SiteExceptionsListView(onChange: {
-                            siteExceptionDomains = SiteExceptionsStore.sharedAppGroup()?.readDomains() ?? []
-                        })
-                    } label: {
+                    NavigationLink(value: PushedScreen.exceptions) {
                         HStack(spacing: 12) {
                             Image(systemName: "pause.circle")
                                 .font(.system(size: 18))
@@ -310,9 +313,7 @@ struct CompletedView: View {
 
                 Spacer(minLength: 20)
 
-                NavigationLink("このアプリについて") {
-                    AboutView()
-                }
+                NavigationLink("このアプリについて", value: PushedScreen.about)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .padding(.bottom, 20)
@@ -335,6 +336,18 @@ struct CompletedView: View {
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(isPresented: $screenshotAutoOpenDNS) {
             DNSSettingsView(store: proStore)
+        }
+        .navigationDestination(for: PushedScreen.self) { screen in
+            switch screen {
+            case .dns:
+                DNSSettingsView(store: proStore)
+            case .exceptions:
+                SiteExceptionsListView(onChange: {
+                    siteExceptionDomains = SiteExceptionsStore.sharedAppGroup()?.readDomains() ?? []
+                })
+            case .about:
+                AboutView()
+            }
         }
         .onAppear {
             versionInfo = versionStore.read()

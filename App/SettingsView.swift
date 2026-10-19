@@ -20,8 +20,11 @@ struct SettingsView: View {
     /// 購入シートの開閉。★他 21 本と同じく **CTA はシートを開く**（画面遷移にしない）。
     @State private var showingPaywall = false
 
+    /// 設定タブに押し込んでいる画面。`settings` のリンクが届いたら根元まで戻す。
+    @State private var pushed: [PushedScreen] = []
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $pushed) {
             ScrollView {
                 VStack(spacing: SettingsLayout.sectionSpacing) {
                     proSection
@@ -32,9 +35,7 @@ struct SettingsView: View {
                             footer: "壊れ報告のときに「一時オフ」にしたサイトです。ここから戻せます。"
                         ) {
                             SettingsRow(isLast: true) {
-                                NavigationLink {
-                                    SiteExceptionsListView(onChange: reloadSiteExceptions)
-                                } label: {
+                                NavigationLink(value: PushedScreen.exceptions) {
                                     HStack {
                                         Text("停止中のサイト")
                                         Spacer(minLength: 12)
@@ -81,9 +82,7 @@ struct SettingsView: View {
 
                     SettingsSection {
                         SettingsRow {
-                            NavigationLink {
-                                AboutView()
-                            } label: {
+                            NavigationLink(value: PushedScreen.about) {
                                 HStack {
                                     Text("このアプリについて")
                                     Spacer(minLength: 12)
@@ -111,6 +110,19 @@ struct SettingsView: View {
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("設定")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(for: PushedScreen.self) { screen in
+                switch screen {
+                case .dns:
+                    DNSSettingsView(store: proStore)
+                case .exceptions:
+                    SiteExceptionsListView(onChange: reloadSiteExceptions)
+                case .about:
+                    AboutView()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: DeepLink.didArrive)) { notification in
+                if DeepLink.destinationTab(of: notification) == .settings { pushed.removeAll() }
+            }
             .sheet(isPresented: $showingPaywall) {
                 ProPaywallSheet(store: proStore)
             }
@@ -237,9 +249,7 @@ struct SettingsView: View {
 
     /// 購入済みの表示（**復元ボタンは置かない** ＝ 標準パターン）。
     private var ownedCard: some View {
-        NavigationLink {
-            DNSSettingsView(store: proStore)
-        } label: {
+        NavigationLink(value: PushedScreen.dns) {
             HStack(spacing: 12) {
                 Circle()
                     .fill(Color.accentColor)

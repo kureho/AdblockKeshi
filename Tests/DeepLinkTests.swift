@@ -43,8 +43,14 @@ final class DeepLinkTests: XCTestCase {
 
     func test_リンク到着をルートが通知している() throws {
         let root = try source("App/AdblockKeshiApp.swift")
-        XCTAssertTrue(root.contains("NotificationCenter.default.post(name: DeepLink.didArrive"),
+        XCTAssertTrue(root.contains("DeepLink.announceArrival(at: tab)"),
                       "リンクの到着を、開いているシートへ知らせていない")
+        // 決まり 1: 知らせは「行き先が分かった」後だけ（未対応の URL では何も閉じない）。
+        let guardIndex = try XCTUnwrap(root.range(of: "guard let tab = DeepLink.tab(for: url) else { return }"),
+                                       "未対応の URL を弾く guard が無い")
+        let announceIndex = try XCTUnwrap(root.range(of: "DeepLink.announceArrival(at: tab)"))
+        XCTAssertLessThan(guardIndex.lowerBound, announceIndex.lowerBound,
+                          "知らせが、行き先の判定より前に出ている（決まり 1 違反）")
     }
 
     func test_購入画面がリンク到着で閉じる() throws {

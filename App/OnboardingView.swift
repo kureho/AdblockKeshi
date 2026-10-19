@@ -152,15 +152,16 @@ struct OnboardingView: View {
                 }
                 .padding(.horizontal, 20)
 
-                NavigationLink("ライセンス情報") {
-                    AboutView()
-                }
+                NavigationLink("ライセンス情報", value: PushedScreen.about)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .padding(.top, 4)
                 .padding(.bottom, 20)
             }
             .frame(maxWidth: .infinity)
+        }
+        .navigationDestination(for: PushedScreen.self) { _ in
+            AboutView()
         }
         .sheet(isPresented: $showFilterInfo) {
             FilterInfoSheet()
@@ -244,6 +245,10 @@ struct FilterInfoSheet: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("閉じる") { dismiss() }
                 }
+            }
+            // リンクが届いたら閉じる（見るだけの画面。開いたままだと切り替わった行き先が隠れる）。
+            .onReceive(NotificationCenter.default.publisher(for: DeepLink.didArrive)) { _ in
+                dismiss()
             }
         }
     }

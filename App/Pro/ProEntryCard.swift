@@ -16,9 +16,7 @@ struct ProEntryCard: View {
     let store: ProStore
 
     var body: some View {
-        NavigationLink {
-            DNSSettingsView(store: store)
-        } label: {
+        NavigationLink(value: PushedScreen.dns) {
             HStack(spacing: 12) {
                 Image(systemName: "shield.lefthalf.filled")
                     .font(.system(size: 18))

@@ -98,11 +98,11 @@ struct AdblockKeshiApp: App {
             // アプリ内イベント（ASC）などのディープリンク受け口（C-88）。
             // `adblockkeshi://<タブ名>` を該当タブへ。未知の URL は何もしない。
             .onOpenURL { url in
-                // 開いている購入画面（ルート外のシート）を先に閉じさせる。
-                NotificationCenter.default.post(name: DeepLink.didArrive, object: nil)
-                if let tab = DeepLink.tab(for: url) {
-                    selectedTab = tab
-                }
+                // 行き先が分かったリンクだけ、開いている見るだけの画面（購入画面・説明シート）を閉じさせ、
+                // 押し込みを持つタブには根元へ戻らせる。未対応の URL では何も閉じない。
+                guard let tab = DeepLink.tab(for: url) else { return }
+                DeepLink.announceArrival(at: tab)
+                selectedTab = tab
             }
             .task {
                 migrateReportedRulesIfNeeded()
