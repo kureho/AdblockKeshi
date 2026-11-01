@@ -3,8 +3,9 @@ import SwiftUI
 
 /// 端末ローカルで報告履歴を保持する store。
 ///
-/// 「URL のみ送信・完全匿名」の運用方針上、サーバー側に UUID 紐付きの履歴を
-/// 保持できないため、送信成功時に端末側へ append する。`ReportHistoryItem` 単位で
+/// 報告で送るのは URL・メモ・報告と広告の種類・診断情報と、同じ端末からの報告をまとめる
+/// 端末ごとの番号（`DeviceUUIDStore` のハッシュ）。履歴の一覧はサーバーから取らない
+/// （結果だけを報告 ID で問い合わせる）ため、送信成功時に端末側へ append する。`ReportHistoryItem` 単位で
 /// id（UUID 文字列）を付け、swipe 削除はその id で remove する。
 @MainActor
 final class LocalReportHistoryStore: ObservableObject {

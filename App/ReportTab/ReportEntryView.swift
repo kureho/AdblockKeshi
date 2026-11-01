@@ -19,7 +19,6 @@ struct ReportEntryView: View {
                 primaryCTA
                 secondaryButton
                 howItWorksCard
-                trustFooter
             }
             .frame(maxWidth: .infinity)
             .padding(.bottom, 32)
@@ -120,18 +119,6 @@ struct ReportEntryView: View {
         )
         .padding(.horizontal, 16)
         .padding(.top, 4)
-    }
-
-    private var trustFooter: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "lock.shield.fill")
-                .foregroundStyle(.secondary)
-            Text("報告は完全匿名")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.top, 4)
-        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Helpers
