@@ -5,7 +5,7 @@ import KurehoKit
 /// 購入画面（22 本共通の対比表）の文言検査。
 final class ProCatalogTests: XCTestCase {
 
-    /// 列からはみ出す長さの語を置いていないか（値 7 字 / 名前 10 字）。
+    /// 列からはみ出す長さの語を置いていないか（基準の画面 402pt で、描いた幅が列に収まるか）。
     func testRowsFitInColumns() {
         XCTAssertTrue(PaywallCopyAudit.violations(in: ProCatalog.rows).isEmpty,
                       "\(PaywallCopyAudit.violations(in: ProCatalog.rows))")
