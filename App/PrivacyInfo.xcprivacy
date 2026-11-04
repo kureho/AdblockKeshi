@@ -7,10 +7,50 @@
 	<false/>
 	<key>NSPrivacyTrackingDomains</key>
 	<array/>
-	<!-- アプリ本体はデータを端末内にのみ保存し、当社サーバーへ送信しない。
-	     SDK が収集する分は SDK 自身の privacy manifest が申告する（GenbaCamera と同構成）。 -->
+	<!-- 報告タブで「送信」した時だけ、当社サーバー（Cloudflare Workers）へ送る。それ以外はデータを端末内にのみ保存する。
+	     送る内容: 報告の内容（URL・メモ・報告と広告の種類）＝その他のユーザコンテンツ／診断情報（どの画面で見たか・保護の有効状態・
+	     アプリとフィルタのバージョン）＝その他の診断データ／同じ端末からの報告をまとめるための端末ごとの番号と、送信元 IP のハッシュ＝デバイス ID。
+	     目的はどれも「アプリの機能」（報告の受付・乱用防止）。トラッキングには使わない。ASC の「アプリのプライバシー」と同じ 3 種。
+	     拡張（Extension 各種）は報告を送らない。SDK が収集する分は SDK 自身の privacy manifest が申告する。 -->
 	<key>NSPrivacyCollectedDataTypes</key>
-	<array/>
+	<array>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeDeviceID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherDiagnosticData</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherUserContent</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+	</array>
 	<!-- 実測で「アプリ本体が実際に使う」ものだけを宣言する（2026-08-24 A-17 横断監査で grep 確認）。 -->
 	<key>NSPrivacyAccessedAPITypes</key>
 	<array>
