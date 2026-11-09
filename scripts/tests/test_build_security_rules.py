@@ -2,19 +2,44 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import pytest  # noqa: E402
+
 from build_security_rules import (  # noqa: E402
+    DEFAULT_JP_TOKENS,
+    DEFAULT_SHARED_PARENTS,
+    DNS_POPULAR_TOP,
+    PROTECTED_SWIFT,
+    PROVIDER_NAMESPACES,
+    URLHAUS_CAP,
+    JPTokens,
+    SourceTooSmall,
+    build_parser,
     build_security_rules,
+    check_rule_count,
+    check_sources,
     convert_to_content_blocker_rules,
+    jp_priority,
+    load_jp_tokens,
+    load_protected_domains,
+    load_shared_parents,
+    load_tranco_ranked,
     load_tranco_set,
+    main,
     parse_phishing_db_hosts,
     parse_urlhaus_hosts,
+    select_hosts,
+    stable_key,
 )
+from build_split_rules import list_bytes  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
+ROOT = Path(__file__).resolve().parents[2]
+NO_TOKENS = JPTokens((), (), ())
 
 
 def test_parse_urlhaus_hosts_skips_comments_and_ips():
@@ -104,8 +129,9 @@ def test_build_security_rules_fills_limit_even_with_malformed_hosts():
     # 壊れた行を上限の後で捨てると件数が上限を割る＝壊れた行は上限を数える前に捨てる
     phishing_db_text = "%20bad.example\n40.70.42.104?rid=x\n" + "\n".join(f"phish-{i}.example" for i in range(10))
     rules = build_security_rules("", phishing_db_text, "", limit=5)
+    hosts = {r["trigger"]["url-filter"] for r in rules}
     assert len(rules) == 5
-    assert rules[0]["trigger"]["url-filter"] == "^[^:]+://+([^:/]+\\.)?phish-0\\.example[/:]"
+    assert hosts <= {f"^[^:]+://+([^:/]+\\.)?phish-{i}\\.example[/:]" for i in range(10)}
 
 
 def test_build_security_rules_drops_trailing_dot():
@@ -129,3 +155,270 @@ def test_build_security_rules_combines_both_sources():
     joined = " ".join(r["trigger"]["url-filter"].replace("\\", "") for r in rules)
     for h in ["mal1.com", "mal2.com", "phish1.tk", "phish2.ml"]:
         assert h in joined
+
+
+# --- A-218 G0 Task A2: 除外と下限の守り ---
+
+def test_check_sources_rejects_truncated_tranco():
+    with pytest.raises(SourceTooSmall):
+        check_sources(tranco_count=1_000, phishing_count=392_178)
+
+
+def test_check_sources_rejects_truncated_phishing_db():
+    with pytest.raises(SourceTooSmall):
+        check_sources(tranco_count=1_000_000, phishing_count=50_000)
+    check_sources(tranco_count=1_000_000, phishing_count=392_178)  # 例外なし
+
+
+def test_load_protected_domains_reads_set_literals_only():
+    safari = load_protected_domains([ROOT / "Shared/CriticalDomainGuard.swift"])
+    assert {"apple.com", "smbc.co.jp", "kureho.app"} <= safari
+    assert "github.io" not in safari
+    dns = load_protected_domains([ROOT / "Shared/CriticalDomainGuard.swift", ROOT / "Shared/DNS/DNSCriticalGuard.swift"])
+    assert "github.io" in dns and len(safari) >= 50
+
+
+def test_select_drops_shared_hosts_and_keeps_their_subdomains_on_safari():
+    out = select_hosts([], ["github.io", "evil-login.github.io", "storage.googleapis.com", "lin.ee", "bit.ly", "x.weebly.com"],
+                       [], protected=set(), shared_parents={"github.io", "storage.googleapis.com", "lin.ee", "bit.ly", "weebly.com"},
+                       jp_tokens=NO_TOKENS, profile="safari", limit=100)
+    assert sorted(out) == ["evil-login.github.io", "x.weebly.com"]
+
+
+def test_select_never_blocks_a_tranco_domain_or_protected_domain():
+    out = select_hosts([], ["example.com", "smbc.co.jp", "login.smbc.co.jp", "co.jp", "smbc-co-jp.evil.test"],
+                       ["shop.example.com"], protected={"smbc.co.jp"}, shared_parents=set(),
+                       jp_tokens=NO_TOKENS, profile="safari", limit=100)
+    assert out == ["smbc-co-jp.evil.test"]
+
+
+def test_dns_profile_is_stricter_than_safari():
+    # DNS は IP と、重要ドメインの下の共有ホストの利用者も外す（Safari は入れる）。
+    # 人気サイトの下（共有ホストの利用者を除く）は、最後の確認の指摘から両方とも外す
+    src = ["1.2.3.4", "hacked.popular.test", "evil.weebly.com", "evil-login.github.io", "b.s3.bank.test"]
+    kw = dict(protected={"github.io", "bank.test"}, shared_parents={"weebly.com", "github.io", "s3.bank.test"},
+              jp_tokens=NO_TOKENS, limit=100)
+    tranco = ["popular.test", "weebly.com"]
+    dns = select_hosts([], src, tranco, profile="dns", **kw)
+    safari = select_hosts([], src, tranco, profile="safari", **kw)
+    assert sorted(dns) == ["evil.weebly.com"]
+    assert sorted(safari) == ["1.2.3.4", "b.s3.bank.test", "evil.weebly.com"]
+    assert set(dns) <= set(safari)
+
+
+def test_load_shared_parents_strips_inline_comments_and_keeps_wildcards(tmp_path):
+    p = tmp_path / "shared.txt"
+    p.write_text("# comment\ngithub.io   # PSL\n*.r.appspot.com\n\n  BIT.LY \n")
+    assert load_shared_parents(p) == {"github.io", "*.r.appspot.com", "bit.ly"}
+
+
+def test_select_treats_wildcard_parent_and_its_direct_children_as_shared():
+    out = select_hosts([], ["r.appspot.com", "ey.r.appspot.com", "evil.ey.r.appspot.com"], [],
+                       protected=set(), shared_parents={"*.r.appspot.com"},
+                       jp_tokens=NO_TOKENS, profile="safari", limit=100)
+    assert out == ["evil.ey.r.appspot.com"]
+
+
+def test_default_shared_parents_cover_curated_and_psl_private_hosts():
+    shared = set().union(*(load_shared_parents(p) for p in DEFAULT_SHARED_PARENTS))
+    assert {"bit.ly", "lin.ee", "weebly.com", "s3.us-east-2.amazonaws.com", "*.r.appspot.com"} <= shared
+
+
+def test_load_tranco_ranked_keeps_rank_order():
+    assert load_tranco_ranked("2,b.com\n1,a.com\n\n3,C.com\n") == ["b.com", "a.com", "c.com"]
+
+
+def test_cli_urlhaus_is_optional_and_other_args_unchanged():
+    args = build_parser().parse_args(["--phishing-db", "p.txt", "--tranco", "t.csv", "--output", "o.json"])
+    assert args.urlhaus is None and args.limit == 30000
+    args = build_parser().parse_args(["--urlhaus", "u.txt", "--phishing-db", "p.txt", "--tranco", "t.csv",
+                                      "--output", "o.json", "--limit", "30000"])
+    assert str(args.urlhaus) == "u.txt"
+
+
+# --- A-218 G0 Task A3: 並べ方（日本向けを優先・残りは偏らない順） ---
+
+TOKENS = JPTokens(jp=("smbc", "rakuten"), jp_token=("nta", "au", "jp"), brand=("amazon",))
+
+
+def test_jp_priority():
+    assert jp_priority("smbc-card-login.test", TOKENS) == 0
+    assert jp_priority("foo.co.jp", TOKENS) == 0
+    assert jp_priority("au-pay-check.test", TOKENS) == 0
+    assert jp_priority("amazon-verify.test", TOKENS) == 1
+    assert jp_priority("santa-claus.test", TOKENS) == 2   # nta は語の完全一致だけ
+    assert jp_priority("shop.com.au", TOKENS) == 2       # 最後のラベルは見ない
+    assert jp_priority("random-site.test", TOKENS) == 2
+
+
+def test_select_orders_jp_then_urlhaus_then_brand_then_rest():
+    out = select_hosts(["mal.test"], ["zz.test", "amazon-x.test", "rakuten-x.test"], [],
+                       protected=set(), shared_parents=set(), jp_tokens=TOKENS, profile="safari", limit=10)
+    assert out == ["rakuten-x.test", "mal.test", "amazon-x.test", "zz.test"]
+
+
+def test_select_remainder_follows_stable_hash_not_alphabet():
+    src = [f"{c}{i}.test" for c in "0123456789abcdefghij" for i in range(50)]  # 名前順の 1,000 件
+    out = select_hosts([], src, [], protected=set(), shared_parents=set(), jp_tokens=NO_TOKENS, profile="safari", limit=100)
+    assert out == sorted(src, key=stable_key)[:100]
+
+
+def test_select_is_independent_of_input_order():
+    src = [f"h{i}.test" for i in range(300)]
+    kw = dict(protected=set(), shared_parents=set(), jp_tokens=TOKENS, profile="safari", limit=50)
+    assert select_hosts([], src, [], **kw) == select_hosts([], list(reversed(src)), [], **kw)
+
+
+def test_urlhaus_tier_is_capped():
+    out = select_hosts([f"m{i}.test" for i in range(30)], [f"p{i}.test" for i in range(30)], [],
+                       protected=set(), shared_parents=set(), jp_tokens=NO_TOKENS, profile="safari", limit=40, urlhaus_cap=10)
+    assert sum(h.startswith("m") for h in out) == 10
+    assert URLHAUS_CAP == 10_000
+
+
+def test_build_security_rules_output_format_unchanged_for_old_clients():
+    rules = build_security_rules("", "\n".join(f"phish-{i}.example" for i in range(50)), "", limit=30)
+    assert len(rules) == 30
+    assert all(re.fullmatch(r"\^\[\^:\]\+://\+\(\[\^:/\]\+\\\.\)\?[a-z0-9_\\.-]+\[/:\]", r["trigger"]["url-filter"]) for r in rules)
+    assert all(r["action"] == {"type": "block"} for r in rules)
+
+
+def test_build_security_rules_stops_before_byte_cap_in_priority_order():
+    src = "\n".join(f"phish-{i}.example" for i in range(10))
+    full = build_security_rules("", src, "", limit=10)
+    cap = list_bytes(full[:5])
+    capped = build_security_rules("", src, "", limit=10, max_bytes=cap)
+    assert capped == full[:5]
+
+
+def test_load_jp_tokens_reads_three_kinds(tmp_path):
+    p = tmp_path / "t.txt"
+    p.write_text("# c\njp: rakuten aeon  # x\njp-token: jp nta\nbrand: amazon\n\n")
+    assert load_jp_tokens(p) == JPTokens(jp=("rakuten", "aeon"), jp_token=("jp", "nta"), brand=("amazon",))
+    default = load_jp_tokens(DEFAULT_JP_TOKENS)
+    assert "rakuten" in default.jp and "nta" in default.jp_token and "amazon" in default.brand
+
+
+def test_build_security_rules_skips_default_shared_and_protected_hosts():
+    rules = build_security_rules("", "bit.ly\nlogin.smbc.co.jp\nok-phish.example\n", "", limit=10)
+    assert [r["trigger"]["url-filter"] for r in rules] == ["^[^:]+://+([^:/]+\\.)?ok-phish\\.example[/:]"]
+
+
+def test_check_rule_count_rejects_below_half_of_budget():
+    with pytest.raises(SourceTooSmall):
+        check_rule_count(14_999)
+    check_rule_count(15_000)
+
+
+def test_safari_keeps_tenants_of_shared_hosts_under_protected_domains():
+    # 設計 §G0「共有ホストの親その物は入れない（その下の個別のサブドメインは入れてよい）」。
+    # S3 の個別のバケットを止めても amazonaws.com は止まらない。DNS は計画どおり厳しく外す
+    kw = dict(protected={"amazonaws.com", "smbc.co.jp"}, shared_parents={"s3.amazonaws.com"}, jp_tokens=NO_TOKENS, limit=100)
+    src = ["evil-bucket.s3.amazonaws.com", "s3.amazonaws.com", "signin.amazonaws.com", "login.smbc.co.jp"]
+    assert select_hosts([], src, [], profile="safari", **kw) == ["evil-bucket.s3.amazonaws.com"]
+    assert select_hosts([], src, [], profile="dns", **kw) == []
+
+
+def test_jp_priority_looks_only_left_of_a_shared_parent():
+    # 共有ホストの下では、攻撃者が決めた部分（共有ホストより左）だけで語を見る。
+    # 「amazonaws」は S3 の名前で、Amazon の偽装ではない
+    shared = {"s3.amazonaws.com", "*.r.appspot.com"}
+    assert jp_priority("xyz123.s3.amazonaws.com", TOKENS, shared) == 2
+    assert jp_priority("amazon-verify.s3.amazonaws.com", TOKENS, shared) == 1
+    assert jp_priority("rakuten-card.ey.r.appspot.com", TOKENS, shared) == 0
+    assert jp_priority("amazon-verify.test", TOKENS, shared) == 1   # 共有ホストの下でなければ今まで通り
+
+
+def test_select_does_not_promote_plain_s3_buckets_to_brand_tier():
+    out = select_hosts([], ["aaa.s3.amazonaws.com", "zz.test"], [], protected={"amazonaws.com"},
+                       shared_parents={"s3.amazonaws.com"}, jp_tokens=TOKENS, profile="safari", limit=10)
+    assert out == sorted(["aaa.s3.amazonaws.com", "zz.test"], key=stable_key)   # 両方「その他」の段
+
+
+# --- A-218 G0 最後の確認の直し ---
+
+def test_safari_does_not_carve_out_aws_service_endpoints_under_a_region_namespace():
+    # PSL の「us-east-1.amazonaws.com」の直下は sts・cognito-idp など AWS 自身のサービス（利用者の持ち物ではない）。
+    # 重要ドメイン（amazonaws.com）の例外に使わない。その下の S3 のバケットは今まで通り入れる
+    shared: set[str] = set()
+    for path in DEFAULT_SHARED_PARENTS:
+        shared |= load_shared_parents(path)
+    src = ["sts.us-east-1.amazonaws.com", "cognito-idp.us-east-1.amazonaws.com", "evil.s3.us-east-1.amazonaws.com"]
+    out = select_hosts([], src, [], protected={"amazonaws.com"}, shared_parents=shared, jp_tokens=NO_TOKENS,
+                       profile="safari", limit=10)
+    assert out == ["evil.s3.us-east-1.amazonaws.com"]
+
+
+def test_shared_parents_directly_under_protected_domains_are_tenant_namespaces():
+    # 重要ドメインのすぐ下の共有ホストは、例外（その下の個別のホストを入れる）の入口になる。
+    # 「*.」の行と S3 の入口以外が PSL の入れ替えで増えたら、利用者の持ち物の入口かを人が確かめて
+    # PROVIDER_NAMESPACES に足すかを決める
+    shared: set[str] = set()
+    for path in DEFAULT_SHARED_PARENTS:
+        shared |= load_shared_parents(path)
+    protected = load_protected_domains(PROTECTED_SWIFT["safari"])
+    unknown = sorted(
+        s for s in shared
+        if not s.startswith("*.") and "s3" not in s.split(".", 1)[0]
+        and s.split(".", 1)[-1] in protected and s not in PROVIDER_NAMESPACES
+    )
+    assert unknown == []
+
+
+def test_cli_rejects_tranco_that_is_long_only_because_of_duplicates(tmp_path, monkeypatch):
+    # 取得が壊れて同じ行が繰り返されても、人気サイトの除外が消えたまま配らない（下限は違う名前の数で見る）
+    tranco = tmp_path / "tranco.csv"
+    tranco.write_text("1,safe.test\n" * 900_000, encoding="utf-8")
+    phishing = tmp_path / "phishing.txt"
+    phishing.write_text("".join(f"p{i}.test\n" for i in range(100_000)), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["build_security_rules.py", "--phishing-db", str(phishing),
+                                      "--tranco", str(tranco), "--output", str(tmp_path / "out.json")])
+    with pytest.raises(SourceTooSmall):
+        main()
+    assert not (tmp_path / "out.json").exists()
+
+
+def test_safari_skips_hosts_under_a_popular_site_unless_a_shared_host_is_between():
+    # 確認で、人気サイトの中のサービスの住所（画像配信・メールのクリック計測・フォーム）が選ばれていた。
+    # 元の一覧は 10/2 から止まっていて、直った住所も消えない。人気サイト（Tranco 10 万位まで）の下は、
+    # 間か人気サイトその物が共有ホストの時（＝利用者の物）だけ入れる
+    src = ["clicks.mailer.test", "evil.s3.cloud.test", "x.pages.test", "y.x.pages.test", "evil.unknown.test"]
+    tranco = ["mailer.test", "cloud.test", "pages.test"]
+    out = select_hosts([], src, tranco, protected=set(), shared_parents={"s3.cloud.test", "pages.test"},
+                       jp_tokens=NO_TOKENS, profile="safari", limit=100)
+    assert sorted(out) == ["evil.s3.cloud.test", "evil.unknown.test", "x.pages.test", "y.x.pages.test"]
+
+
+def test_safari_popular_rule_reaches_only_the_top_100k():
+    tranco = ["top.test"] + [f"f{i}.test" for i in range(DNS_POPULAR_TOP)] + ["tail.test"]
+    out = select_hosts([], ["a.top.test", "b.tail.test"], tranco, protected=set(), shared_parents=set(),
+                       jp_tokens=NO_TOKENS, profile="safari", limit=100)
+    assert out == ["b.tail.test"]
+
+
+def test_japanese_public_institution_hosts_are_never_selected():
+    # 設計 §4 反目標「銀行・決済・公的機関など必要なサイトを誤って止める」。go.jp（政府）・lg.jp（自治体）・
+    # ac.jp（大学）・ed.jp（学校）・or.jp（財団・社団・医療法人・社会福祉法人など）は登録に資格が要る
+    # ＝元の一覧に載っていれば、乗っ取られた本物のサイト
+    src = ["nurse.hospital.go.jp", "www.city.lg.jp", "lab.univ.ac.jp", "school.town.ed.jp", "go.jp",
+           "care.welfare.or.jp", "evil.jp"]
+    for profile in ("safari", "dns"):
+        out = select_hosts([], src, [], protected=set(), shared_parents=set(), jp_tokens=NO_TOKENS,
+                           profile=profile, limit=100)
+        assert out == ["evil.jp"]
+
+
+def test_jp_priority_ignores_tokens_inside_a_popular_sites_own_name():
+    # ブランドが自分で持つドメイン（microsoftstart.com・amazonsellerservices.com）の下の住所を、その名前の中の語で
+    # 「海外ブランド」の段へ上げない。人気サイト（Tranco）の下では、人気サイトより左の部分だけで語を見る
+    sites = {"amazonsellerservices.com", "plain.test"}
+    assert jp_priority("go.amazonsellerservices.com", TOKENS, frozenset(), sites) == 2
+    assert jp_priority("amazon-login.plain.test", TOKENS, frozenset(), sites) == 1
+    assert jp_priority("go.amazonsellerservices.com", TOKENS) == 1   # 人気サイトを渡さなければ今まで通り
+
+
+def test_select_does_not_promote_hosts_of_a_brands_own_site_beyond_the_popular_cutoff():
+    tranco = [f"f{i}.test" for i in range(DNS_POPULAR_TOP)] + ["amazonbrand.test"]
+    out = select_hosts([], ["go.amazonbrand.test", "aaa.test"], tranco, protected=set(), shared_parents=set(),
+                       jp_tokens=TOKENS, profile="safari", limit=10)
+    assert out == sorted(["go.amazonbrand.test", "aaa.test"], key=stable_key) == ["aaa.test", "go.amazonbrand.test"]

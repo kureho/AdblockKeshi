@@ -24,12 +24,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Fetch URLhaus host file (public, no auth required)
-        run: |
-          curl -fsSL "https://urlhaus.abuse.ch/downloads/hostfile/" \
-            -o /tmp/urlhaus-hosts.txt
-          echo "URLhaus lines: $(wc -l < /tmp/urlhaus-hosts.txt)"
-
+      # URLhaus は使わない（2026-11-09 kureho 承認）。配布先が 410 になり、取得で毎週止まっていた
+      # （10/25・11/1・11/8）。今は登録と鍵が要り、利用条件で営利の利用は有料になり得る。
+      # 詳しくは tasks/a218-g0-measurement-2026-11-09.md
       - name: Fetch Phishing.Database active domains (public, no auth required)
         run: |
           curl -fsSL "https://raw.githubusercontent.com/mitchellkrogza/Phishing.Database/master/phishing-domains-ACTIVE.txt" \
@@ -46,7 +43,6 @@ jobs:
       - name: Build security-rules.json
         run: |
           python3 scripts/build_security_rules.py \
-            --urlhaus /tmp/urlhaus-hosts.txt \
             --phishing-db /tmp/phishing-db-active.txt \
             --tranco /tmp/tranco-top-1m.csv \
             --output /tmp/security-rules.json \

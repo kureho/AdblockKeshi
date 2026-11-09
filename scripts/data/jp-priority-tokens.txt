@@ -1,0 +1,14 @@
+# 詐欺サイトの一覧で先に選ぶ語（日本の利用者がよく狙われる物）
+# 行頭の印で 3 種。空白で区切って並べる。「#」から後はコメント。
+#   jp:       ホスト名から最後のラベル（.com など）を除いた部分に含まれれば「日本向け」
+#   jp-token: ホスト名を「.」「-」で区切った語と完全一致なら「日本向け」（最後のラベルは見ない）
+#   brand:    含まれれば「日本でもよく偽装される海外ブランド」（日本向けの次に選ぶ）
+# .jp で終わるホストは語に関係なく「日本向け」。
+# 元の一覧（Phishing.Database ACTIVE・2026-11-09・392,178 件）で含む数: amazon 3,694 / rakuten 482 / jppost 240 / vpass 158 / aeon 151 / nta- 90 / jcb 89 / paypay 79 / etax 60 / saison 56 / e-tax 40 / mufg 32 / mercari 32 / sagawa 28 / jaccs 27 / smbc 24 / docomo 24（調査 §4-4 と同じ数）
+
+# 日本向け（含まれれば当たり）
+jp: rakuten aeon saison paypay mercari docomo softbank ymobile kddi smbc vpass mufg mizuho resona yucho jpbank jp-bank japanpost jppost sagawa kuroneko yamato ekinet eki-net etax e-tax mynumber myna jcb orico eposcard jaccs japan nihon nippon
+# 日本向け（「.」「-」で区切った語と完全一致・最後のラベルは見ない）
+jp-token: jp nta au
+# 日本でもよく偽装される海外ブランド（含まれれば当たり）
+brand: amazon apple microsoft netflix paypal visa mastercard amex
