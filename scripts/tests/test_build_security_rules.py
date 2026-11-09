@@ -6,15 +6,28 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import pytest  # noqa: E402
+
 from build_security_rules import (  # noqa: E402
+    DEFAULT_SHARED_PARENTS,
+    JPTokens,
+    SourceTooSmall,
+    build_parser,
     build_security_rules,
+    check_sources,
     convert_to_content_blocker_rules,
+    load_protected_domains,
+    load_shared_parents,
+    load_tranco_ranked,
     load_tranco_set,
     parse_phishing_db_hosts,
     parse_urlhaus_hosts,
+    select_hosts,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
+ROOT = Path(__file__).resolve().parents[2]
+NO_TOKENS = JPTokens((), (), ())
 
 
 def test_parse_urlhaus_hosts_skips_comments_and_ips():
@@ -129,3 +142,76 @@ def test_build_security_rules_combines_both_sources():
     joined = " ".join(r["trigger"]["url-filter"].replace("\\", "") for r in rules)
     for h in ["mal1.com", "mal2.com", "phish1.tk", "phish2.ml"]:
         assert h in joined
+
+
+# --- A-218 G0 Task A2: 除外と下限の守り ---
+
+def test_check_sources_rejects_truncated_tranco():
+    with pytest.raises(SourceTooSmall):
+        check_sources(tranco_count=1_000, phishing_count=392_178)
+
+
+def test_check_sources_rejects_truncated_phishing_db():
+    with pytest.raises(SourceTooSmall):
+        check_sources(tranco_count=1_000_000, phishing_count=50_000)
+    check_sources(tranco_count=1_000_000, phishing_count=392_178)  # 例外なし
+
+
+def test_load_protected_domains_reads_set_literals_only():
+    safari = load_protected_domains([ROOT / "Shared/CriticalDomainGuard.swift"])
+    assert {"apple.com", "smbc.co.jp", "kureho.app"} <= safari
+    assert "github.io" not in safari
+    dns = load_protected_domains([ROOT / "Shared/CriticalDomainGuard.swift", ROOT / "Shared/DNS/DNSCriticalGuard.swift"])
+    assert "github.io" in dns and len(safari) >= 50
+
+
+def test_select_drops_shared_hosts_and_keeps_their_subdomains_on_safari():
+    out = select_hosts([], ["github.io", "evil-login.github.io", "storage.googleapis.com", "lin.ee", "bit.ly", "x.weebly.com"],
+                       [], protected=set(), shared_parents={"github.io", "storage.googleapis.com", "lin.ee", "bit.ly", "weebly.com"},
+                       jp_tokens=NO_TOKENS, profile="safari", limit=100)
+    assert sorted(out) == ["evil-login.github.io", "x.weebly.com"]
+
+
+def test_select_never_blocks_a_tranco_domain_or_protected_domain():
+    out = select_hosts([], ["example.com", "smbc.co.jp", "login.smbc.co.jp", "co.jp", "smbc-co-jp.evil.test"],
+                       ["shop.example.com"], protected={"smbc.co.jp"}, shared_parents=set(),
+                       jp_tokens=NO_TOKENS, profile="safari", limit=100)
+    assert out == ["smbc-co-jp.evil.test"]
+
+
+def test_dns_profile_is_stricter_than_safari():
+    src = ["1.2.3.4", "hacked.popular.test", "evil.weebly.com", "evil-login.github.io"]
+    kw = dict(protected={"github.io"}, shared_parents={"weebly.com", "github.io"}, jp_tokens=NO_TOKENS, limit=100)
+    tranco = ["popular.test", "weebly.com"]
+    assert sorted(select_hosts([], src, tranco, profile="dns", **kw)) == ["evil.weebly.com"]
+    assert "hacked.popular.test" in select_hosts([], src, tranco, profile="safari", **kw)
+
+
+def test_load_shared_parents_strips_inline_comments_and_keeps_wildcards(tmp_path):
+    p = tmp_path / "shared.txt"
+    p.write_text("# comment\ngithub.io   # PSL\n*.r.appspot.com\n\n  BIT.LY \n")
+    assert load_shared_parents(p) == {"github.io", "*.r.appspot.com", "bit.ly"}
+
+
+def test_select_treats_wildcard_parent_and_its_direct_children_as_shared():
+    out = select_hosts([], ["r.appspot.com", "ey.r.appspot.com", "evil.ey.r.appspot.com"], [],
+                       protected=set(), shared_parents={"*.r.appspot.com"},
+                       jp_tokens=NO_TOKENS, profile="safari", limit=100)
+    assert out == ["evil.ey.r.appspot.com"]
+
+
+def test_default_shared_parents_cover_curated_and_psl_private_hosts():
+    shared = set().union(*(load_shared_parents(p) for p in DEFAULT_SHARED_PARENTS))
+    assert {"bit.ly", "lin.ee", "weebly.com", "s3.us-east-2.amazonaws.com", "*.r.appspot.com"} <= shared
+
+
+def test_load_tranco_ranked_keeps_rank_order():
+    assert load_tranco_ranked("2,b.com\n1,a.com\n\n3,C.com\n") == ["b.com", "a.com", "c.com"]
+
+
+def test_cli_urlhaus_is_optional_and_other_args_unchanged():
+    args = build_parser().parse_args(["--phishing-db", "p.txt", "--tranco", "t.csv", "--output", "o.json"])
+    assert args.urlhaus is None and args.limit == 30000
+    args = build_parser().parse_args(["--urlhaus", "u.txt", "--phishing-db", "p.txt", "--tranco", "t.csv",
+                                      "--output", "o.json", "--limit", "30000"])
+    assert str(args.urlhaus) == "u.txt"
