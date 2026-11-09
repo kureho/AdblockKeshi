@@ -3,6 +3,7 @@
 - ブランチ: `feat/a218-source-hagezi`（main 627f75d から。main には入れていない＝利用者へは何も配っていない）
 - 決定: kureho 2026-11-09「替えて、報告もつなぐ」。根拠の調査 = `tasks/a218-scam-source-research-2026-11-09.md`
 - 計測に使った元データ（2026-11-09 取得・コミットしない）: HaGeZi Threat Intelligence Feeds 全部（`wildcard/tif-onlydomains.txt`・見出しの版 2026.1108.0834.12・1,441,295 件）／Tranco 上位 100 万（list 8P8NV・2026-11-08 作成）／日本向けの見本 = JPCERT/CC phishurl-list 2026-08〜09 のホスト 5,909 件
+- 件数の下限を 100,000 → 450,000 に上げた（元データが約 144 万件になったので。前の元データの大きさの物は途中で切れた物として止まる）
 - 作り方: ワークフローと同じ引数で `python3 -I scripts/build_security_rules.py --source … --notice … --limit 30000` → `Wrote 30000 rules`（10.6 秒・メモリ最大 0.93 GB。同じ入力で 2 回作って同じ物になる）
 - 比べる「前」= 配信中の `docs/cdn/security-rules.json`（G0 の版・Phishing.Database から・11/9 の週次 7c13674）
 
