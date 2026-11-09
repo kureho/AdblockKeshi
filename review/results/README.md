@@ -23,7 +23,8 @@ A-88 §2「報告の週1回判定」で、Claude が判定した結果をここ�
 - `results[].report_id`: 判定対象の `reports.id`（UUID）。UUID 形式でない値が1件でもあると
   **ファイル全体が失敗する**（そのファイルからは1件も D1 に書き込まれない）
 - `results[].outcome`: 次の 5 値のいずれか。未知の値が1件でもあると同様にファイル全体が失敗する
-  - `applied` — 反映した（そのサイト限定の if-domain ルールを次の週次配信に載せた）
+  - `applied` — 反映した（そのサイト限定の if-domain ルールを次の週次配信に載せた、または詐欺サイトの報告を確かめて
+    `review/scam-domains/` に書いた＝詐欺サイトの一覧に載せた。`review/scam-domains/README.md`）
   - `in_app_ad` — アプリ内広告で Safari のフィルタでは消せない
   - `site_own_ad` — サイト自身が出している広告で消せない
   - `not_reproduced` — 再現しない

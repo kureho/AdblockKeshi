@@ -29,7 +29,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -77,6 +77,63 @@ class JPTokens:
 
 class SourceTooSmall(Exception):
     """元データが下限を割った（取得が途中で切れた等）。"""
+
+
+class ReportedListInvalid(Exception):
+    """review/scam-domains のファイルが崩れている。"""
+
+
+# 報告を見直しで確かめた詐欺サイト（review/scam-domains）。設計 tasks/a218-report-to-scam-list-design-2026-11-09.md §3-4
+REPORTED_CAP = 500        # 3 万件の 1.7%。報告は週に多くて 23 件
+REPORTED_TTL_DAYS = 90    # 詐欺サイトは短命。間違いを長く残さない
+_REPORTED_KEYS = {"added_at", "domains"}
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def load_reported_domains(dir_: Path, today: date, cap: int = REPORTED_CAP,
+                          ttl_days: int = REPORTED_TTL_DAYS) -> list[str]:
+    """review/scam-domains/*.json を読み、期限内（追加から ttl_days 日未満）の物を新しい日付の順に
+    重複なく cap 件まで返す。
+
+    公開の置き場なので、書けるのは added_at と domains（小文字のドメインだけ）の 2 つだけ。
+    形の崩れたファイルが 1 つでもあれば止める（作り直しごと止まり、配信は前の版のまま）。
+    作り直しは UTC で動くので、日本の日付で書いた added_at の 1 日先までは受け付ける。"""
+    dir_ = Path(dir_)
+    if not dir_.is_dir():
+        raise ReportedListInvalid(f"{dir_}: not a directory")
+    entries: list[tuple[date, str, int, str]] = []
+    for path in sorted(dir_.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+            raise ReportedListInvalid(f"{path.name}: {e}") from e
+        if not isinstance(data, dict) or set(data) != _REPORTED_KEYS:
+            raise ReportedListInvalid(f"{path.name}: must have exactly added_at and domains")
+        added_raw, domains = data["added_at"], data["domains"]
+        if not isinstance(added_raw, str) or not _DATE_RE.match(added_raw):
+            raise ReportedListInvalid(f"{path.name}: added_at must be YYYY-MM-DD")
+        try:
+            added = date.fromisoformat(added_raw)
+        except ValueError as e:
+            raise ReportedListInvalid(f"{path.name}: {e}") from e
+        if added > today + timedelta(days=1):
+            raise ReportedListInvalid(f"{path.name}: added_at {added_raw} is in the future")
+        if not isinstance(domains, list) or not domains:
+            raise ReportedListInvalid(f"{path.name}: domains must be a non-empty list")
+        for d in domains:
+            if not isinstance(d, str) or len(d) > 253 or not _HOST_RE.match(d):
+                raise ReportedListInvalid(f"{path.name}: not a lowercase domain: {d!r}")
+        if (today - added).days >= ttl_days:
+            continue
+        entries.extend((added, path.name, i, d) for i, d in enumerate(domains))
+    entries.sort(key=lambda e: (-e[0].toordinal(), e[1], e[2]))
+    out: list[str] = []
+    seen: set[str] = set()
+    for _, _, _, d in entries:
+        if d not in seen:
+            seen.add(d)
+            out.append(d)
+    return out[:cap]
 
 
 class SourceHeaderMissing(Exception):
@@ -374,11 +431,13 @@ def select_hosts(
     profile: str,
     limit: int,
     urlhaus_cap: int = URLHAUS_CAP,
+    reported_hosts: Iterable[str] = (),
 ) -> list[str]:
-    """除外を通ったホストを優先順に上から limit 件返す（元の一覧に無いホストは足さない）。
+    """除外を通ったホストを優先順に上から limit 件返す（元の一覧と報告で確かめた物の他は足さない）。
 
-    段 0 日本向け（両方の元データ）→ 段 1 URLhaus の残り（urlhaus_cap まで）→ 段 2 海外ブランド → 段 3 その他。
-    各段の中は stable_key の順。URLhaus だけにあって段 1 の上限を超えた物は入れない。
+    報告で確かめた物（reported_hosts の順）→ 段 0 日本向け（両方の元データ）→ 段 1 URLhaus の残り
+    （urlhaus_cap まで）→ 段 2 海外ブランド → 段 3 その他。段 0〜3 の中は stable_key の順。
+    URLhaus だけにあって段 1 の上限を超えた物は入れない。報告の物も同じ除外を通す（特別な道は無い）。
     """
     if profile not in PROFILES:
         raise ValueError(f"unknown profile: {profile}")
@@ -396,8 +455,16 @@ def select_hosts(
                 out.add(host)
         return out
 
-    urlhaus = accepted(urlhaus_hosts)
-    phishing = accepted(phishing_hosts)
+    reported: list[str] = []
+    for raw in reported_hosts:
+        host = _normalize(raw)
+        if host and host not in reported and exclusion_reason(
+            host, profile=profile, tranco_closure=closure, popular=popular,
+            protected=protected, shared_parents=shared_parents,
+        ) is None:
+            reported.append(host)
+    urlhaus = accepted(urlhaus_hosts) - set(reported)
+    phishing = accepted(phishing_hosts) - set(reported)
     tiers: list[list[str]] = [[], [], [], []]
     sites = set(tranco_ranked)
     prio = {host: jp_priority(host, jp_tokens, shared_parents, sites) for host in urlhaus | phishing}
@@ -410,7 +477,7 @@ def select_hosts(
     taken = jp | set(tiers[1])
     for host in phishing - taken:
         tiers[2 if prio[host] == 1 else 3].append(host)
-    ordered: list[str] = []
+    ordered: list[str] = list(reported)
     for tier in tiers:
         ordered.extend(sorted(tier, key=stable_key))
     return ordered[:limit]
@@ -422,6 +489,7 @@ def build_security_rules(
     tranco_text: str,
     limit: int = SECURITY_BUDGET,
     max_bytes: int = SECURITY_MAX_BYTES,
+    reported_hosts: Iterable[str] = (),
 ) -> list[dict]:
     """Safari 用の詐欺サイトの規則。優先順に足していき、件数 limit か大きさ max_bytes の手前で止める。
 
@@ -439,6 +507,7 @@ def build_security_rules(
         jp_tokens=load_jp_tokens(DEFAULT_JP_TOKENS),
         profile="safari",
         limit=limit,
+        reported_hosts=reported_hosts,
     )
     rules: list[dict] = []
     size = 2  # "[" と "]"（build_split_rules.list_bytes と同じ数え方）
@@ -489,11 +558,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, default=30000)
     parser.add_argument("--notice", type=Path, default=None,
                         help="元の見出しと改変の旨を書き出す path（省略可）")
+    parser.add_argument("--reported-dir", type=Path, default=None, dest="reported_dir",
+                        help="報告を見直しで確かめた詐欺サイトの置き場 review/scam-domains（省略可）")
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
+    # 崩れた置き場は重い処理の前に止める
+    reported: list[str] = []
+    if args.reported_dir:
+        reported = load_reported_domains(args.reported_dir, today=datetime.now(timezone.utc).date())
+        print(f"Reported scam domains in effect: {len(reported)}", file=sys.stderr)
 
     urlhaus_text = args.urlhaus.read_text(encoding="utf-8") if args.urlhaus else ""
     phishing_db_text = args.phishing_db.read_text(encoding="utf-8")
@@ -509,7 +585,7 @@ def main() -> None:
         notice_text = source_notice(phishing_db_text, generated_at)
 
     rules = build_security_rules(
-        urlhaus_text, phishing_db_text, tranco_text, limit=args.limit
+        urlhaus_text, phishing_db_text, tranco_text, limit=args.limit, reported_hosts=reported
     )
     check_rule_count(len(rules), args.limit)
     args.output.write_text(json.dumps(rules, ensure_ascii=False), encoding="utf-8")

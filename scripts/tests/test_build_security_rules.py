@@ -33,7 +33,9 @@ from build_security_rules import (  # noqa: E402
     parse_phishing_db_hosts,
     parse_urlhaus_hosts,
     select_hosts,
+    ReportedListInvalid,
     SourceHeaderMissing,
+    load_reported_domains,
     check_declared_entries,
     source_notice,
     stable_key,
@@ -536,3 +538,100 @@ def test_cli_stops_before_writing_when_the_header_is_missing(tmp_path, monkeypat
     with pytest.raises(SourceHeaderMissing):
         b.main()
     assert not notice.exists() and not (tmp_path / "out.json").exists()
+
+
+# --- A-218 報告で確かめた詐欺サイト（review/scam-domains・設計 tasks/a218-report-to-scam-list-design-2026-11-09.md） ---
+
+from datetime import date  # noqa: E402
+
+REPO = Path(__file__).resolve().parent.parent.parent
+TODAY = date(2026, 11, 15)
+
+
+def _reported(dir_: Path, name: str, obj) -> None:
+    (dir_ / name).write_text(json.dumps(obj), encoding="utf-8")
+
+
+def test_load_reported_domains_keeps_newest_first_and_drops_expired(tmp_path):
+    _reported(tmp_path, "a.json", {"added_at": "2026-08-01", "domains": ["old.test"]})
+    _reported(tmp_path, "b.json", {"added_at": "2026-10-01", "domains": ["mid.test", "dup.test"]})
+    _reported(tmp_path, "c.json", {"added_at": "2026-11-10", "domains": ["new.test", "dup.test"]})
+    (tmp_path / "README.md").write_text("説明だけ。読まない", encoding="utf-8")
+    assert load_reported_domains(tmp_path, today=TODAY) == ["new.test", "dup.test", "mid.test"]
+
+
+def test_load_reported_domains_drops_an_entry_on_day_90(tmp_path):
+    _reported(tmp_path, "a.json", {"added_at": "2026-08-17", "domains": ["day90.test"]})  # 11/15 で 90 日目
+    _reported(tmp_path, "b.json", {"added_at": "2026-08-18", "domains": ["day89.test"]})
+    assert load_reported_domains(tmp_path, today=TODAY) == ["day89.test"]
+
+
+def test_load_reported_domains_keeps_only_the_newest_up_to_the_cap(tmp_path):
+    _reported(tmp_path, "a.json", {"added_at": "2026-11-01", "domains": ["a1.test", "a2.test"]})
+    _reported(tmp_path, "b.json", {"added_at": "2026-11-02", "domains": ["b1.test"]})
+    assert load_reported_domains(tmp_path, today=TODAY, cap=2) == ["b1.test", "a1.test"]
+
+
+def test_load_reported_domains_accepts_tomorrow_because_the_build_runs_in_utc(tmp_path):
+    # 日本の日付で書いた added_at が、UTC で動く作り直しから見て 1 日先になる事がある
+    _reported(tmp_path, "a.json", {"added_at": "2026-11-16", "domains": ["jst.test"]})
+    assert load_reported_domains(tmp_path, today=TODAY) == ["jst.test"]
+
+
+@pytest.mark.parametrize("obj", [
+    {"added_at": "2026-11-10"},
+    {"added_at": "2026-11-10", "domains": []},
+    {"added_at": "2026/11/10", "domains": ["a.test"]},
+    {"added_at": "2026-11-17", "domains": ["a.test"]},
+    {"added_at": "2026-11-10", "domains": ["https://a.test/login"]},
+    {"added_at": "2026-11-10", "domains": ["A.test"]},
+    {"added_at": "2026-11-10", "domains": ["*.a.test"]},
+    {"added_at": "2026-11-10", "domains": ["localhost"]},
+    {"added_at": "2026-11-10", "domains": ["a.test"], "note": "報告のメモ"},
+    ["a.test"],
+])
+def test_load_reported_domains_stops_on_a_broken_file(tmp_path, obj):
+    # 公開の置き場に書くのはドメインと日付だけ。崩れた物・余計な項目（URL やメモ）が 1 つでもあれば作り直しごと止める
+    _reported(tmp_path, "bad.json", obj)
+    with pytest.raises(ReportedListInvalid):
+        load_reported_domains(tmp_path, today=TODAY)
+
+
+def test_load_reported_domains_stops_on_broken_json_or_a_missing_dir(tmp_path):
+    (tmp_path / "bad.json").write_text("{", encoding="utf-8")
+    with pytest.raises(ReportedListInvalid):
+        load_reported_domains(tmp_path, today=TODAY)
+    with pytest.raises(ReportedListInvalid):
+        load_reported_domains(tmp_path / "missing", today=TODAY)
+
+
+def test_reported_hosts_come_first_and_still_pass_the_exclusions():
+    src = ["evil.unknown.test", "rep.scam.test"]
+    tranco = ["popular.test"]
+    reported = ["popular.test", "clicks.popular.test", "bank.test", "x.go.jp", "rep.scam.test", "only-reported.test"]
+    out = select_hosts([], src, tranco, reported_hosts=reported, protected={"bank.test"}, shared_parents=set(),
+                       jp_tokens=NO_TOKENS, profile="safari", limit=100)
+    assert out[:2] == ["rep.scam.test", "only-reported.test"]
+    assert sorted(out) == ["evil.unknown.test", "only-reported.test", "rep.scam.test"]
+
+
+def test_cli_passes_the_reported_dir_to_the_build(tmp_path, monkeypatch):
+    b, _ = _fake_main_inputs(tmp_path, monkeypatch, 20000)
+    rep = tmp_path / "scam-domains"
+    rep.mkdir()
+    _reported(rep, "a.json", {"added_at": date.today().isoformat(), "domains": ["rep.scam.test"]})
+    seen = {}
+
+    def fake_build(*a, **k):
+        seen.update(k)
+        return [{"trigger": {"url-filter": "x"}, "action": {"type": "block"}}] * 20000
+
+    monkeypatch.setattr(b, "build_security_rules", fake_build)
+    monkeypatch.setattr(sys, "argv", sys.argv + ["--reported-dir", str(rep)])
+    b.main()
+    assert seen["reported_hosts"] == ["rep.scam.test"]
+
+
+def test_the_reported_files_in_the_repo_are_valid():
+    # 見直しで書いたファイルが崩れていれば、push の前にここで分かる（週次は作り直しごと止まる）
+    load_reported_domains(REPO / "review" / "scam-domains", today=date.today())
