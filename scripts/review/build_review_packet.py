@@ -125,11 +125,14 @@ def page_url_for_measure(url: str | None) -> str | None:
     try:
         parts = urlsplit(url)
         host = parts.hostname
+        port = parts.port
     except ValueError:
         return None
     if parts.scheme != "https" or not host or "." not in host:
         return None
-    return urlunsplit((parts.scheme, parts.netloc, parts.path or "/", "", ""))
+    # 利用者名・パスワード（user:pass@）は利用者の物になり得る＝開く時に送らない
+    netloc = f"{host}:{port}" if port else host
+    return urlunsplit((parts.scheme, netloc, parts.path or "/", "", ""))
 
 
 def _site_root(domain: str) -> str:
@@ -164,7 +167,7 @@ def is_scam_report(row: dict) -> bool:
 
 def _url_host(url: str | None) -> str | None:
     opened = page_url_for_measure(url)
-    return normalize_report_host(urlsplit(opened).netloc) if opened else None
+    return normalize_report_host(urlsplit(opened).hostname) if opened else None
 
 
 def scam_reported_hosts(rows: list[dict]) -> set[str]:
@@ -190,7 +193,8 @@ def measure_targets(rows: list[dict], max_pages: int) -> list[tuple[dict, str]]:
         if r.get("seen_in") == "other_app" or is_scam_report(r) or _opens_scam_host(r, scam_hosts):
             continue
         opened = page_url_for_measure(r.get("url"))
-        if opened:
+        # 照合できない形のホスト（%で書いた点など）は、開くと別の名前として扱われ得る＝開かない
+        if opened and _url_host(opened):
             targets.append((r, opened))
     return targets[:max_pages]
 

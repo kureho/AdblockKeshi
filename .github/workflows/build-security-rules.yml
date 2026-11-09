@@ -12,7 +12,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'review/scam-domains/**'
+      - 'review/scam-domains/*.json'  # README の編集（この仕組みを入れる merge を含む）では動かさない
 
 # 日曜の定期と push の作り直しが重ならないよう、同時に 1 つだけ（後から来た方は待つ）
 concurrency:

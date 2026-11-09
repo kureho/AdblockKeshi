@@ -529,3 +529,22 @@ def test_scam_facts_future_registration_date_is_unknown():
 def test_scam_facts_reported_shared_host_itself_is_not_looked_up():
     f, calls = _facts("github.io", shared={"github.io"})
     assert calls == [] and f["shared_parent"] == "github.io" and "共有ホストそのもの" in f["rdap_note"]
+
+
+def test_page_url_drops_userinfo():
+    # URL の利用者名・パスワードは利用者の物になり得る＝開く時に送らない。ポートは残す
+    assert page_url_for_measure("https://user:pass@Evil.TOP:8443/x?a=1") == "https://evil.top:8443/x"
+
+
+def test_measure_targets_never_opens_a_scam_host_hidden_behind_userinfo():
+    # 利用者名つきの URL でも、詐欺サイトとして報告されたホストなら開かない（自動のセキュリティ点検 2026-11-09）
+    scam = _row(id=_SCAM_ID, ad_type="phishing", domain="evil.top", url="https://evil.top/login")
+    hidden = _row(id="66666666-6666-4666-8666-666666666666", ad_type="popup", domain="evil.top",
+                  url="https://user@evil.top/login")
+    assert measure_targets([scam, hidden], max_pages=30) == []
+
+
+def test_measure_targets_skips_a_url_whose_host_cannot_be_checked():
+    # 照合できない形のホスト（%で書いた点など）は、開くと別の名前として扱われ得る＝開かない
+    odd = _row(id="77777777-7777-4777-8777-777777777777", domain="evil.top", url="https://login%2eevil.top/x")
+    assert measure_targets([odd], max_pages=30) == []

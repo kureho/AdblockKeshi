@@ -12,10 +12,10 @@
 | `scripts/build_security_rules.py` | `--reported-dir` を足した。`review/scam-domains/*.json` を読み、除外を通った物を一覧の**先頭**に置く。形の崩れたファイルが 1 つでもあれば止まる（配信は前の版のまま）。90 日で外れる・500 件まで・新しい日付から |
 | `review/scam-domains/README.md` | 置き場の形・載せる基準（A と B）・公開の repo に書いてよい物・外し方 |
 | `review/results/README.md` | 判定 `applied` に「詐欺サイトの報告を確かめて書いた」を足した |
-| `.github/workflows/build-security-rules.yml` | `review/scam-domains/` への push（main だけ）でも動く。週次と同時に走らない（1 つずつ）。`--reported-dir review/scam-domains` を渡す。`timeout-minutes: 30` はそのまま |
+| `.github/workflows/build-security-rules.yml` | `review/scam-domains/*.json` への push（main だけ）でも動く（README の変更では動かない＝この仕組みを入れる merge では動かない。設計 §3-9 の `review/scam-domains/**` から狭めた）。週次と同時に走らない（1 つずつ）。走り始めた時の最新を取り、push の前に取り直す。`--reported-dir review/scam-domains` を渡す。`timeout-minutes: 30` はそのまま |
 | `scripts/review/build_review_packet.py` | 詐欺サイトの種類の報告は**ページを開かない**。代わりに、配信中の 3 万件にあるか・HaGeZi の全部にあるか・ブランドの語・共有ホストの下か・登録日（RDAP）を束に並べる |
 
-試験: 225 件すべて通過（前の 176 件＋一覧の側 18 件＋束の側 22 件＋見直しの指摘の 9 件）。
+試験: 228 件すべて通過（前の 176 件＋一覧の側 18 件＋束の側 22 件＋見直しの指摘の 12 件）。
 
 ## 計測 1: 一覧（報告の見本 11 件を入れて作り直す）
 
@@ -92,11 +92,18 @@ repo の実物の置き場（README.md だけ）を渡して作った物も、�
 
 advisor の点検から: 共有ホストそのもの（`github.io` 等）が報告された時に「共有ホストの下: いいえ」と出て登録日を引いていた → 「共有ホストそのもの（載らない）」と出し、引かない。登録日が取れない理由の文を「RDAP の無い TLD・時間切れ・回数の制限のどれか」にした。
 
-直した後: 試験 225 件すべて通過。見本の報告と実物の置き場で作り直した物は、直す前の計測とバイト単位で同じ。
+advisor の 2 回目の点検と自動のセキュリティ点検から:
+
+| 指摘 | 裏取り | 処理 |
+|---|---|---|
+| merge の push が置き場の README を足すので、起動の条件（`review/scam-domains/**`）に当たり、merge した瞬間に作り直しが走る（「入れて日曜を待つ・手では動かさない」に反する） | 確かめた（ほかに merge で動くワークフローは無い） | 直した: 起動を `review/scam-domains/*.json` に絞った（ほかの置き場と同じ形） |
+| 報告の URL に利用者名（`user@`）が入ると、詐欺サイトのホストの照合をすり抜けて開き得る | 再現した | 直した: 開く URL から利用者名・パスワードを外し、照合はホスト名で行う。照合できない形のホストは開かない |
+
+直した後: 試験 228 件すべて通過。見本の報告と実物の置き場で作り直した物は、直す前の計測とバイト単位で同じ。
 
 ## 入れた後に起きること
 
-- 置き場は空（README だけ）なので、merge しても**一覧は変わらない**。次の週次（11/15）は HaGeZi の一覧がそのまま出る
+- merge の push では作り直しは**動かない**（起動は置き場の .json の push だけ）。置き場は空（README だけ）なので、次の週次（11/15）も HaGeZi の一覧がそのまま出る
 - 詐欺サイトの報告が来た週は、束に事実が並ぶ。見直しで A と B を満たした物だけを `review/scam-domains/<日付>.json` に書いて push すると、その push で一覧が作り直され、アプリの更新なしで届く
 - 戻すなら main の merge を revert して push する（置き場にファイルを書いていれば、それも消える）
 
