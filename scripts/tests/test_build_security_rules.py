@@ -12,6 +12,9 @@ import pytest  # noqa: E402
 from build_security_rules import (  # noqa: E402
     DEFAULT_JP_TOKENS,
     DEFAULT_SHARED_PARENTS,
+    DNS_POPULAR_TOP,
+    PROTECTED_SWIFT,
+    PROVIDER_NAMESPACES,
     URLHAUS_CAP,
     JPTokens,
     SourceTooSmall,
@@ -26,6 +29,7 @@ from build_security_rules import (  # noqa: E402
     load_shared_parents,
     load_tranco_ranked,
     load_tranco_set,
+    main,
     parse_phishing_db_hosts,
     parse_urlhaus_hosts,
     select_hosts,
@@ -189,11 +193,17 @@ def test_select_never_blocks_a_tranco_domain_or_protected_domain():
 
 
 def test_dns_profile_is_stricter_than_safari():
-    src = ["1.2.3.4", "hacked.popular.test", "evil.weebly.com", "evil-login.github.io"]
-    kw = dict(protected={"github.io"}, shared_parents={"weebly.com", "github.io"}, jp_tokens=NO_TOKENS, limit=100)
+    # DNS は IP と、重要ドメインの下の共有ホストの利用者も外す（Safari は入れる）。
+    # 人気サイトの下（共有ホストの利用者を除く）は、最後の確認の指摘から両方とも外す
+    src = ["1.2.3.4", "hacked.popular.test", "evil.weebly.com", "evil-login.github.io", "b.s3.bank.test"]
+    kw = dict(protected={"github.io", "bank.test"}, shared_parents={"weebly.com", "github.io", "s3.bank.test"},
+              jp_tokens=NO_TOKENS, limit=100)
     tranco = ["popular.test", "weebly.com"]
-    assert sorted(select_hosts([], src, tranco, profile="dns", **kw)) == ["evil.weebly.com"]
-    assert "hacked.popular.test" in select_hosts([], src, tranco, profile="safari", **kw)
+    dns = select_hosts([], src, tranco, profile="dns", **kw)
+    safari = select_hosts([], src, tranco, profile="safari", **kw)
+    assert sorted(dns) == ["evil.weebly.com"]
+    assert sorted(safari) == ["1.2.3.4", "b.s3.bank.test", "evil.weebly.com"]
+    assert set(dns) <= set(safari)
 
 
 def test_load_shared_parents_strips_inline_comments_and_keeps_wildcards(tmp_path):
@@ -323,3 +333,74 @@ def test_select_does_not_promote_plain_s3_buckets_to_brand_tier():
     out = select_hosts([], ["aaa.s3.amazonaws.com", "zz.test"], [], protected={"amazonaws.com"},
                        shared_parents={"s3.amazonaws.com"}, jp_tokens=TOKENS, profile="safari", limit=10)
     assert out == sorted(["aaa.s3.amazonaws.com", "zz.test"], key=stable_key)   # 両方「その他」の段
+
+
+# --- A-218 G0 最後の確認の直し ---
+
+def test_safari_does_not_carve_out_aws_service_endpoints_under_a_region_namespace():
+    # PSL の「us-east-1.amazonaws.com」の直下は sts・cognito-idp など AWS 自身のサービス（利用者の持ち物ではない）。
+    # 重要ドメイン（amazonaws.com）の例外に使わない。その下の S3 のバケットは今まで通り入れる
+    shared: set[str] = set()
+    for path in DEFAULT_SHARED_PARENTS:
+        shared |= load_shared_parents(path)
+    src = ["sts.us-east-1.amazonaws.com", "cognito-idp.us-east-1.amazonaws.com", "evil.s3.us-east-1.amazonaws.com"]
+    out = select_hosts([], src, [], protected={"amazonaws.com"}, shared_parents=shared, jp_tokens=NO_TOKENS,
+                       profile="safari", limit=10)
+    assert out == ["evil.s3.us-east-1.amazonaws.com"]
+
+
+def test_shared_parents_directly_under_protected_domains_are_tenant_namespaces():
+    # 重要ドメインのすぐ下の共有ホストは、例外（その下の個別のホストを入れる）の入口になる。
+    # 「*.」の行と S3 の入口以外が PSL の入れ替えで増えたら、利用者の持ち物の入口かを人が確かめて
+    # PROVIDER_NAMESPACES に足すかを決める
+    shared: set[str] = set()
+    for path in DEFAULT_SHARED_PARENTS:
+        shared |= load_shared_parents(path)
+    protected = load_protected_domains(PROTECTED_SWIFT["safari"])
+    unknown = sorted(
+        s for s in shared
+        if not s.startswith("*.") and "s3" not in s.split(".", 1)[0]
+        and s.split(".", 1)[-1] in protected and s not in PROVIDER_NAMESPACES
+    )
+    assert unknown == []
+
+
+def test_cli_rejects_tranco_that_is_long_only_because_of_duplicates(tmp_path, monkeypatch):
+    # 取得が壊れて同じ行が繰り返されても、人気サイトの除外が消えたまま配らない（下限は違う名前の数で見る）
+    tranco = tmp_path / "tranco.csv"
+    tranco.write_text("1,safe.test\n" * 900_000, encoding="utf-8")
+    phishing = tmp_path / "phishing.txt"
+    phishing.write_text("".join(f"p{i}.test\n" for i in range(100_000)), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["build_security_rules.py", "--phishing-db", str(phishing),
+                                      "--tranco", str(tranco), "--output", str(tmp_path / "out.json")])
+    with pytest.raises(SourceTooSmall):
+        main()
+    assert not (tmp_path / "out.json").exists()
+
+
+def test_safari_skips_hosts_under_a_popular_site_unless_a_shared_host_is_between():
+    # 確認で、人気サイトの中のサービスの住所（画像配信・メールのクリック計測・フォーム）が選ばれていた。
+    # 元の一覧は 10/2 から止まっていて、直った住所も消えない。人気サイト（Tranco 10 万位まで）の下は、
+    # 間か人気サイトその物が共有ホストの時（＝利用者の物）だけ入れる
+    src = ["clicks.mailer.test", "evil.s3.cloud.test", "x.pages.test", "y.x.pages.test", "evil.unknown.test"]
+    tranco = ["mailer.test", "cloud.test", "pages.test"]
+    out = select_hosts([], src, tranco, protected=set(), shared_parents={"s3.cloud.test", "pages.test"},
+                       jp_tokens=NO_TOKENS, profile="safari", limit=100)
+    assert sorted(out) == ["evil.s3.cloud.test", "evil.unknown.test", "x.pages.test", "y.x.pages.test"]
+
+
+def test_safari_popular_rule_reaches_only_the_top_100k():
+    tranco = ["top.test"] + [f"f{i}.test" for i in range(DNS_POPULAR_TOP)] + ["tail.test"]
+    out = select_hosts([], ["a.top.test", "b.tail.test"], tranco, protected=set(), shared_parents=set(),
+                       jp_tokens=NO_TOKENS, profile="safari", limit=100)
+    assert out == ["b.tail.test"]
+
+
+def test_japanese_public_institution_hosts_are_never_selected():
+    # 設計 §4 反目標「銀行・決済・公的機関など必要なサイトを誤って止める」。go.jp（政府）・lg.jp（自治体）・
+    # ac.jp（大学）・ed.jp（学校）は登録に資格が要る＝元の一覧に載っていれば、乗っ取られた本物のサイト
+    src = ["nurse.hospital.go.jp", "www.city.lg.jp", "lab.univ.ac.jp", "school.town.ed.jp", "go.jp", "evil.jp"]
+    for profile in ("safari", "dns"):
+        out = select_hosts([], src, [], protected=set(), shared_parents=set(), jp_tokens=NO_TOKENS,
+                           profile=profile, limit=100)
+        assert out == ["evil.jp"]

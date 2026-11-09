@@ -58,7 +58,7 @@ def test_report_counts_shape_and_old_hosts_dropped_by_new_exclusions():
     r = report(old_rules=old, new_rules=new, urlhaus_hosts=[], phishing_hosts=["keep.test", "rakuten-x.test", "bit.ly"],
                tranco_ranked=[], protected={"bank.test"}, jp_sample=[], second_ads_sec=None,
                shared_parents={"bit.ly"}, jp_tokens=JPTokens(("rakuten",), (), ()))
-    assert r["counts"]["old"] == {"total": 5, "ipv4": 1, "digit_start": 2, "alpha_start": 3}
+    assert r["counts"]["old"] == {"total": 5, "ipv4": 1, "digit_start": 2, "alpha_start": 3, "unreadable": 0}
     assert r["tiers_new"] == {"jp": 1, "urlhaus": 0, "brand": 0, "rest": 1}
     assert r["dropped_from_old"]["by_reason"] == {"shared-parent": 1, "protected": 1}
     assert r["old_not_in_source"] == 3   # 1.2.3.4 / 0abc.test / login.bank.test
@@ -75,3 +75,33 @@ def test_report_checks_second_list_swap(tmp_path):
     bad = report(old_rules=old, new_rules=new, urlhaus_hosts=[], phishing_hosts=[], tranco_ranked=[],
                  protected=set(), jp_sample=[], second_ads_sec=to_rules(["ad.test"]))
     assert bad["size"]["second"]["ok"] is False
+
+
+def test_report_counts_rules_it_cannot_read():
+    # 読めない形の規則（例: 全部の URL に当たる「.*」）を黙って落とすと、誤ブロック 0 の偽の合格になる
+    bad = {"trigger": {"url-filter": ".*"}, "action": {"type": "block"}}
+    r = report(old_rules=to_rules(["a.test"]), new_rules=to_rules(["a.test"]) + [bad], urlhaus_hosts=[],
+               phishing_hosts=["a.test"], tranco_ranked=[], protected=set(), jp_sample=[], second_ads_sec=None)
+    assert r["counts"]["old"]["unreadable"] == 0
+    assert r["counts"]["new"]["unreadable"] == 1
+    assert "| 読めない規則 | 0 | 1 |" in to_markdown(r)
+
+
+def test_report_counts_selected_hosts_under_popular_sites_public_jp_and_protected_tenants():
+    # 「誤ブロック 0」は人気サイト・重要ドメインのトップが止まるかだけを見る。人気サイトの中の住所
+    # （共有ホストの利用者を除く）・公的機関の .jp・重要ドメインの下の共有ホストの利用者を別に数えて見せる
+    tranco = ["big.test", "pages.test"] + [f"f{i}.test" for i in range(20_000)] + ["mid.test"]
+    r = report(old_rules=to_rules(["forms.big.test"]),
+               new_rules=to_rules(["forms.big.test", "t.pages.test", "x.mid.test", "lab.u.ac.jp", "b.s3.bank.test"]),
+               urlhaus_hosts=[], phishing_hosts=[], tranco_ranked=tranco, protected={"bank.test"}, jp_sample=[],
+               second_ads_sec=None, shared_parents={"pages.test", "s3.bank.test"}, jp_tokens=NO_TOKENS)
+    assert r["under_popular"]["old"] == {"top10k": 1, "top100k": 0, "top1m": 0}
+    assert r["under_popular"]["new"] == {"top10k": 1, "top100k": 1, "top1m": 0}
+    assert r["public_jp"] == {"old": 0, "new": 1}
+    assert r["protected_tenants"] == {"old": 0, "new": 1}
+    md = to_markdown(r)
+    assert "| 人気サイトの中の住所: 1 万位まで | 1 | 1 |" in md
+    assert "| 人気サイトの中の住所: 10 万位まで | 0 | 1 |" in md
+    assert "| 公的機関の .jp（go・lg・ac・ed） | 0 | 1 |" in md
+    assert "| 重要ドメインの下の共有ホストの利用者 | 0 | 1 |" in md
+    assert "| 人気サイトのトップが止まる: Tranco 上位 1 万 |" in md

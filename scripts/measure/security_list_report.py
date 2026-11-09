@@ -25,7 +25,9 @@ from build_security_rules import (  # noqa: E402
     DNS_POPULAR_TOP,
     JPTokens,
     _ancestors,
+    _is_tenant_boundary,
     exclusion_reason,
+    is_public_jp,
     jp_priority,
     load_jp_tokens,
     load_protected_domains,
@@ -88,6 +90,29 @@ def _counts(hosts: list[str]) -> dict:
         "digit_start": sum(h[:1].isdigit() for h in hosts),
         "alpha_start": sum(h[:1].isalpha() for h in hosts),
     }
+
+
+def _popular_bucket(host: str, rank: dict[str, int], shared_parents: set[str]) -> str | None:
+    """host の上の人気サイト（共有ホストの利用者の物を除く）の一番上の順位の帯。無ければ None。"""
+    best = None
+    for anc in _ancestors(host):
+        if _is_tenant_boundary(anc, shared_parents):
+            break
+        k = rank.get(anc)
+        if k is not None and (best is None or k < best):
+            best = k
+    if best is None:
+        return None
+    return "top10k" if best <= 10_000 else "top100k" if best <= 100_000 else "top1m"
+
+
+def _is_protected_tenant(host: str, protected: set[str], shared_parents: set[str]) -> bool:
+    """重要ドメインの下で、間に共有ホストがある利用者の物（S3 のバケット等）。"""
+    ancestors = _ancestors(host)
+    for i, anc in enumerate(ancestors):
+        if anc in protected:
+            return any(_is_tenant_boundary(a, shared_parents) for a in ancestors[:i])
+    return False
 
 
 def _false_blocks(selected: set[str], tranco_top: list[str], protected: set[str]) -> dict:
@@ -158,6 +183,20 @@ def report(
     tokens = {t: {"source": sum(t in h for h in source), "old": sum(t in h for h in old),
                   "new": sum(t in h for h in new)} for t in REPORT_TOKENS}
 
+    rank: dict[str, int] = {}
+    for i, d in enumerate(tranco_ranked):
+        rank.setdefault(d, i + 1)
+    under_popular: dict = {"samples_new": {}}
+    for name, hosts in (("old", old), ("new", new)):
+        buckets = {"top10k": [], "top100k": [], "top1m": []}
+        for h in hosts:
+            b = _popular_bucket(h, rank, shared_parents)
+            if b:
+                buckets[b].append(h)
+        under_popular[name] = {k: len(v) for k, v in buckets.items()}
+        if name == "new":
+            under_popular["samples_new"] = {k: sorted(v, key=stable_key)[:SAMPLES_PER_REASON] for k, v in buckets.items()}
+
     dropped: dict[str, list[str]] = {}
     for h in old:
         why = reason(h)
@@ -179,12 +218,19 @@ def report(
     return {
         "profile": profile,
         "sources": {"urlhaus": len(urlhaus), "phishing": len(phishing), "tranco": len(tranco_ranked)},
-        "counts": {"old": _counts(old), "new": _counts(new)},
+        "counts": {
+            "old": {**_counts(old), "unreadable": len(old_rules) - len(old) if old_hosts is None else 0},
+            "new": {**_counts(new), "unreadable": len(new_rules) - len(new) if new_hosts is None else 0},
+        },
         "tiers_new": {k: tiers.get(k, 0) for k in ("jp", "urlhaus", "brand", "rest")},
         "jp_sample": jp,
         "tokens": tokens,
         "false_blocks_old": _false_blocks(old_set, tranco_top, protected),
         "false_blocks_new": _false_blocks(new_set, tranco_top, protected),
+        "under_popular": under_popular,
+        "public_jp": {"old": sum(map(is_public_jp, old)), "new": sum(map(is_public_jp, new))},
+        "protected_tenants": {"old": sum(_is_protected_tenant(h, protected, shared_parents) for h in old),
+                              "new": sum(_is_protected_tenant(h, protected, shared_parents) for h in new)},
         "dropped_from_old": {
             "by_reason": {k: len(v) for k, v in sorted(dropped.items())},
             "samples": {k: sorted(v, key=stable_key)[:SAMPLES_PER_REASON] for k, v in sorted(dropped.items())},
@@ -212,8 +258,19 @@ def to_markdown(r: dict) -> str:
         f"| IPv4 | {_pct(o['ipv4'], o['total'])} | {_pct(n['ipv4'], n['total'])} |",
         f"| 数字始まり | {_pct(o['digit_start'], o['total'])} | {_pct(n['digit_start'], n['total'])} |",
         f"| 英字始まり | {_pct(o['alpha_start'], o['total'])} | {_pct(n['alpha_start'], n['total'])} |",
-        f"| 誤ブロック: Tranco 上位 1 万 | {r['false_blocks_old']['tranco_top10k']} | {r['false_blocks_new']['tranco_top10k']} |",
-        f"| 誤ブロック: 重要ドメイン | {r['false_blocks_old']['protected']} | {r['false_blocks_new']['protected']} |",
+        f"| 読めない規則 | {o['unreadable']:,} | {n['unreadable']:,} |",
+        f"| 人気サイトのトップが止まる: Tranco 上位 1 万 | {r['false_blocks_old']['tranco_top10k']} | {r['false_blocks_new']['tranco_top10k']} |",
+        f"| 重要ドメインのトップが止まる | {r['false_blocks_old']['protected']} | {r['false_blocks_new']['protected']} |",
+    ]
+    up = r["under_popular"]
+    for key, label in (("top10k", "1 万位まで"), ("top100k", "10 万位まで"), ("top1m", "100 万位まで")):
+        lines.append(f"| 人気サイトの中の住所: {label} | {up['old'][key]:,} | {up['new'][key]:,} |")
+    lines += [
+        f"| 公的機関の .jp（go・lg・ac・ed） | {r['public_jp']['old']:,} | {r['public_jp']['new']:,} |",
+        f"| 重要ドメインの下の共有ホストの利用者 | {r['protected_tenants']['old']:,} | {r['protected_tenants']['new']:,} |",
+        "",
+        "「人気サイトの中の住所」は、人気サイト（Tranco）のサブドメインのうち、共有ホストの利用者の物でない物。"
+        "数えるのは一番上の順位の帯。",
         "",
         "### 新しい一覧の段",
         "",
@@ -249,6 +306,9 @@ def to_markdown(r: dict) -> str:
             lines.append(f"| {k} | {v:,} | {' '.join(d['samples'][k])} |")
     else:
         lines.append("無し")
+    lines += ["", "### 人気サイトの中の住所（後・見本）", ""]
+    for key, label in (("top10k", "1 万位まで"), ("top100k", "10 万位まで"), ("top1m", "100 万位まで")):
+        lines.append(f"- {label}: {' '.join(up['samples_new'][key]) or '無し'}")
     lines += ["", f"前の一覧のうち、今日の元データに無い物: {_pct(r['old_not_in_source'], o['total'])}", ""]
     s = r["size"]
     lines += ["### 大きさ", ""]

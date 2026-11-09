@@ -47,10 +47,18 @@ PROFILES = ("safari", "dns")
 # 元データが途中で切れた時に守りが外れないよう、下限を割ったら止める
 TRANCO_MIN = 900_000
 PHISHING_MIN = 100_000
-# DNS では、上が Tranco 上位 10 万の人気サイトのサブドメインは入れない
+# 上が Tranco 上位 10 万の人気サイトのサブドメインは入れない（DNS は全部。Safari は共有ホストの利用者の物を除く。
+# 名前は DNS 用に作った時のまま）
 DNS_POPULAR_TOP = 100_000
 # URLhaus（マルウェアの配布元）の段の上限。日本向けの次に入れるが、これ以上は詐欺サイトの枠を取らない
 URLHAUS_CAP = 10_000
+# 共有ホストの一覧（PSL）に載っていても、すぐ下に事業者自身のサービスが並ぶ入口
+# （sts.us-east-1.amazonaws.com・cognito-idp.us-east-1.amazonaws.com など）。
+# 利用者の持ち物の境目として扱わない＝重要ドメイン・人気サイトの下で個別のホストを入れる理由にしない
+PROVIDER_NAMESPACES: frozenset[str] = frozenset({"us-east-1.amazonaws.com"})
+# 登録に資格が要る日本の公的機関（政府・自治体・大学・学校）。元の一覧に載っていれば乗っ取られた本物のサイト
+# ＝止めると必要なサイトが開かない（設計 §4 反目標）。Safari・DNS とも入れない
+PUBLIC_JP_SUFFIXES = ("go.jp", "lg.jp", "ac.jp", "ed.jp")
 
 
 @dataclass(frozen=True)
@@ -199,6 +207,15 @@ def _is_shared(host: str, shared_parents: set[str]) -> bool:
     return bool(parent) and ("*." + parent) in shared_parents
 
 
+def _is_tenant_boundary(host: str, shared_parents: set[str]) -> bool:
+    """その下が利用者の持ち物になる共有ホストか（事業者自身のサービスが並ぶ入口は除く）。"""
+    return _is_shared(host, shared_parents) and host not in PROVIDER_NAMESPACES
+
+
+def is_public_jp(host: str) -> bool:
+    return any(host == s or host.endswith("." + s) for s in PUBLIC_JP_SUFFIXES)
+
+
 _IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 
 
@@ -216,6 +233,8 @@ def exclusion_reason(
         return "invalid"
     if profile == "dns" and _IPV4_RE.match(host):
         return "ip"
+    if is_public_jp(host):
+        return "public-jp"
     if _is_shared(host, shared_parents):
         return "shared-parent"
     ancestors = _ancestors(host)
@@ -225,11 +244,19 @@ def exclusion_reason(
         if anc in protected:
             # Safari: 重要ドメインの下でも、間に共有ホストがある個別のホスト（S3 のバケット等）は入れてよい
             # （止めても重要ドメインそのものは止まらない）。DNS は厳しく外す
-            if profile == "safari" and any(_is_shared(a, shared_parents) for a in ancestors[:i]):
+            if profile == "safari" and any(_is_tenant_boundary(a, shared_parents) for a in ancestors[:i]):
                 break
             return "protected"
     if host in tranco_closure:
         return "tranco"
+    if profile == "safari":
+        # 人気サイトの下は、間か人気サイトその物が共有ホスト（＝利用者の持ち物）の時だけ入れる。
+        # 人気サイトの中のサービスの住所（画像配信・メールのクリック計測・フォーム）を止めない
+        for anc in ancestors:
+            if _is_tenant_boundary(anc, shared_parents):
+                break
+            if anc in popular:
+                return "popular-parent"
     if profile == "dns":
         for anc in ancestors:
             if anc in popular and not _is_shared(anc, shared_parents):
@@ -402,7 +429,8 @@ def main() -> None:
     urlhaus_text = args.urlhaus.read_text(encoding="utf-8") if args.urlhaus else ""
     phishing_db_text = args.phishing_db.read_text(encoding="utf-8")
     tranco_text = args.tranco.read_text(encoding="utf-8")
-    check_sources(len(load_tranco_ranked(tranco_text)), len(parse_phishing_db_hosts(phishing_db_text)))
+    # 違う名前の数で見る（取得が壊れて同じ行が繰り返されても、人気サイトの除外が消えたまま配らない）
+    check_sources(len(set(load_tranco_ranked(tranco_text))), len(set(parse_phishing_db_hosts(phishing_db_text))))
 
     rules = build_security_rules(
         urlhaus_text, phishing_db_text, tranco_text, limit=args.limit
