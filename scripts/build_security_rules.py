@@ -218,13 +218,20 @@ def exclusion_reason(
         return "ip"
     if _is_shared(host, shared_parents):
         return "shared-parent"
-    if host in protected or any(a in protected for a in _ancestors(host)) \
-            or any(p.endswith("." + host) for p in protected):
+    ancestors = _ancestors(host)
+    if host in protected or any(p.endswith("." + host) for p in protected):
         return "protected"
+    for i, anc in enumerate(ancestors):
+        if anc in protected:
+            # Safari: 重要ドメインの下でも、間に共有ホストがある個別のホスト（S3 のバケット等）は入れてよい
+            # （止めても重要ドメインそのものは止まらない）。DNS は厳しく外す
+            if profile == "safari" and any(_is_shared(a, shared_parents) for a in ancestors[:i]):
+                break
+            return "protected"
     if host in tranco_closure:
         return "tranco"
     if profile == "dns":
-        for anc in _ancestors(host):
+        for anc in ancestors:
             if anc in popular and not _is_shared(anc, shared_parents):
                 return "popular-parent"
     return None

@@ -17,7 +17,15 @@ def test_report_separates_source_coverage_from_selection():
     r = report(old_rules=to_rules(["a.test"]), new_rules=to_rules(["a.test", "b.test"]),
                urlhaus_hosts=[], phishing_hosts=["a.test", "b.test"], tranco_ranked=["ok.test"],
                protected={"bank.test"}, jp_sample=["x.b.test", "b.test", "gone.test"], second_ads_sec=None)
-    assert r["jp_sample"] == {"n": 3, "in_source": 2, "selected_old": 0, "selected_new": 2}
+    assert r["jp_sample"] == {"n": 3, "in_source": 2, "in_source_blockable": 2, "selected_old": 0, "selected_new": 2}
+
+
+def test_report_jp_sample_in_source_excludes_matches_only_via_shared_hosts():
+    # 見本のホストが「共有ホストその物」が元の一覧にあるだけで当たる時は、止められる形では入っていない
+    r = report(old_rules=[], new_rules=to_rules(["b.test"]), urlhaus_hosts=[], phishing_hosts=["b.test", "s3.shared.test"],
+               tranco_ranked=[], protected=set(), jp_sample=["x.b.test", "bucket.s3.shared.test", "s3.shared.test"],
+               second_ads_sec=None, shared_parents={"s3.shared.test"})
+    assert r["jp_sample"]["in_source"] == 3 and r["jp_sample"]["in_source_blockable"] == 1
 
 
 def test_report_counts_false_blocks():

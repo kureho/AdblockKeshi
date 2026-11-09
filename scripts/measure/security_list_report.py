@@ -136,10 +136,21 @@ def report(
         prio = jp_priority(h, jp_tokens)
         tiers["jp" if prio == 0 else "urlhaus" if h in urlhaus else "brand" if prio == 1 else "rest"] += 1
 
+    tranco_top = tranco_ranked[:TRANCO_CHECK_TOP]
+    closure = tranco_closure(tranco_ranked)
+    popular = set(tranco_ranked[:DNS_POPULAR_TOP])
+
+    def reason(h: str) -> str | None:
+        return exclusion_reason(h, profile=profile, tranco_closure=closure, popular=popular,
+                                protected=protected, shared_parents=shared_parents)
+
     sample = sorted({norm(h) for h in jp_sample if h.strip()})
+    # 見本に当たる元の一覧のホストのうち、除外を通る物（＝止められる形で入っている物）
+    source_blockable = {m for h in sample for m in [h, *_ancestors(h)] if m in source and reason(m) is None}
     jp = {
         "n": len(sample),
         "in_source": sum(matches(h, source) for h in sample),
+        "in_source_blockable": sum(matches(h, source_blockable) for h in sample),
         "selected_old": sum(matches(h, old_set) for h in sample),
         "selected_new": sum(matches(h, new_set) for h in sample),
     }
@@ -147,15 +158,11 @@ def report(
     tokens = {t: {"source": sum(t in h for h in source), "old": sum(t in h for h in old),
                   "new": sum(t in h for h in new)} for t in REPORT_TOKENS}
 
-    tranco_top = tranco_ranked[:TRANCO_CHECK_TOP]
-    closure = tranco_closure(tranco_ranked)
-    popular = set(tranco_ranked[:DNS_POPULAR_TOP])
     dropped: dict[str, list[str]] = {}
     for h in old:
-        reason = exclusion_reason(h, profile=profile, tranco_closure=closure, popular=popular,
-                                  protected=protected, shared_parents=shared_parents)
-        if reason:
-            dropped.setdefault(reason, []).append(h)
+        why = reason(h)
+        if why:
+            dropped.setdefault(why, []).append(h)
 
     size: dict = {"security_bytes": list_bytes(new_rules) if new_hosts is None else None,
                   "security_max_bytes": SECURITY_MAX_BYTES, "second": None}
@@ -219,11 +226,13 @@ def to_markdown(r: dict) -> str:
     lines += [
         "### 日本向けの見本",
         "",
-        "| 見本 | 元の一覧にある（拾う力） | 前に選ばれていた | 後に選ばれる |",
-        "|---:|---:|---:|---:|",
-        f"| {j['n']:,} | {_pct(j['in_source'], j['n'])} | {_pct(j['selected_old'], j['n'])} | {_pct(j['selected_new'], j['n'])} |",
+        "| 見本 | 元の一覧にある | うち止められる形（共有ホスト・人気サイト等でない） | 前に選ばれていた | 後に選ばれる |",
+        "|---:|---:|---:|---:|---:|",
+        f"| {j['n']:,} | {_pct(j['in_source'], j['n'])} | {_pct(j['in_source_blockable'], j['n'])} | "
+        f"{_pct(j['selected_old'], j['n'])} | {_pct(j['selected_new'], j['n'])} |",
         "",
-        f"元の一覧にある物のうち: 前 {_pct(j['selected_old'], j['in_source'])} → 後 {_pct(j['selected_new'], j['in_source'])}",
+        f"止められる形で元の一覧にある物のうち: 前 {_pct(j['selected_old'], j['in_source_blockable'])} → "
+        f"後 {_pct(j['selected_new'], j['in_source_blockable'])}",
         "",
         "### 語を含む件数",
         "",

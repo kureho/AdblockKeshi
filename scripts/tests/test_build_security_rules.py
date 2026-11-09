@@ -298,3 +298,12 @@ def test_check_rule_count_rejects_below_half_of_budget():
     with pytest.raises(SourceTooSmall):
         check_rule_count(14_999)
     check_rule_count(15_000)
+
+
+def test_safari_keeps_tenants_of_shared_hosts_under_protected_domains():
+    # 設計 §G0「共有ホストの親その物は入れない（その下の個別のサブドメインは入れてよい）」。
+    # S3 の個別のバケットを止めても amazonaws.com は止まらない。DNS は計画どおり厳しく外す
+    kw = dict(protected={"amazonaws.com", "smbc.co.jp"}, shared_parents={"s3.amazonaws.com"}, jp_tokens=NO_TOKENS, limit=100)
+    src = ["evil-bucket.s3.amazonaws.com", "s3.amazonaws.com", "signin.amazonaws.com", "login.smbc.co.jp"]
+    assert select_hosts([], src, [], profile="safari", **kw) == ["evil-bucket.s3.amazonaws.com"]
+    assert select_hosts([], src, [], profile="dns", **kw) == []
