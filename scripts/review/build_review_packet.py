@@ -7,6 +7,8 @@ Claude なしで毎週自動で走り（launchd・Mac 上）、判定用の束�
      （rule_candidates.status = 'kureho_queue'）を**読み取りのみ**で取る
   2. Safari で見た報告は、報告されたページを計測ツール（scripts/measure/measure.swift＝iOS Safari と
      同じ規則エンジン）で「今配信中の規則」のまま開き、残っている通信先と画面を集める
+     ★詐欺サイトの種類（ad_type = phishing）の報告はページを開かない（A-218 設計 §3-2）。代わりに
+     配信中の 3 万件にあるか・HaGeZi の全部にあるか・ブランドの語・共有ホストの下か・登録日（RDAP）を並べる
   3. .review-packets/YYYY-MM-DD/ に packet.md（判定用）・results-draft.json（結果の下書き）・
      shots/（画面）を書き、.review-packets/status.json に件数を残す
 
@@ -19,11 +21,15 @@ Claude なしで毎週自動で走り（launchd・Mac 上）、判定用の束�
   python3 scripts/review/build_review_packet.py              # 束を作る（週 1 回の本番）
   python3 scripts/review/build_review_packet.py --count-only # 未判定の件数だけ表示（朝のレポート用）
   python3 scripts/review/build_review_packet.py --no-measure # D1 だけ読んで束を作る（計測を省く）
+  python3 scripts/review/build_review_packet.py --scam-source <HaGeZi の一覧>  # 詐欺サイトの報告の照合に手元の一覧を使う
+                                                                                 #（省略時は配信元から取る）
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import functools
+import http.client
 import json
 import os
 import re
@@ -31,8 +37,28 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
+from typing import Callable
 from urllib.parse import urlsplit, urlunsplit
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "measure"))
+from build_security_rules import (  # noqa: E402
+    _HOST_RE,
+    DEFAULT_JP_TOKENS,
+    DEFAULT_SHARED_PARENTS,
+    JPTokens,
+    SourceTooSmall,
+    _ancestors,
+    _is_shared,
+    check_declared_entries,
+    load_jp_tokens,
+    load_shared_parents,
+    parse_phishing_db_hosts,
+)
+from security_list_report import hosts_from_rules  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 WORKERS = REPO / "workers"
@@ -69,6 +95,15 @@ CANDIDATE_QUERY = (
 COUNT_QUERY = "SELECT COUNT(*) AS n FROM reports WHERE review_outcome IS NULL"
 
 PACKET_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# A-218 詐欺サイトの報告の事実。HaGeZi の取得先は .github/workflows/build-security-rules.yml と同じ物
+SCAM_AD_TYPE = "phishing"
+HAGEZI_TIF_URL = "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt"
+RDAP_URL = "https://rdap.org/domain/"
+RDAP_MAX_TRIES = 3                  # 2 ラベルから上へ、最大 3 回まで引く
+SCAM_RECENT_DAYS = 90               # 基準 B-2「登録から 90 日以内」
+HTTP_USER_AGENT = "AdblockKeshi-review/1.0"
+_IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +157,122 @@ def ad_marked_hosts(hosts, ad_domains: set[str]) -> list[str]:
     return sorted(out)
 
 
+def is_scam_report(row: dict) -> bool:
+    """詐欺サイトの種類の報告か（アプリの表示「詐欺サイト」＝ad_type phishing）。"""
+    return row.get("ad_type") == SCAM_AD_TYPE
+
+
+def measure_targets(rows: list[dict], max_pages: int) -> list[tuple[dict, str]]:
+    """計測ツールで開く報告と、開く URL。ほかのアプリの報告と、詐欺サイトの種類の報告は開かない。"""
+    targets = []
+    for r in rows:
+        if r.get("seen_in") == "other_app" or is_scam_report(r):
+            continue
+        opened = page_url_for_measure(r.get("url"))
+        if opened:
+            targets.append((r, opened))
+    return targets[:max_pages]
+
+
+def normalize_report_host(domain: str | None) -> str | None:
+    """報告のドメイン（受付で URL の host を保存＝ポートが付き得る）を小文字のホストにする。形が違えば None。"""
+    if not domain:
+        return None
+    host = domain.strip().lower()
+    if ":" in host:
+        host, _, port = host.rpartition(":")
+        if not port.isdigit():
+            return None
+    host = host.rstrip(".")
+    if len(host) > 253 or not _HOST_RE.match(host):
+        return None
+    return host
+
+
+def rdap_candidates(host: str) -> list[str]:
+    """登録日を引く名前の候補。末尾 2 ラベルから 1 つずつ上へ（example.co.uk のような形のため）。"""
+    labels = host.split(".")
+    return [".".join(labels[-n:]) for n in range(2, len(labels) + 1)][:RDAP_MAX_TRIES]
+
+
+def rdap_registration_date(payload: dict) -> str | None:
+    """RDAP の答えから登録日（YYYY-MM-DD）を取る。無い・形が違えば None。"""
+    events = payload.get("events") if isinstance(payload, dict) else None
+    if not isinstance(events, list):
+        return None
+    for ev in events:
+        if isinstance(ev, dict) and ev.get("eventAction") == "registration":
+            date = str(ev.get("eventDate") or "")[:10]
+            try:
+                dt.date.fromisoformat(date)
+            except ValueError:
+                return None
+            return date
+    return None
+
+
+def _covering(host: str, hosts: set[str]) -> str | None:
+    """規則と同じ意味で host を覆う物（host 自身か、その上）。無ければ None。"""
+    for h in [host] + _ancestors(host):
+        if h in hosts:
+            return h
+    return None
+
+
+def _brand_words(host: str, tokens: JPTokens, shared_parent: str | None) -> list[str]:
+    """ドメインに入っているブランドの語（jp-priority-tokens の jp・brand は含む物、jp-token は語として一致）。
+    見るのは持ち主が決めた部分だけ: 共有ホストの下なら共有ホストより左、ほかは最後のラベルを除いた部分。"""
+    if _IPV4_RE.match(host):
+        return []
+    body = host[: -(len(shared_parent) + 1)] if shared_parent else host.rsplit(".", 1)[0]
+    words = set(re.split(r"[.-]", body))
+    found = [t for t in tokens.jp + tokens.brand if t in body]
+    found += [t for t in tokens.jp_token if t in words]
+    return sorted(set(found))
+
+
+def scam_facts(domain: str | None, *, served: set[str] | None, source: set[str] | None, tokens: JPTokens,
+               shared_parents: set[str], lookup: Callable[[str], str | None], today: dt.date,
+               source_note: str = "") -> dict:
+    """詐欺サイトの報告 1 件の、見直しで使う事実（設計 §3-2 の「配信中にあるか」と B の 1・2）。
+
+    served / source が None なら、その一覧は取れなかった（＝未確認）。lookup は登録日を引く関数
+    （本番は rdap_lookup。試験では差し替える）。報告のページは開かない。"""
+    host = normalize_report_host(domain)
+    facts = {
+        "host": host, "invalid": host is None,
+        "served": None, "served_known": served is not None,
+        "source": None, "source_known": source is not None, "source_note": source_note,
+        "brand_words": [], "shared_parent": None,
+        "registered": None, "registered_domain": None, "age_days": None, "rdap_note": "",
+    }
+    if host is None:
+        return facts
+    if served is not None:
+        facts["served"] = _covering(host, served)
+    if source is not None:
+        facts["source"] = _covering(host, source)
+    shared = next((a for a in _ancestors(host) if _is_shared(a, shared_parents)), None)
+    facts["shared_parent"] = shared
+    facts["brand_words"] = _brand_words(host, tokens, shared)
+
+    if _IPV4_RE.match(host):
+        facts["rdap_note"] = "IP アドレス（ドメインの登録日は無い）"
+        return facts
+    if shared:
+        facts["rdap_note"] = f"共有ホスト（{shared}）の下＝登録日は場所の持ち主の物で根拠にならない（引いていない）"
+        return facts
+    for cand in rdap_candidates(host):
+        date = lookup(cand)
+        if date:
+            facts["registered"] = date
+            facts["registered_domain"] = cand
+            facts["age_days"] = (today - dt.date.fromisoformat(date)).days
+            return facts
+    facts["rdap_note"] = "RDAP で登録日が取れなかった（.jp など RDAP で出ない所がある）"
+    return facts
+
+
 def suggest_outcome(row: dict) -> str | None:
     """機械的に決まる結果だけ下書きする。Safari の報告は人（Claude）が画面と通信先を見て決める。"""
     if row.get("seen_in") == "other_app":
@@ -145,7 +296,43 @@ def _fmt_ts(ts) -> str:
         return "?"
 
 
-def render_packet(date: str, rows: list[dict], measurements: dict, candidates: list[dict]) -> str:
+def _scam_lines(f: dict | None) -> list[str]:
+    lines = ["- 詐欺サイトの報告: **ページは開いていない**（開くと相手に見に来た事が伝わる・悪い仕掛けに触れ得る）。"
+             "載せる基準は review/scam-domains/README.md"]
+    if not f:
+        return lines + ["- ドメインの事実: 取れなかった"]
+    if f.get("invalid"):
+        return lines + ["- ドメインの事実: 報告のドメインの形が不正で調べていない"]
+    lines.append(f"- 調べたドメイン: {f['host']}")
+    if not f["served_known"]:
+        lines.append("- 配信中の 3 万件: 未確認（配信中の一覧を読めなかった）")
+    elif f["served"]:
+        lines.append(f"- 配信中の 3 万件: **あり**（{f['served']}）＝一覧に足す話ではない"
+                     "（保護を切っている・「このサイトで一時オフ」・アプリの不具合のどれか）")
+    else:
+        lines.append("- 配信中の 3 万件: なし")
+    if not f["source_known"]:
+        lines.append(f"- 基準 B-1 HaGeZi の全部: 未確認（{f.get('source_note') or '一覧を読めなかった'}）")
+    elif f["source"]:
+        lines.append(f"- 基準 B-1 HaGeZi の全部: **あり**（{f['source']}）")
+    else:
+        lines.append("- 基準 B-1 HaGeZi の全部: なし")
+    words = f.get("brand_words") or []
+    lines.append("- 基準 B-2 ブランドの語: " + (", ".join(words) + "（公式のドメインでないかは見直しで確かめる）"
+                                              if words else "なし"))
+    lines.append(f"- 共有ホストの下: {f['shared_parent'] or 'いいえ'}")
+    if f.get("registered"):
+        age = f["age_days"]
+        within = f"{SCAM_RECENT_DAYS} 日以内" if age <= SCAM_RECENT_DAYS else f"{SCAM_RECENT_DAYS} 日より前"
+        lines.append(f"- 登録日（RDAP）: {f['registered']}（{f['registered_domain']}・{age} 日前＝{within}）")
+    else:
+        lines.append(f"- 登録日（RDAP）: 未確認（{f.get('rdap_note') or '取れなかった'}）")
+    return lines
+
+
+def render_packet(date: str, rows: list[dict], measurements: dict, candidates: list[dict],
+                  scam: dict | None = None) -> str:
+    scam = scam or {}
     lines = [
         f"# 広告消し 報告の判定用の束（{date}）",
         "",
@@ -158,6 +345,7 @@ def render_packet(date: str, rows: list[dict], measurements: dict, candidates: l
         "（outcome が空の行を埋めてから review/results/<日付>.json に写す）",
         "- 画面と通信先は「今配信中の規則」（merged + popunder + 報告由来 + 防護用の security）で開いたもの。"
         "URL のクエリは外して開いている",
+        "- 詐欺サイトの種類の報告はページを開かず、ドメインの事実だけを並べる（A-218）",
         "",
     ]
     if not rows and not candidates:
@@ -178,6 +366,10 @@ def render_packet(date: str, rows: list[dict], measurements: dict, candidates: l
         ]
         if suggestion:
             lines.append(f"- 下書きの結果: **{suggestion}**（機械的に決まる）")
+        if is_scam_report(r):
+            lines += _scam_lines(scam.get(r["id"]))
+            lines.append("")
+            continue
         m = measurements.get(r["id"])
         if m:
             if m.get("failed"):
@@ -326,14 +518,7 @@ def measure_binary(cache: Path) -> Path:
 
 def measure_reports(rows: list[dict], packet: Path, rule_paths: list[str], ad_domains: set[str],
                     binary: Path, max_pages: int) -> dict:
-    targets = []
-    for r in rows:
-        if r.get("seen_in") == "other_app":
-            continue
-        opened = page_url_for_measure(r.get("url"))
-        if opened:
-            targets.append((r, opened))
-    targets = targets[:max_pages]
+    targets = measure_targets(rows, max_pages)
     if not targets:
         return {}
 
@@ -376,6 +561,70 @@ def measure_reports(rows: list[dict], packet: Path, rule_paths: list[str], ad_do
     return result
 
 
+def rdap_lookup(domain: str) -> str | None:
+    """rdap.org（各登録所の RDAP へ転送する無料の入口）で登録日を引く。取れなければ None（＝未確認）。
+    domain は normalize_report_host を通した名前だけを渡す（URL にそのまま入る）。"""
+    time.sleep(1.0)  # rdap.org の回数の制限に当たらないように
+    req = urllib.request.Request(RDAP_URL + domain,
+                                 headers={"Accept": "application/rdap+json", "User-Agent": HTTP_USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            payload = json.loads(resp.read(2_000_000))
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError):
+        return None
+    return rdap_registration_date(payload)
+
+
+def served_scam_hosts() -> set[str] | None:
+    """公開中（origin/main）の詐欺サイトの一覧（docs/cdn/security-rules.json・3 万件）のホスト。読めなければ None。"""
+    subprocess.run(["git", "fetch", "--quiet", "origin", "main"], cwd=REPO, env=_env(),
+                   capture_output=True, timeout=120)
+    proc = subprocess.run(["git", "show", "origin/main:docs/cdn/security-rules.json"], cwd=REPO, env=_env(),
+                          capture_output=True, timeout=120)
+    if proc.returncode != 0:
+        return None
+    try:
+        hosts = set(hosts_from_rules(json.loads(proc.stdout)))
+    except (ValueError, AttributeError):
+        return None
+    return hosts or None
+
+
+def scam_source_hosts(path: str | None) -> tuple[set[str] | None, str]:
+    """HaGeZi の全部の一覧のホスト。path が無ければ配信元から取る。取れない・途中で切れた時は (None, 理由)。"""
+    try:
+        if path:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        else:
+            req = urllib.request.Request(HAGEZI_TIF_URL, headers={"User-Agent": HTTP_USER_AGENT})
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                text = resp.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as e:
+        return None, f"一覧を取れなかった（{type(e).__name__}）"
+    hosts = parse_phishing_db_hosts(text)
+    if not hosts:
+        return None, "一覧が空だった"
+    try:
+        check_declared_entries(text, len(hosts))
+    except SourceTooSmall as e:
+        return None, f"一覧が途中で切れている（{e}）"
+    return {h.lower() for h in hosts}, ""
+
+
+def collect_scam_facts(rows: list[dict], source_path: str | None, today: dt.date) -> dict:
+    """詐欺サイトの報告ごとの事実（report_id → scam_facts）。同じドメインの登録日は 1 回だけ引く。"""
+    served = served_scam_hosts()
+    source, note = scam_source_hosts(source_path)
+    tokens = load_jp_tokens(DEFAULT_JP_TOKENS)
+    shared: set[str] = set()
+    for path in DEFAULT_SHARED_PARENTS:
+        shared |= load_shared_parents(path)
+    lookup = functools.lru_cache(maxsize=None)(rdap_lookup)
+    return {r["id"]: scam_facts(r.get("domain"), served=served, source=source, tokens=tokens,
+                                shared_parents=shared, lookup=lookup, today=today, source_note=note)
+            for r in rows}
+
+
 def write_status(payload: dict) -> None:
     PACKETS_ROOT.mkdir(exist_ok=True)
     (PACKETS_ROOT / "status.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
@@ -397,7 +646,17 @@ def build(args) -> int:
         binary = measure_binary(PACKETS_ROOT / ".bin")
         measurements = measure_reports(rows, packet, rule_paths, ad_domains, binary, args.max_pages)
 
-    (packet / "packet.md").write_text(render_packet(today, rows, measurements, candidates))
+    # 詐欺サイトの報告はページを開かず、ドメインの事実だけを集める（A-218）。
+    # 取れなくても束は作る（束には「取れなかった」と出る）
+    scam_rows = [r for r in rows if is_scam_report(r)]
+    scam = {}
+    if scam_rows:
+        try:
+            scam = collect_scam_facts(scam_rows, args.scam_source, dt.datetime.now(JST).date())
+        except Exception as e:  # noqa: BLE001
+            print(f"詐欺サイトの報告の事実を取れなかった: {e}", file=sys.stderr)
+
+    (packet / "packet.md").write_text(render_packet(today, rows, measurements, candidates, scam))
     (packet / "results-draft.json").write_text(
         json.dumps(results_draft(rows, today), ensure_ascii=False, indent=2) + "\n")
 
@@ -412,7 +671,7 @@ def build(args) -> int:
         "measured_pages": len(measurements),
     })
     print(f"束を作成: {packet / 'packet.md'}（未判定 {len(rows)} 件・止まっている候補 {len(candidates)} 件・"
-          f"計測 {len(measurements)} ページ）")
+          f"計測 {len(measurements)} ページ・詐欺サイトの報告 {len(scam_rows)} 件）")
     return 0
 
 
@@ -422,6 +681,7 @@ def main() -> int:
     ap.add_argument("--no-measure", action="store_true", help="報告ページの計測を省く")
     ap.add_argument("--max-pages", type=int, default=30, help="計測するページの上限")
     ap.add_argument("--keep", type=int, default=8, help="残す束の数（古いものから消す）")
+    ap.add_argument("--scam-source", help="詐欺サイトの報告の照合に使う HaGeZi の一覧（省略時は配信元から取る）")
     args = ap.parse_args()
 
     if args.count_only:
