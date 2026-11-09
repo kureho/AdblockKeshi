@@ -79,6 +79,43 @@ class SourceTooSmall(Exception):
     """元データが下限を割った（取得が途中で切れた等）。"""
 
 
+class SourceHeaderMissing(Exception):
+    """元の一覧の見出しが取れない（HaGeZi の条件「元の見出しを残す」を満たせない）。"""
+
+
+_DECLARED_ENTRIES_RE = re.compile(r"^#\s*Number of entries:\s*([\d,]+)\s*$", re.M)
+
+
+def source_header(source_text: str) -> str:
+    """元の一覧の先頭の見出し（最初のドメインの行より前の # の行）。
+
+    先頭の BOM・空行は飛ばし、見出しの途中の空行の後の # の行（著作権の行など）も落とさない。"""
+    head: list[str] = []
+    for line in source_text.lstrip("\ufeff").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            break
+        head.append(line.rstrip())
+    while head and not head[0].strip():
+        head.pop(0)
+    while head and not head[-1].strip():
+        head.pop()
+    return "".join(line + "\n" for line in head)
+
+
+def check_declared_entries(source_text: str, parsed_count: int) -> None:
+    """見出しに書かれた件数（HaGeZi の「Number of entries」）より 1% 以上少なければ止める。
+
+    配信元が途中で切れたファイルを正常な応答で返した時に、件数の下限だけでは見分けられない。
+    宣言の無い一覧（Phishing.Database の形）は見ない。"""
+    m = _DECLARED_ENTRIES_RE.search(source_header(source_text))
+    if not m:
+        return
+    declared = int(m.group(1).replace(",", ""))
+    if parsed_count < declared * 0.99:
+        raise SourceTooSmall(f"scam source list {parsed_count} < declared {declared}")
+
+
 def parse_urlhaus_hosts(text: str) -> list[str]:
     """URLhaus host file の各行から host を抽出。コメント・空行・IP は除外。"""
     hosts: list[str] = []
@@ -418,13 +455,11 @@ def source_notice(source_text: str, generated_at: str) -> str:
     """元の一覧の先頭の見出し（# の行）をそのまま残し、改変した旨と日付を足す。
 
     HaGeZi の条件（Issue #11938）: 元の見出しを残す・変換したら改変した旨と日付を書く。
-    本文（ドメインの行）と途中の # の行は入れない。"""
-    head: list[str] = []
-    for line in source_text.splitlines(keepends=True):
-        if not line.startswith("#"):
-            break
-        head.append(line if line.endswith("\n") else line + "\n")
-    return "".join(head) + (
+    本文（ドメインの行）と途中の # の行は入れない。見出しが取れなければ止める（SourceHeaderMissing）。"""
+    head = source_header(source_text)
+    if not head:
+        raise SourceHeaderMissing("the source list has no header to keep")
+    return head + (
         "#\n"
         f"# Modified on {generated_at} by the AdblockKeshi weekly build (scripts/build_security_rules.py):\n"
         "# converted to Safari Content Blocker rules (second-ads-sec.json), with popular sites,\n"
@@ -464,7 +499,14 @@ def main() -> None:
     phishing_db_text = args.phishing_db.read_text(encoding="utf-8")
     tranco_text = args.tranco.read_text(encoding="utf-8")
     # 違う名前の数で見る（取得が壊れて同じ行が繰り返されても、人気サイトの除外が消えたまま配らない）
-    check_sources(len(set(load_tranco_ranked(tranco_text))), len(set(parse_phishing_db_hosts(phishing_db_text))))
+    phishing_hosts = parse_phishing_db_hosts(phishing_db_text)
+    check_sources(len(set(load_tranco_ranked(tranco_text))), len(set(phishing_hosts)))
+    check_declared_entries(phishing_db_text, len(phishing_hosts))
+    # 見出しが取れない時は規則も書かずに止める（NOTICE の無い一覧を配らない）
+    notice_text = None
+    if args.notice:
+        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        notice_text = source_notice(phishing_db_text, generated_at)
 
     rules = build_security_rules(
         urlhaus_text, phishing_db_text, tranco_text, limit=args.limit
@@ -472,9 +514,8 @@ def main() -> None:
     check_rule_count(len(rules), args.limit)
     args.output.write_text(json.dumps(rules, ensure_ascii=False), encoding="utf-8")
     print(f"Wrote {len(rules)} rules → {args.output}", file=sys.stderr)
-    if args.notice:
-        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        args.notice.write_text(source_notice(phishing_db_text, generated_at), encoding="utf-8")
+    if notice_text is not None:
+        args.notice.write_text(notice_text, encoding="utf-8")
 
 
 if __name__ == "__main__":

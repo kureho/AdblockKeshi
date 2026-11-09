@@ -33,6 +33,8 @@ from build_security_rules import (  # noqa: E402
     parse_phishing_db_hosts,
     parse_urlhaus_hosts,
     select_hosts,
+    SourceHeaderMissing,
+    check_declared_entries,
     source_notice,
     stable_key,
 )
@@ -377,10 +379,10 @@ def test_cli_rejects_tranco_that_is_long_only_because_of_duplicates(tmp_path, mo
     tranco = tmp_path / "tranco.csv"
     tranco.write_text("1,safe.test\n" * 900_000, encoding="utf-8")
     phishing = tmp_path / "phishing.txt"
-    phishing.write_text("".join(f"p{i}.test\n" for i in range(100_000)), encoding="utf-8")
+    phishing.write_text("".join(f"p{i}.test\n" for i in range(450_000)), encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["build_security_rules.py", "--phishing-db", str(phishing),
                                       "--tranco", str(tranco), "--output", str(tmp_path / "out.json")])
-    with pytest.raises(SourceTooSmall):
+    with pytest.raises(SourceTooSmall, match="Tranco"):
         main()
     assert not (tmp_path / "out.json").exists()
 
@@ -488,5 +490,49 @@ def test_cli_writes_the_notice_when_the_rules_are_written(tmp_path, monkeypatch)
 def test_cli_writes_no_notice_when_the_build_stops(tmp_path, monkeypatch):
     b, notice = _fake_main_inputs(tmp_path, monkeypatch, 10)
     with pytest.raises(SourceTooSmall):
+        b.main()
+    assert not notice.exists() and not (tmp_path / "out.json").exists()
+
+
+# --- Codex の見直し（2026-11-09）: 見出しの形の変化・途中で切れた一覧 ---
+
+def test_source_notice_skips_a_bom_and_leading_blank_lines():
+    notice = source_notice("\ufeff\n\n" + HAGEZI_HEAD + "evil.test\n", "T")
+    assert notice.startswith(HAGEZI_HEAD)
+
+
+def test_source_notice_keeps_comment_lines_after_a_blank_line_in_the_header():
+    notice = source_notice(HAGEZI_HEAD + "\n# Copyright (C) someone\nevil.test\n", "T")
+    assert "# Copyright (C) someone" in notice and "evil.test" not in notice
+
+
+def test_source_notice_stops_when_the_source_has_no_header():
+    # 元の見出しを残すのが HaGeZi の条件。見出しが取れない一覧は配らない
+    with pytest.raises(SourceHeaderMissing):
+        source_notice("evil.test\nother.test\n", "T")
+
+
+def test_check_declared_entries_stops_a_list_cut_short():
+    head = "# Number of entries: 1441295\n#\n"
+    with pytest.raises(SourceTooSmall, match="declared"):
+        check_declared_entries(head + "evil.test\n", 450_000)
+    check_declared_entries(head, 1_441_295)  # 例外なし
+    check_declared_entries(head, 1_430_000)  # 1% までの差は通す
+    check_declared_entries("evil.test\n", 10)  # 宣言の無い一覧は見ない（Phishing.Database の形）
+
+
+def test_cli_stops_before_writing_when_the_list_is_shorter_than_its_header_says(tmp_path, monkeypatch):
+    b, notice = _fake_main_inputs(tmp_path, monkeypatch, 20000)
+    source = tmp_path / "tif.txt"
+    source.write_text(HAGEZI_HEAD + "# Number of entries: 1441295\n" + "evil.test\n", encoding="utf-8")
+    with pytest.raises(SourceTooSmall, match="declared"):
+        b.main()
+    assert not notice.exists() and not (tmp_path / "out.json").exists()
+
+
+def test_cli_stops_before_writing_when_the_header_is_missing(tmp_path, monkeypatch):
+    b, notice = _fake_main_inputs(tmp_path, monkeypatch, 20000)
+    (tmp_path / "tif.txt").write_text("evil.test\n", encoding="utf-8")
+    with pytest.raises(SourceHeaderMissing):
         b.main()
     assert not notice.exists() and not (tmp_path / "out.json").exists()

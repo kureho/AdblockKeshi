@@ -33,7 +33,9 @@ jobs:
       # 詳しくは tasks/a218-scam-source-research-2026-11-09.md
       - name: Fetch HaGeZi Threat Intelligence Feeds (public, no auth required)
         run: |
-          curl -fsSL "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt" \
+          # 接続の停滞でジョブの 30 分を使い切らないよう、時間の上限と再試行を付ける
+          curl -fsSL --connect-timeout 30 --max-time 300 --retry 3 --retry-delay 10 \
+            "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt" \
             -o /tmp/scam-source.txt
           echo "HaGeZi TIF lines: $(wc -l < /tmp/scam-source.txt)"
 
