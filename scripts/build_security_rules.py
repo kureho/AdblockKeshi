@@ -10,6 +10,7 @@
 
 データソース:
 - URLhaus: https://urlhaus.abuse.ch/downloads/hostfile/ (CC0 1.0)
+  ※ 2026-10 から 410（取れない）。--urlhaus は省略可
 - Phishing.Database: https://raw.githubusercontent.com/mitchellkrogza/Phishing.Database/master/phishing-domains-ACTIVE.txt (MIT)
 - Tranco: https://tranco-list.eu/ (誤検知除外用)
 
@@ -19,12 +20,17 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+
+# `python3 -I` でも同じフォルダの build_split_rules を読めるようにする（-I はスクリプトの場所を足さない）
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from build_split_rules import SECURITY_BUDGET, SECURITY_MAX_BYTES, _rule_bytes  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -43,6 +49,8 @@ TRANCO_MIN = 900_000
 PHISHING_MIN = 100_000
 # DNS では、上が Tranco 上位 10 万の人気サイトのサブドメインは入れない
 DNS_POPULAR_TOP = 100_000
+# URLhaus（マルウェアの配布元）の段の上限。日本向けの次に入れるが、これ以上は詐欺サイトの枠を取らない
+URLHAUS_CAP = 10_000
 
 
 @dataclass(frozen=True)
@@ -125,32 +133,6 @@ def convert_to_content_blocker_rules(hosts: Iterable[str]) -> list[dict]:
             "action": {"type": "block"},
         })
     return rules
-
-
-def build_security_rules(
-    urlhaus_text: str,
-    phishing_db_text: str,
-    tranco_text: str,
-    limit: int = 30000,
-) -> list[dict]:
-    """全パイプライン実行。Tranco 除外 → host 重複削除 → ルール数 limit。"""
-    tranco = load_tranco_set(tranco_text)
-    urlhaus_hosts = parse_urlhaus_hosts(urlhaus_text)
-    phishing_hosts = parse_phishing_db_hosts(phishing_db_text)
-
-    # 統合 + Tranco 除外（誤検知避け）
-    all_hosts: list[str] = []
-    seen: set[str] = set()
-    for h in urlhaus_hosts + phishing_hosts:
-        h = h.lower().strip().rstrip(".")
-        # 壊れた行は上限を数える前に捨てる（後で捨てると件数が上限を割る）
-        if not h or h in seen or h in tranco or not _HOST_RE.match(h):
-            continue
-        seen.add(h)
-        all_hosts.append(h)
-        if len(all_hosts) >= limit:
-            break
-    return convert_to_content_blocker_rules(all_hosts)
 
 
 def check_sources(tranco_count: int, phishing_count: int) -> None:
@@ -252,6 +234,44 @@ def _normalize(host: str) -> str:
     return host.lower().strip().rstrip(".")
 
 
+def load_jp_tokens(path: Path) -> JPTokens:
+    """行頭の印（jp: / jp-token: / brand:）ごとに、空白で区切った語を読む。「#」から後はコメント。"""
+    kinds: dict[str, list[str]] = {"jp": [], "jp-token": [], "brand": []}
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        kind, words = line.split(":", 1)
+        kind = kind.strip().lower()
+        if kind in kinds:
+            kinds[kind].extend(w.lower() for w in words.split())
+    return JPTokens(jp=tuple(kinds["jp"]), jp_token=tuple(kinds["jp-token"]), brand=tuple(kinds["brand"]))
+
+
+_WORD_SPLIT_RE = re.compile(r"[.-]")
+
+
+def jp_priority(host: str, tokens: JPTokens) -> int:
+    """0 = 日本向け（.jp で終わる・jp の語を含む・jp-token の語と完全一致）／1 = 海外ブランド／2 = その他。
+    語は最後のラベル（.com など）を除いた部分で見る。"""
+    if host.endswith(".jp"):
+        return 0
+    body = host.rsplit(".", 1)[0] if "." in host else host
+    if any(t in body for t in tokens.jp):
+        return 0
+    words = set(_WORD_SPLIT_RE.split(body))
+    if any(t in words for t in tokens.jp_token):
+        return 0
+    if any(t in body for t in tokens.brand):
+        return 1
+    return 2
+
+
+def stable_key(host: str) -> str:
+    """段の中の並び。名前の順（元の一覧の並び）に左右されず、毎週同じ物は同じ位置に来る。"""
+    return hashlib.sha256(host.encode()).hexdigest()
+
+
 def select_hosts(
     urlhaus_hosts: list[str],
     phishing_hosts: list[str],
@@ -262,26 +282,86 @@ def select_hosts(
     jp_tokens: JPTokens,
     profile: str,
     limit: int,
-    urlhaus_cap: int = 10_000,
+    urlhaus_cap: int = URLHAUS_CAP,
 ) -> list[str]:
-    """除外を通ったホストを返す（Task A2: 元の並び順のまま）。"""
+    """除外を通ったホストを優先順に上から limit 件返す（元の一覧に無いホストは足さない）。
+
+    段 0 日本向け（両方の元データ）→ 段 1 URLhaus の残り（urlhaus_cap まで）→ 段 2 海外ブランド → 段 3 その他。
+    各段の中は stable_key の順。URLhaus だけにあって段 1 の上限を超えた物は入れない。
+    """
     if profile not in PROFILES:
         raise ValueError(f"unknown profile: {profile}")
     closure = tranco_closure(tranco_ranked)
     popular = set(tranco_ranked[:DNS_POPULAR_TOP])
-    out: list[str] = []
-    seen: set[str] = set()
-    for raw in list(urlhaus_hosts) + list(phishing_hosts):
-        host = _normalize(raw)
-        if not host or host in seen:
-            continue
-        seen.add(host)
-        if exclusion_reason(host, profile=profile, tranco_closure=closure, popular=popular,
-                            protected=protected, shared_parents=shared_parents) is None:
-            out.append(host)
-            if len(out) >= limit:
-                break
-    return out
+
+    def accepted(raw_hosts: list[str]) -> set[str]:
+        out: set[str] = set()
+        for raw in raw_hosts:
+            host = _normalize(raw)
+            if host and host not in out and exclusion_reason(
+                host, profile=profile, tranco_closure=closure, popular=popular,
+                protected=protected, shared_parents=shared_parents,
+            ) is None:
+                out.add(host)
+        return out
+
+    urlhaus = accepted(urlhaus_hosts)
+    phishing = accepted(phishing_hosts)
+    tiers: list[list[str]] = [[], [], [], []]
+    for host in urlhaus | phishing:
+        if jp_priority(host, jp_tokens) == 0:
+            tiers[0].append(host)
+    jp = set(tiers[0])
+    urlhaus_rest = sorted(urlhaus - jp, key=stable_key)
+    tiers[1] = urlhaus_rest[:urlhaus_cap]
+    taken = jp | set(tiers[1])
+    for host in phishing - taken:
+        tiers[2 if jp_priority(host, jp_tokens) == 1 else 3].append(host)
+    ordered: list[str] = []
+    for tier in tiers:
+        ordered.extend(sorted(tier, key=stable_key))
+    return ordered[:limit]
+
+
+def build_security_rules(
+    urlhaus_text: str,
+    phishing_db_text: str,
+    tranco_text: str,
+    limit: int = SECURITY_BUDGET,
+    max_bytes: int = SECURITY_MAX_BYTES,
+) -> list[dict]:
+    """Safari 用の詐欺サイトの規則。優先順に足していき、件数 limit か大きさ max_bytes の手前で止める。
+
+    重要ドメイン・共有ホスト・日本向けの語は既定の場所（Swift と scripts/data）から読む。
+    """
+    shared: set[str] = set()
+    for path in DEFAULT_SHARED_PARENTS:
+        shared |= load_shared_parents(path)
+    hosts = select_hosts(
+        parse_urlhaus_hosts(urlhaus_text),
+        parse_phishing_db_hosts(phishing_db_text),
+        load_tranco_ranked(tranco_text),
+        protected=load_protected_domains(PROTECTED_SWIFT["safari"]),
+        shared_parents=shared,
+        jp_tokens=load_jp_tokens(DEFAULT_JP_TOKENS),
+        profile="safari",
+        limit=limit,
+    )
+    rules: list[dict] = []
+    size = 2  # "[" と "]"（build_split_rules.list_bytes と同じ数え方）
+    for rule in convert_to_content_blocker_rules(hosts):
+        add = _rule_bytes(rule) + (1 if rules else 0)
+        if size + add > max_bytes:
+            break
+        size += add
+        rules.append(rule)
+    return rules
+
+
+def check_rule_count(count: int, limit: int = SECURITY_BUDGET) -> None:
+    """件数が枠の半分未満なら止める（2 本目の入れ替え replace_security_tail の「前回の半分未満」と同じ線）。"""
+    if count * 2 < limit:
+        raise SourceTooSmall(f"security rules {count} < half of {limit}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -310,6 +390,7 @@ def main() -> None:
     rules = build_security_rules(
         urlhaus_text, phishing_db_text, tranco_text, limit=args.limit
     )
+    check_rule_count(len(rules), args.limit)
     args.output.write_text(json.dumps(rules, ensure_ascii=False), encoding="utf-8")
     print(f"Wrote {len(rules)} rules → {args.output}", file=sys.stderr)
 

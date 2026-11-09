@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -9,13 +10,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pytest  # noqa: E402
 
 from build_security_rules import (  # noqa: E402
+    DEFAULT_JP_TOKENS,
     DEFAULT_SHARED_PARENTS,
+    URLHAUS_CAP,
     JPTokens,
     SourceTooSmall,
     build_parser,
     build_security_rules,
+    check_rule_count,
     check_sources,
     convert_to_content_blocker_rules,
+    jp_priority,
+    load_jp_tokens,
     load_protected_domains,
     load_shared_parents,
     load_tranco_ranked,
@@ -23,7 +29,9 @@ from build_security_rules import (  # noqa: E402
     parse_phishing_db_hosts,
     parse_urlhaus_hosts,
     select_hosts,
+    stable_key,
 )
+from build_split_rules import list_bytes  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
 ROOT = Path(__file__).resolve().parents[2]
@@ -117,8 +125,9 @@ def test_build_security_rules_fills_limit_even_with_malformed_hosts():
     # 壊れた行を上限の後で捨てると件数が上限を割る＝壊れた行は上限を数える前に捨てる
     phishing_db_text = "%20bad.example\n40.70.42.104?rid=x\n" + "\n".join(f"phish-{i}.example" for i in range(10))
     rules = build_security_rules("", phishing_db_text, "", limit=5)
+    hosts = {r["trigger"]["url-filter"] for r in rules}
     assert len(rules) == 5
-    assert rules[0]["trigger"]["url-filter"] == "^[^:]+://+([^:/]+\\.)?phish-0\\.example[/:]"
+    assert hosts <= {f"^[^:]+://+([^:/]+\\.)?phish-{i}\\.example[/:]" for i in range(10)}
 
 
 def test_build_security_rules_drops_trailing_dot():
@@ -215,3 +224,77 @@ def test_cli_urlhaus_is_optional_and_other_args_unchanged():
     args = build_parser().parse_args(["--urlhaus", "u.txt", "--phishing-db", "p.txt", "--tranco", "t.csv",
                                       "--output", "o.json", "--limit", "30000"])
     assert str(args.urlhaus) == "u.txt"
+
+
+# --- A-218 G0 Task A3: 並べ方（日本向けを優先・残りは偏らない順） ---
+
+TOKENS = JPTokens(jp=("smbc", "rakuten"), jp_token=("nta", "au", "jp"), brand=("amazon",))
+
+
+def test_jp_priority():
+    assert jp_priority("smbc-card-login.test", TOKENS) == 0
+    assert jp_priority("foo.co.jp", TOKENS) == 0
+    assert jp_priority("au-pay-check.test", TOKENS) == 0
+    assert jp_priority("amazon-verify.test", TOKENS) == 1
+    assert jp_priority("santa-claus.test", TOKENS) == 2   # nta は語の完全一致だけ
+    assert jp_priority("shop.com.au", TOKENS) == 2       # 最後のラベルは見ない
+    assert jp_priority("random-site.test", TOKENS) == 2
+
+
+def test_select_orders_jp_then_urlhaus_then_brand_then_rest():
+    out = select_hosts(["mal.test"], ["zz.test", "amazon-x.test", "rakuten-x.test"], [],
+                       protected=set(), shared_parents=set(), jp_tokens=TOKENS, profile="safari", limit=10)
+    assert out == ["rakuten-x.test", "mal.test", "amazon-x.test", "zz.test"]
+
+
+def test_select_remainder_follows_stable_hash_not_alphabet():
+    src = [f"{c}{i}.test" for c in "0123456789abcdefghij" for i in range(50)]  # 名前順の 1,000 件
+    out = select_hosts([], src, [], protected=set(), shared_parents=set(), jp_tokens=NO_TOKENS, profile="safari", limit=100)
+    assert out == sorted(src, key=stable_key)[:100]
+
+
+def test_select_is_independent_of_input_order():
+    src = [f"h{i}.test" for i in range(300)]
+    kw = dict(protected=set(), shared_parents=set(), jp_tokens=TOKENS, profile="safari", limit=50)
+    assert select_hosts([], src, [], **kw) == select_hosts([], list(reversed(src)), [], **kw)
+
+
+def test_urlhaus_tier_is_capped():
+    out = select_hosts([f"m{i}.test" for i in range(30)], [f"p{i}.test" for i in range(30)], [],
+                       protected=set(), shared_parents=set(), jp_tokens=NO_TOKENS, profile="safari", limit=40, urlhaus_cap=10)
+    assert sum(h.startswith("m") for h in out) == 10
+    assert URLHAUS_CAP == 10_000
+
+
+def test_build_security_rules_output_format_unchanged_for_old_clients():
+    rules = build_security_rules("", "\n".join(f"phish-{i}.example" for i in range(50)), "", limit=30)
+    assert len(rules) == 30
+    assert all(re.fullmatch(r"\^\[\^:\]\+://\+\(\[\^:/\]\+\\\.\)\?[a-z0-9_\\.-]+\[/:\]", r["trigger"]["url-filter"]) for r in rules)
+    assert all(r["action"] == {"type": "block"} for r in rules)
+
+
+def test_build_security_rules_stops_before_byte_cap_in_priority_order():
+    src = "\n".join(f"phish-{i}.example" for i in range(10))
+    full = build_security_rules("", src, "", limit=10)
+    cap = list_bytes(full[:5])
+    capped = build_security_rules("", src, "", limit=10, max_bytes=cap)
+    assert capped == full[:5]
+
+
+def test_load_jp_tokens_reads_three_kinds(tmp_path):
+    p = tmp_path / "t.txt"
+    p.write_text("# c\njp: rakuten aeon  # x\njp-token: jp nta\nbrand: amazon\n\n")
+    assert load_jp_tokens(p) == JPTokens(jp=("rakuten", "aeon"), jp_token=("jp", "nta"), brand=("amazon",))
+    default = load_jp_tokens(DEFAULT_JP_TOKENS)
+    assert "rakuten" in default.jp and "nta" in default.jp_token and "amazon" in default.brand
+
+
+def test_build_security_rules_skips_default_shared_and_protected_hosts():
+    rules = build_security_rules("", "bit.ly\nlogin.smbc.co.jp\nok-phish.example\n", "", limit=10)
+    assert [r["trigger"]["url-filter"] for r in rules] == ["^[^:]+://+([^:/]+\\.)?ok-phish\\.example[/:]"]
+
+
+def test_check_rule_count_rejects_below_half_of_budget():
+    with pytest.raises(SourceTooSmall):
+        check_rule_count(14_999)
+    check_rule_count(15_000)
