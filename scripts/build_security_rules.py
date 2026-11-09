@@ -56,9 +56,9 @@ URLHAUS_CAP = 10_000
 # （sts.us-east-1.amazonaws.com・cognito-idp.us-east-1.amazonaws.com など）。
 # 利用者の持ち物の境目として扱わない＝重要ドメイン・人気サイトの下で個別のホストを入れる理由にしない
 PROVIDER_NAMESPACES: frozenset[str] = frozenset({"us-east-1.amazonaws.com"})
-# 登録に資格が要る日本の公的機関（政府・自治体・大学・学校）。元の一覧に載っていれば乗っ取られた本物のサイト
-# ＝止めると必要なサイトが開かない（設計 §4 反目標）。Safari・DNS とも入れない
-PUBLIC_JP_SUFFIXES = ("go.jp", "lg.jp", "ac.jp", "ed.jp")
+# 登録に資格が要る日本の公的機関・団体（政府・自治体・大学・学校・財団・社団・医療法人・社会福祉法人など）。
+# 元の一覧に載っていれば乗っ取られた本物のサイト＝止めると必要なサイトが開かない（設計 §4 反目標）。Safari・DNS とも入れない
+PUBLIC_JP_SUFFIXES = ("go.jp", "lg.jp", "ac.jp", "ed.jp", "or.jp")
 
 
 @dataclass(frozen=True)
@@ -285,17 +285,21 @@ def load_jp_tokens(path: Path) -> JPTokens:
 _WORD_SPLIT_RE = re.compile(r"[.-]")
 
 
-def jp_priority(host: str, tokens: JPTokens, shared_parents: Iterable[str] = frozenset()) -> int:
+def jp_priority(host: str, tokens: JPTokens, shared_parents: Iterable[str] = frozenset(),
+                known_sites: Iterable[str] = frozenset()) -> int:
     """0 = 日本向け（.jp で終わる・jp の語を含む・jp-token の語と完全一致）／1 = 海外ブランド／2 = その他。
     語は最後のラベル（.com など）を除いた部分で見る。共有ホストの下では、共有ホストより左
-    （攻撃者が決めた部分）だけで見る（xyz.s3.amazonaws.com の「amazonaws」は Amazon の偽装ではない）。"""
+    （攻撃者が決めた部分）だけで見る（xyz.s3.amazonaws.com の「amazonaws」は Amazon の偽装ではない）。
+    人気サイト（known_sites＝Tranco）の下でも、人気サイトより左だけで見る（go.amazonsellerservices.com は
+    Amazon が自分で持つドメインで、偽装ではない）。"""
     if host.endswith(".jp"):
         return 0
     body = None
-    if shared_parents:
+    if shared_parents or known_sites:
         shared = shared_parents if isinstance(shared_parents, (set, frozenset)) else set(shared_parents)
+        sites = known_sites if isinstance(known_sites, (set, frozenset)) else set(known_sites)
         for anc in _ancestors(host):
-            if _is_shared(anc, shared):
+            if _is_shared(anc, shared) or anc in sites:
                 body = host[: -(len(anc) + 1)]
                 break
     if body is None:
@@ -351,7 +355,8 @@ def select_hosts(
     urlhaus = accepted(urlhaus_hosts)
     phishing = accepted(phishing_hosts)
     tiers: list[list[str]] = [[], [], [], []]
-    prio = {host: jp_priority(host, jp_tokens, shared_parents) for host in urlhaus | phishing}
+    sites = set(tranco_ranked)
+    prio = {host: jp_priority(host, jp_tokens, shared_parents, sites) for host in urlhaus | phishing}
     for host in urlhaus | phishing:
         if prio[host] == 0:
             tiers[0].append(host)

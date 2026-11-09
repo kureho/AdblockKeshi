@@ -102,6 +102,6 @@ def test_report_counts_selected_hosts_under_popular_sites_public_jp_and_protecte
     md = to_markdown(r)
     assert "| 人気サイトの中の住所: 1 万位まで | 1 | 1 |" in md
     assert "| 人気サイトの中の住所: 10 万位まで | 0 | 1 |" in md
-    assert "| 公的機関の .jp（go・lg・ac・ed） | 0 | 1 |" in md
+    assert "| 公的機関・団体の .jp（go・lg・ac・ed・or） | 0 | 1 |" in md
     assert "| 重要ドメインの下の共有ホストの利用者 | 0 | 1 |" in md
     assert "| 人気サイトのトップが止まる: Tranco 上位 1 万 |" in md

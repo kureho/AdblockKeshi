@@ -157,8 +157,9 @@ def report(
     source = urlhaus | phishing
 
     tiers = Counter()
+    sites = set(tranco_ranked)
     for h in new:
-        prio = jp_priority(h, jp_tokens, shared_parents)
+        prio = jp_priority(h, jp_tokens, shared_parents, sites)
         tiers["jp" if prio == 0 else "urlhaus" if h in urlhaus else "brand" if prio == 1 else "rest"] += 1
 
     tranco_top = tranco_ranked[:TRANCO_CHECK_TOP]
@@ -266,7 +267,7 @@ def to_markdown(r: dict) -> str:
     for key, label in (("top10k", "1 万位まで"), ("top100k", "10 万位まで"), ("top1m", "100 万位まで")):
         lines.append(f"| 人気サイトの中の住所: {label} | {up['old'][key]:,} | {up['new'][key]:,} |")
     lines += [
-        f"| 公的機関の .jp（go・lg・ac・ed） | {r['public_jp']['old']:,} | {r['public_jp']['new']:,} |",
+        f"| 公的機関・団体の .jp（go・lg・ac・ed・or） | {r['public_jp']['old']:,} | {r['public_jp']['new']:,} |",
         f"| 重要ドメインの下の共有ホストの利用者 | {r['protected_tenants']['old']:,} | {r['protected_tenants']['new']:,} |",
         "",
         "「人気サイトの中の住所」は、人気サイト（Tranco）のサブドメインのうち、共有ホストの利用者の物でない物。"

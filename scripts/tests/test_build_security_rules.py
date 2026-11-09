@@ -398,9 +398,27 @@ def test_safari_popular_rule_reaches_only_the_top_100k():
 
 def test_japanese_public_institution_hosts_are_never_selected():
     # 設計 §4 反目標「銀行・決済・公的機関など必要なサイトを誤って止める」。go.jp（政府）・lg.jp（自治体）・
-    # ac.jp（大学）・ed.jp（学校）は登録に資格が要る＝元の一覧に載っていれば、乗っ取られた本物のサイト
-    src = ["nurse.hospital.go.jp", "www.city.lg.jp", "lab.univ.ac.jp", "school.town.ed.jp", "go.jp", "evil.jp"]
+    # ac.jp（大学）・ed.jp（学校）・or.jp（財団・社団・医療法人・社会福祉法人など）は登録に資格が要る
+    # ＝元の一覧に載っていれば、乗っ取られた本物のサイト
+    src = ["nurse.hospital.go.jp", "www.city.lg.jp", "lab.univ.ac.jp", "school.town.ed.jp", "go.jp",
+           "care.welfare.or.jp", "evil.jp"]
     for profile in ("safari", "dns"):
         out = select_hosts([], src, [], protected=set(), shared_parents=set(), jp_tokens=NO_TOKENS,
                            profile=profile, limit=100)
         assert out == ["evil.jp"]
+
+
+def test_jp_priority_ignores_tokens_inside_a_popular_sites_own_name():
+    # ブランドが自分で持つドメイン（microsoftstart.com・amazonsellerservices.com）の下の住所を、その名前の中の語で
+    # 「海外ブランド」の段へ上げない。人気サイト（Tranco）の下では、人気サイトより左の部分だけで語を見る
+    sites = {"amazonsellerservices.com", "plain.test"}
+    assert jp_priority("go.amazonsellerservices.com", TOKENS, frozenset(), sites) == 2
+    assert jp_priority("amazon-login.plain.test", TOKENS, frozenset(), sites) == 1
+    assert jp_priority("go.amazonsellerservices.com", TOKENS) == 1   # 人気サイトを渡さなければ今まで通り
+
+
+def test_select_does_not_promote_hosts_of_a_brands_own_site_beyond_the_popular_cutoff():
+    tranco = [f"f{i}.test" for i in range(DNS_POPULAR_TOP)] + ["amazonbrand.test"]
+    out = select_hosts([], ["go.amazonbrand.test", "aaa.test"], tranco, protected=set(), shared_parents=set(),
+                       jp_tokens=TOKENS, profile="safari", limit=10)
+    assert out == sorted(["go.amazonbrand.test", "aaa.test"], key=stable_key) == ["aaa.test", "go.amazonbrand.test"]
