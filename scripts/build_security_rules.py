@@ -90,22 +90,40 @@ _REPORTED_KEYS = {"added_at", "domains"}
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+def _no_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    """json は同じ項目が 2 回あると後の値で上書きする＝前の値に URL やメモが残っていても見えない。読む時に止める。"""
+    keys = [k for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError(f"duplicate key: {keys}")
+    return dict(pairs)
+
+
+def _is_reported_host(d: object) -> bool:
+    """小文字のドメインだけ（末尾の改行も通さない・1 つの区切りは 63 字まで・全体 253 字まで）。"""
+    return (isinstance(d, str) and len(d) <= 253 and _HOST_RE.fullmatch(d) is not None
+            and all(len(label) <= 63 for label in d.split(".")))
+
+
 def load_reported_domains(dir_: Path, today: date, cap: int = REPORTED_CAP,
                           ttl_days: int = REPORTED_TTL_DAYS) -> list[str]:
     """review/scam-domains/*.json を読み、期限内（追加から ttl_days 日未満）の物を新しい日付の順に
     重複なく cap 件まで返す。
 
     公開の置き場なので、書けるのは added_at と domains（小文字のドメインだけ）の 2 つだけ。
-    形の崩れたファイルが 1 つでもあれば止める（作り直しごと止まり、配信は前の版のまま）。
+    形の崩れたファイル（余計な項目・同じ項目の重複・リンク）が 1 つでもあれば止める
+    （作り直しごと止まり、配信は前の版のまま）。domains が空のファイルは何も足さない。
     作り直しは UTC で動くので、日本の日付で書いた added_at の 1 日先までは受け付ける。"""
     dir_ = Path(dir_)
-    if not dir_.is_dir():
-        raise ReportedListInvalid(f"{dir_}: not a directory")
+    # リンクは読まない: リンク先だけ変えると push の起動にかからず、見直した物と配る物がずれる
+    if dir_.is_symlink() or not dir_.is_dir():
+        raise ReportedListInvalid(f"{dir_}: not a plain directory")
     entries: list[tuple[date, str, int, str]] = []
     for path in sorted(dir_.glob("*.json")):
+        if path.is_symlink() or not path.is_file():
+            raise ReportedListInvalid(f"{path.name}: not a plain file")
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+            data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_no_duplicate_keys)
+        except (OSError, UnicodeDecodeError, ValueError) as e:
             raise ReportedListInvalid(f"{path.name}: {e}") from e
         if not isinstance(data, dict) or set(data) != _REPORTED_KEYS:
             raise ReportedListInvalid(f"{path.name}: must have exactly added_at and domains")
@@ -118,10 +136,11 @@ def load_reported_domains(dir_: Path, today: date, cap: int = REPORTED_CAP,
             raise ReportedListInvalid(f"{path.name}: {e}") from e
         if added > today + timedelta(days=1):
             raise ReportedListInvalid(f"{path.name}: added_at {added_raw} is in the future")
-        if not isinstance(domains, list) or not domains:
-            raise ReportedListInvalid(f"{path.name}: domains must be a non-empty list")
+        # 空のリストは受け付ける（誤りを外す時に最後の 1 件を消しても作り直しが止まらないように）
+        if not isinstance(domains, list):
+            raise ReportedListInvalid(f"{path.name}: domains must be a list")
         for d in domains:
-            if not isinstance(d, str) or len(d) > 253 or not _HOST_RE.match(d):
+            if not _is_reported_host(d):
                 raise ReportedListInvalid(f"{path.name}: not a lowercase domain: {d!r}")
         if (today - added).days >= ttl_days:
             continue

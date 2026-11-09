@@ -28,7 +28,11 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      # 起動した時の版ではなく、走り始めた時の枝の最新を取る。待っていた後の回が、先の回の push より前の版で
+      # 作って push を拒まれないように（concurrency で待つと起きる・A-218）
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -114,6 +118,8 @@ jobs:
             echo "No changes to commit."
           else
             git commit -m "chore(security): weekly auto-update $(date -u +%Y-%m-%d)"
+            # 作っている間に main へ別の push があっても通す（同じ配信ファイルを変えていれば止まる＝前の版のまま）
+            git pull --rebase
             git push
           fi
 

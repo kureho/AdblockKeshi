@@ -162,11 +162,32 @@ def is_scam_report(row: dict) -> bool:
     return row.get("ad_type") == SCAM_AD_TYPE
 
 
+def _url_host(url: str | None) -> str | None:
+    opened = page_url_for_measure(url)
+    return normalize_report_host(urlsplit(opened).netloc) if opened else None
+
+
+def scam_reported_hosts(rows: list[dict]) -> set[str]:
+    """詐欺サイトとして報告されたホスト（報告のドメインと、報告の URL のホスト）。"""
+    hosts = set()
+    for r in rows:
+        if is_scam_report(r):
+            hosts.update(h for h in (normalize_report_host(r.get("domain")), _url_host(r.get("url"))) if h)
+    return hosts
+
+
+def _opens_scam_host(row: dict, scam_hosts: set[str]) -> bool:
+    host = _url_host(row.get("url"))
+    return bool(host and scam_hosts and _covering(host, scam_hosts))
+
+
 def measure_targets(rows: list[dict], max_pages: int) -> list[tuple[dict, str]]:
-    """計測ツールで開く報告と、開く URL。ほかのアプリの報告と、詐欺サイトの種類の報告は開かない。"""
+    """計測ツールで開く報告と、開く URL。ほかのアプリの報告と、詐欺サイトの種類の報告は開かない。
+    詐欺サイトとして報告されたホスト（とその下）は、別の種類の報告からも開かない。"""
+    scam_hosts = scam_reported_hosts(rows)
     targets = []
     for r in rows:
-        if r.get("seen_in") == "other_app" or is_scam_report(r):
+        if r.get("seen_in") == "other_app" or is_scam_report(r) or _opens_scam_host(r, scam_hosts):
             continue
         opened = page_url_for_measure(r.get("url"))
         if opened:
@@ -184,7 +205,8 @@ def normalize_report_host(domain: str | None) -> str | None:
         if not port.isdigit():
             return None
     host = host.rstrip(".")
-    if len(host) > 253 or not _HOST_RE.match(host):
+    if (len(host) > 253 or not _HOST_RE.fullmatch(host)
+            or any(len(label) > 63 for label in host.split("."))):
         return None
     return host
 
@@ -252,6 +274,10 @@ def scam_facts(domain: str | None, *, served: set[str] | None, source: set[str] 
         facts["served"] = _covering(host, served)
     if source is not None:
         facts["source"] = _covering(host, source)
+    if _is_shared(host, shared_parents):
+        facts["shared_parent"] = host
+        facts["rdap_note"] = "共有ホストそのもの（一覧の除外で外れる＝載らない）。登録日は引いていない"
+        return facts
     shared = next((a for a in _ancestors(host) if _is_shared(a, shared_parents)), None)
     facts["shared_parent"] = shared
     facts["brand_words"] = _brand_words(host, tokens, shared)
@@ -265,11 +291,15 @@ def scam_facts(domain: str | None, *, served: set[str] | None, source: set[str] 
     for cand in rdap_candidates(host):
         date = lookup(cand)
         if date:
+            age = (today - dt.date.fromisoformat(date)).days
+            if age < 0:
+                facts["rdap_note"] = f"RDAP の登録日が未来（{date}・{cand}）＝信用しない"
+                return facts
             facts["registered"] = date
             facts["registered_domain"] = cand
-            facts["age_days"] = (today - dt.date.fromisoformat(date)).days
+            facts["age_days"] = age
             return facts
-    facts["rdap_note"] = "RDAP で登録日が取れなかった（.jp など RDAP で出ない所がある）"
+    facts["rdap_note"] = "RDAP で登録日が取れなかった（RDAP の無い TLD〔.jp など〕・時間切れ・回数の制限のどれか）"
     return facts
 
 
@@ -320,7 +350,10 @@ def _scam_lines(f: dict | None) -> list[str]:
     words = f.get("brand_words") or []
     lines.append("- 基準 B-2 ブランドの語: " + (", ".join(words) + "（公式のドメインでないかは見直しで確かめる）"
                                               if words else "なし"))
-    lines.append(f"- 共有ホストの下: {f['shared_parent'] or 'いいえ'}")
+    if f["shared_parent"] and f["shared_parent"] == f["host"]:
+        lines.append("- 共有ホスト: 報告のドメインが共有ホストそのもの（一覧の除外で外れる＝載らない）")
+    else:
+        lines.append(f"- 共有ホストの下: {f['shared_parent'] or 'いいえ'}")
     if f.get("registered"):
         age = f["age_days"]
         within = f"{SCAM_RECENT_DAYS} 日以内" if age <= SCAM_RECENT_DAYS else f"{SCAM_RECENT_DAYS} 日より前"
@@ -333,6 +366,7 @@ def _scam_lines(f: dict | None) -> list[str]:
 def render_packet(date: str, rows: list[dict], measurements: dict, candidates: list[dict],
                   scam: dict | None = None) -> str:
     scam = scam or {}
+    scam_hosts = scam_reported_hosts(rows)
     lines = [
         f"# 広告消し 報告の判定用の束（{date}）",
         "",
@@ -381,6 +415,8 @@ def render_packet(date: str, rows: list[dict], measurements: dict, candidates: l
             lines.append(f"- 広告規則の全体（blockerList 15 万件）に載っているドメインの通信先（条件つきの規則を含む）（{len(marked)}）: " + (", ".join(marked) if marked else "なし"))
             others = [h for h in (m.get("third_party") or []) if h not in marked]
             lines.append(f"- そのほかの外部の通信先（{len(others)}）: " + (", ".join(others) if others else "なし"))
+        elif not suggestion and _opens_scam_host(r, scam_hosts):
+            lines.append("- 計測: 詐欺サイトとして報告されたホストなので開いていない（同じ束の詐欺サイトの報告を見る）")
         elif not suggestion:
             lines.append("- 計測: なし（Safari の https URL ではない、または計測を省いた）")
         lines.append("")
@@ -576,11 +612,18 @@ def rdap_lookup(domain: str) -> str | None:
 
 
 def served_scam_hosts() -> set[str] | None:
-    """公開中（origin/main）の詐欺サイトの一覧（docs/cdn/security-rules.json・3 万件）のホスト。読めなければ None。"""
-    subprocess.run(["git", "fetch", "--quiet", "origin", "main"], cwd=REPO, env=_env(),
-                   capture_output=True, timeout=120)
-    proc = subprocess.run(["git", "show", "origin/main:docs/cdn/security-rules.json"], cwd=REPO, env=_env(),
-                          capture_output=True, timeout=120)
+    """公開中（origin/main）の詐欺サイトの一覧（docs/cdn/security-rules.json・3 万件）のホスト。読めなければ None。
+    取り直し（git fetch）に失敗した時も None: 手元の古い origin/main を「配信中」と言うと、既に外れた
+    ドメインを「配信中にあり＝足す話ではない」と見せてしまう。"""
+    try:
+        fetched = subprocess.run(["git", "fetch", "--quiet", "origin", "main"], cwd=REPO, env=_env(),
+                                 capture_output=True, timeout=120)
+        if fetched.returncode != 0:
+            return None
+        proc = subprocess.run(["git", "show", "origin/main:docs/cdn/security-rules.json"], cwd=REPO, env=_env(),
+                              capture_output=True, timeout=120)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
     if proc.returncode != 0:
         return None
     try:

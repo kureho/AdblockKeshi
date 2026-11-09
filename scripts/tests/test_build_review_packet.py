@@ -337,7 +337,8 @@ def test_normalize_report_host_lowercases_and_drops_port_and_trailing_dot():
 
 def test_normalize_report_host_rejects_non_hosts():
     # 報告の値は外から来る＝RDAP の問い合わせの URL に入れる前に形を確かめる
-    for bad in (None, "", "   ", "evil.top/../x", "evil.top?a=1", "localhost", "[::1]", "a" * 250 + ".top", "ev il.top"):
+    for bad in (None, "", "   ", "evil.top/../x", "evil.top?a=1", "localhost", "[::1]", "a" * 250 + ".top", "ev il.top",
+                "a" * 64 + ".top"):
         assert normalize_report_host(bad) is None, bad
 
 
@@ -477,3 +478,54 @@ def test_render_packet_scam_report_without_facts_says_so():
     md = render_packet("2026-11-09", [row], measurements={}, candidates=[])
     assert "ページは開いていない" in md
     assert "ドメインの事実: 取れなかった" in md
+
+
+def test_measure_targets_never_opens_a_host_reported_as_scam_by_another_report():
+    # 同じページが別の種類でも報告されていると、そちらから開いてしまう（Codex 2026-11-09 指摘 1）
+    scam = _row(id=_SCAM_ID, ad_type="phishing", domain="evil.top", url="https://evil.top/login")
+    same = _row(id="44444444-4444-4444-8444-444444444444", ad_type="popup", domain="evil.top",
+                url="https://evil.top/login")
+    sub = _row(id="55555555-5555-4555-8555-555555555555", ad_type="popup", domain="cdn.evil.top",
+               url="https://cdn.evil.top/x")
+    ok = _row()
+    targets = measure_targets([scam, same, sub, ok], max_pages=30)
+    assert [r["id"] for r, _ in targets] == [ok["id"]]
+
+
+def test_render_packet_says_why_a_same_host_report_was_not_opened():
+    scam = _row(id=_SCAM_ID, ad_type="phishing", domain="evil.top", url="https://evil.top/login")
+    same = _row(id="44444444-4444-4444-8444-444444444444", ad_type="popup", domain="evil.top",
+                url="https://evil.top/login")
+    md = render_packet("2026-11-09", [scam, same], measurements={}, candidates=[])
+    assert "詐欺サイトとして報告されたホストなので開いていない" in md
+
+
+def test_served_scam_hosts_unknown_when_fetch_fails(monkeypatch):
+    # 取り直しに失敗した古い一覧を「配信中」と言うと、外れたドメインを足さずに済ませてしまう（指摘 5）
+    import build_review_packet as b
+
+    class P:
+        def __init__(self, rc, out=b""):
+            self.returncode, self.stdout, self.stderr = rc, out, b""
+
+    rules = json.dumps([{"trigger": {"url-filter": "^[^:]+://+([^:/]+\\.)?evil\\.top[/:]"},
+                         "action": {"type": "block"}}]).encode()
+
+    def fake_run(cmd, **kw):
+        return P(128) if "fetch" in cmd else P(0, rules)
+
+    monkeypatch.setattr(b.subprocess, "run", fake_run)
+    assert b.served_scam_hosts() is None
+
+    monkeypatch.setattr(b.subprocess, "run", lambda cmd, **kw: P(0, rules))
+    assert b.served_scam_hosts() == {"evil.top"}
+
+
+def test_scam_facts_future_registration_date_is_unknown():
+    f, _ = _facts("evil.top", dates={"evil.top": "2026-12-01"})
+    assert f["registered"] is None and f["age_days"] is None and "未来" in f["rdap_note"]
+
+
+def test_scam_facts_reported_shared_host_itself_is_not_looked_up():
+    f, calls = _facts("github.io", shared={"github.io"})
+    assert calls == [] and f["shared_parent"] == "github.io" and "共有ホストそのもの" in f["rdap_note"]

@@ -580,13 +580,14 @@ def test_load_reported_domains_accepts_tomorrow_because_the_build_runs_in_utc(tm
 
 @pytest.mark.parametrize("obj", [
     {"added_at": "2026-11-10"},
-    {"added_at": "2026-11-10", "domains": []},
     {"added_at": "2026/11/10", "domains": ["a.test"]},
     {"added_at": "2026-11-17", "domains": ["a.test"]},
     {"added_at": "2026-11-10", "domains": ["https://a.test/login"]},
     {"added_at": "2026-11-10", "domains": ["A.test"]},
     {"added_at": "2026-11-10", "domains": ["*.a.test"]},
     {"added_at": "2026-11-10", "domains": ["localhost"]},
+    {"added_at": "2026-11-10", "domains": ["a.test\n"]},
+    {"added_at": "2026-11-10", "domains": ["a" * 64 + ".test"]},
     {"added_at": "2026-11-10", "domains": ["a.test"], "note": "報告のメモ"},
     ["a.test"],
 ])
@@ -595,6 +596,38 @@ def test_load_reported_domains_stops_on_a_broken_file(tmp_path, obj):
     _reported(tmp_path, "bad.json", obj)
     with pytest.raises(ReportedListInvalid):
         load_reported_domains(tmp_path, today=TODAY)
+
+
+def test_load_reported_domains_accepts_an_emptied_file_when_the_last_domain_is_withdrawn(tmp_path):
+    # 誤りを外す時に最後の 1 件を消して [] にしても、作り直しは止まらない（止まると誤ったブロックが残る）
+    _reported(tmp_path, "a.json", {"added_at": "2026-11-10", "domains": []})
+    _reported(tmp_path, "b.json", {"added_at": "2026-11-09", "domains": ["b.test"]})
+    assert load_reported_domains(tmp_path, today=TODAY) == ["b.test"]
+
+
+def test_load_reported_domains_stops_on_duplicate_keys(tmp_path):
+    # json は後の値で上書きする＝前の値に URL やメモが残っていても通ってしまう
+    (tmp_path / "dup.json").write_text(
+        '{"added_at": "2026-11-10", "domains": ["https://a.test/reset?token=x"], "domains": ["a.test"]}',
+        encoding="utf-8")
+    with pytest.raises(ReportedListInvalid):
+        load_reported_domains(tmp_path, today=TODAY)
+
+
+def test_load_reported_domains_stops_on_a_symlinked_file_or_dir(tmp_path):
+    # リンク先だけ変えると push の起動にかからず、見直した物と配る物がずれる
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    _reported(elsewhere, "real.json", {"added_at": "2026-11-10", "domains": ["a.test"]})
+    d = tmp_path / "scam"
+    d.mkdir()
+    (d / "link.json").symlink_to(elsewhere / "real.json")
+    with pytest.raises(ReportedListInvalid):
+        load_reported_domains(d, today=TODAY)
+    linked_dir = tmp_path / "linked"
+    linked_dir.symlink_to(elsewhere)
+    with pytest.raises(ReportedListInvalid):
+        load_reported_domains(linked_dir, today=TODAY)
 
 
 def test_load_reported_domains_stops_on_broken_json_or_a_missing_dir(tmp_path):
