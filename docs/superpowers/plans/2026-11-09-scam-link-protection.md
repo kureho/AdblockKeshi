@@ -13,7 +13,7 @@
 
 ## 実装進捗（durable マーカー・終えたら ✅ と日付・証拠の場所を書く）
 
-- [ ] G0: Task A1〜A5（一覧の直し・計測）→ 🙋 kureho の承認 → Task A6（配信）
+- [x] G0: Task A1〜A5（一覧の直し・計測）→ 🙋 kureho の承認 → Task A6（配信）— ✅ 2026-11-09 配信（kureho 承認「URLhaus を外して配る」・merge b099578・週次の手動実行 42575996084 → 7c13674・CDN から取り直して計測と同じ物を確認）。証拠 `tasks/a218-g0-measurement-2026-11-09.md`
 - [ ] G1: Task B1〜B6（G0 の配信後の次の版）
 - [ ] G2: Task C1〜C7
 - [ ] G3: Task D1（G2 の版と同時か直後）
