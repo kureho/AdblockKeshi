@@ -1,0 +1,57 @@
+# 共有ホスト: このホストその物は詐欺サイトの一覧に入れない（その下の個別のサブドメインは入れてよい）
+# 1 行 1 ホスト。「*.」で始まる行は「その物と、その 1 つ下の全て」が共有ホスト（例: *.r.appspot.com → ey.r.appspot.com）
+# 公開のサフィックス一覧（PSL）の共有ホストの節は psl-private-suffixes.txt にあり、ビルドは両方を足して使う。
+# ここには PSL に無い物と、PSL にあっても見て分かるように残したい物を書く。
+# 確かめ: 2026-11-09 PSL VERSION 2026-11-06_09-01-47_UTC / 元の一覧 = Phishing.Database ACTIVE 392,178 件
+# 「PSL」= PSL の共有ホストの節にある／「下 N」= 元の一覧で直下のサブドメインが N 件
+
+# --- サブドメインを貸すサービス ---
+github.io            # PSL・下 7,497
+gitlab.io            # PSL・下 12
+blogspot.com         # PSL・下 1,858
+weebly.com           # 下 6,897（PSL に無い）
+weeblysite.com       # 下 9,432（PSL に無い）
+wixsite.com          # PSL・下 1,245
+000webhostapp.com    # 下 7,730（PSL に無い）
+firebaseapp.com      # PSL・下 2,167
+web.app              # PSL・下 4,423
+pages.dev            # PSL・下 12,592
+workers.dev          # PSL・下 3
+netlify.app          # PSL・下 3,901
+vercel.app           # PSL・下 10,650
+herokuapp.com        # PSL・下 455
+glitch.me            # 下 3,991（PSL に無い）
+onrender.com         # PSL・下 76
+azurewebsites.net    # PSL・下 685
+square.site          # PSL・下 2,724
+godaddysites.com     # 下 2,912（PSL に無い）
+webflow.io           # PSL・下 11,742
+r2.dev               # PSL・下 5,827
+ngrok-free.app       # PSL・下 8
+myshopify.com        # PSL・下 33
+wordpress.com        # 下 6（PSL に無い）
+duckdns.org          # PSL・下 15,756
+
+# 元の一覧で直下が多い親から足した物（PSL に無いが、同じサービスの別の入口と分かる物）
+blogspot.sn          # Blogger の国別ドメイン・下 814
+blogspot.fi          # Blogger の国別ドメイン・下 533
+blogspot.tw          # Blogger の国別ドメイン・下 486
+teachable.com        # Teachable の各スクール <name>.teachable.com・下 556
+filesusr.com         # Wix の利用者ファイル用ドメイン・下 553
+
+# --- パスで同居する・IPFS の入口・短縮 URL ---
+storage.googleapis.com          # 下 3（PSL に無い）
+firebasestorage.googleapis.com  # ★元の一覧にその物がある
+ipfs.io                         # 下 2
+dweb.link                       # PSL・★元の一覧にその物がある
+cloudflare-ipfs.com             # PSL・★元の一覧にその物がある
+ipfs.cf-ipfs.com                # IPFS の入口（Cloudflare）・下 967
+ipfs.infura-ipfs.io             # IPFS の入口（Infura）・下 474
+forms.gle
+goo.gl
+bit.ly                          # ★元の一覧にその物がある
+tinyurl.com
+is.gd
+cutt.ly
+rebrand.ly
+lin.ee
