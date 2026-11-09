@@ -51,7 +51,9 @@ PROFILES = ("safari", "dns")
 
 # 元データが途中で切れた時に守りが外れないよう、下限を割ったら止める
 TRANCO_MIN = 900_000
-PHISHING_MIN = 100_000
+# HaGeZi TIF 全部は 1,441,295 件（2026-11-08）。その約 3 割を下限にする
+# （Phishing.Database の時は 392,178 件に対して 100,000 だった＝同じくらいの割合）
+PHISHING_MIN = 450_000
 # 上が Tranco 上位 10 万の人気サイトのサブドメインは入れない（DNS は全部。Safari は共有ホストの利用者の物を除く。
 # 名前は DNS 用に作った時のまま）
 DNS_POPULAR_TOP = 100_000

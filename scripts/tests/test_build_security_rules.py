@@ -168,7 +168,13 @@ def test_check_sources_rejects_truncated_tranco():
 def test_check_sources_rejects_truncated_phishing_db():
     with pytest.raises(SourceTooSmall):
         check_sources(tranco_count=1_000_000, phishing_count=50_000)
-    check_sources(tranco_count=1_000_000, phishing_count=392_178)  # 例外なし
+    check_sources(tranco_count=1_000_000, phishing_count=1_441_295)  # 例外なし（HaGeZi TIF 2026-11-08）
+
+
+def test_check_sources_rejects_a_list_far_smaller_than_hagezi():
+    # 元データを HaGeZi（約 144 万件）に替えたので、前の元データの大きさ（39 万件）は途中で切れた物とみなす
+    with pytest.raises(SourceTooSmall):
+        check_sources(tranco_count=1_000_000, phishing_count=392_178)
 
 
 def test_load_protected_domains_reads_set_literals_only():
