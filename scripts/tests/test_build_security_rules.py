@@ -33,6 +33,7 @@ from build_security_rules import (  # noqa: E402
     parse_phishing_db_hosts,
     parse_urlhaus_hosts,
     select_hosts,
+    source_notice,
     stable_key,
 )
 from build_split_rules import list_bytes  # noqa: E402
@@ -422,3 +423,64 @@ def test_select_does_not_promote_hosts_of_a_brands_own_site_beyond_the_popular_c
     out = select_hosts([], ["go.amazonbrand.test", "aaa.test"], tranco, protected=set(), shared_parents=set(),
                        jp_tokens=TOKENS, profile="safari", limit=10)
     assert out == sorted(["go.amazonbrand.test", "aaa.test"], key=stable_key) == ["aaa.test", "go.amazonbrand.test"]
+
+
+# --- 元データの替え（HaGeZi Threat Intelligence Feeds・kureho 承認 2026-11-09） ---
+
+HAGEZI_HEAD = (
+    "# Title: HaGeZi's Threat Intelligence Feeds - a serious security boost (recommended)\n"
+    "# License: https://github.com/hagezi/dns-blocklists/blob/main/LICENSE\n"
+    "# Syntax: Domains (without subdomains)\n"
+    "#\n"
+)
+
+
+def test_cli_accepts_source_and_keeps_phishing_db_for_old_calls():
+    args = build_parser().parse_args(["--source", "s.txt", "--tranco", "t.csv", "--output", "o.json"])
+    assert str(args.phishing_db) == "s.txt" and args.notice is None
+    args = build_parser().parse_args(["--phishing-db", "p.txt", "--tranco", "t.csv", "--output", "o.json",
+                                      "--notice", "n.txt"])
+    assert str(args.phishing_db) == "p.txt" and str(args.notice) == "n.txt"
+
+
+def test_parse_hagezi_onlydomains_skips_the_header():
+    # 「v23.0.xxx」は版の目印ではなく本物の項目（.xxx は実在の TLD・一覧は登録単位の名前の順）
+    assert parse_phishing_db_hosts(HAGEZI_HEAD + "v23.0.xxx\nevil.test\n") == ["v23.0.xxx", "evil.test"]
+
+
+def test_source_notice_keeps_the_original_header_and_says_it_was_modified_and_when():
+    # HaGeZi の条件（Issue #11938）: 元の見出しを残す・変換したら改変した旨と日付を書く
+    text = HAGEZI_HEAD + "v23.0.xxx\nevil.test\n# a later comment\n"
+    notice = source_notice(text, "2026-11-15T00:13:00Z")
+    assert notice.startswith(HAGEZI_HEAD)
+    assert "Modified" in notice and "2026-11-15T00:13:00Z" in notice
+    assert "evil.test" not in notice and "a later comment" not in notice
+
+
+def _fake_main_inputs(tmp_path, monkeypatch, rule_count):
+    import build_security_rules as b
+    source = tmp_path / "tif.txt"
+    source.write_text(HAGEZI_HEAD + "evil.test\n", encoding="utf-8")
+    tranco = tmp_path / "tranco.csv"
+    tranco.write_text("1,safe.test\n", encoding="utf-8")
+    monkeypatch.setattr(b, "check_sources", lambda *a, **k: None)
+    monkeypatch.setattr(b, "build_security_rules",
+                        lambda *a, **k: [{"trigger": {"url-filter": "x"}, "action": {"type": "block"}}] * rule_count)
+    notice = tmp_path / "NOTICE.txt"
+    monkeypatch.setattr(sys, "argv", ["build_security_rules.py", "--source", str(source), "--tranco", str(tranco),
+                                      "--output", str(tmp_path / "out.json"), "--notice", str(notice)])
+    return b, notice
+
+
+def test_cli_writes_the_notice_when_the_rules_are_written(tmp_path, monkeypatch):
+    b, notice = _fake_main_inputs(tmp_path, monkeypatch, 20000)
+    b.main()
+    assert (tmp_path / "out.json").exists()
+    assert notice.read_text(encoding="utf-8").startswith(HAGEZI_HEAD)
+
+
+def test_cli_writes_no_notice_when_the_build_stops(tmp_path, monkeypatch):
+    b, notice = _fake_main_inputs(tmp_path, monkeypatch, 10)
+    with pytest.raises(SourceTooSmall):
+        b.main()
+    assert not notice.exists() and not (tmp_path / "out.json").exists()

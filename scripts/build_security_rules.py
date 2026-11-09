@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""URLhaus + Phishing.Database からセキュリティルール JSON を構築する。
+"""詐欺サイトの一覧（1 行 1 ドメイン）からセキュリティルール JSON を構築する。
 
 入力:
-- URLhaus host file (text、format: "127.0.0.1\\thost")
-- Phishing.Database active domains file (text、format: 1 host / line)
+- URLhaus host file (text、format: "127.0.0.1\\thost")（省略可）
+- 詐欺サイトの一覧 --source（text、format: 1 host / line・# の行は見出し）
+  2026-11-09 から HaGeZi Threat Intelligence Feeds（kureho 承認）。--phishing-db は古い名前
 - Tranco top 1M (text、format: rank,domain)
 
 出力: Safari Content Blocker JSON 形式
@@ -11,7 +12,10 @@
 データソース:
 - URLhaus: https://urlhaus.abuse.ch/downloads/hostfile/ (CC0 1.0)
   ※ 2026-10 から 410（取れない）。--urlhaus は省略可
-- Phishing.Database: https://raw.githubusercontent.com/mitchellkrogza/Phishing.Database/master/phishing-domains-ACTIVE.txt (MIT)
+- HaGeZi TIF: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt (GPL-3.0)
+  条件（hagezi/dns-blocklists Issue #11938・作者の回答）: GPL-3.0 の全文を付ける・元の見出しを残す・
+  変換したら改変した旨と日付を書く → --notice に見出しと改変の旨を書き、docs/cdn/LICENSE-security.txt を並べる
+- 〜2026-11: Phishing.Database (MIT)
 - Tranco: https://tranco-list.eu/ (誤検知除外用)
 
 仕様: docs/superpowers/specs/2026-06-02-anti-phishing-design.md §6
@@ -25,6 +29,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -90,8 +95,8 @@ def parse_urlhaus_hosts(text: str) -> list[str]:
 
 
 def parse_phishing_db_hosts(text: str) -> list[str]:
-    """Phishing.Database active domains の各行から host を抽出。
-    各行は 1 host のみ（例: phish-example.tk）。コメント (#) はスキップ。"""
+    """1 行 1 ドメインの一覧（HaGeZi onlydomains・旧 Phishing.Database）の各行から host を抽出。
+    コメント (#) はスキップ。"""
     hosts: list[str] = []
     for line in text.splitlines():
         line = line.strip()
@@ -144,11 +149,11 @@ def convert_to_content_blocker_rules(hosts: Iterable[str]) -> list[dict]:
 
 
 def check_sources(tranco_count: int, phishing_count: int) -> None:
-    """Tranco と Phishing.Database の件数が下限を割っていたら止める。"""
+    """Tranco と詐欺サイトの一覧の件数が下限を割っていたら止める。"""
     if tranco_count < TRANCO_MIN:
         raise SourceTooSmall(f"Tranco {tranco_count} < {TRANCO_MIN}")
     if phishing_count < PHISHING_MIN:
-        raise SourceTooSmall(f"Phishing.Database {phishing_count} < {PHISHING_MIN}")
+        raise SourceTooSmall(f"scam source list {phishing_count} < {PHISHING_MIN}")
 
 
 _SWIFT_SET_RE = re.compile(r"Set<String>\s*=\s*\[(.*?)\]", re.S)
@@ -407,6 +412,25 @@ def build_security_rules(
     return rules
 
 
+def source_notice(source_text: str, generated_at: str) -> str:
+    """元の一覧の先頭の見出し（# の行）をそのまま残し、改変した旨と日付を足す。
+
+    HaGeZi の条件（Issue #11938）: 元の見出しを残す・変換したら改変した旨と日付を書く。
+    本文（ドメインの行）と途中の # の行は入れない。"""
+    head: list[str] = []
+    for line in source_text.splitlines(keepends=True):
+        if not line.startswith("#"):
+            break
+        head.append(line if line.endswith("\n") else line + "\n")
+    return "".join(head) + (
+        "#\n"
+        f"# Modified on {generated_at} by the AdblockKeshi weekly build (scripts/build_security_rules.py):\n"
+        "# converted to Safari Content Blocker rules (second-ads-sec.json), with popular sites,\n"
+        "# shared hosting parents and public .jp domains excluded, and limited in count.\n"
+        "# The modified list is distributed under the same license (GPL-3.0, see LICENSE-security.txt).\n"
+    )
+
+
 def check_rule_count(count: int, limit: int = SECURITY_BUDGET) -> None:
     """件数が枠の半分未満なら止める（2 本目の入れ替え replace_security_tail の「前回の半分未満」と同じ線）。"""
     if count * 2 < limit:
@@ -418,13 +442,16 @@ def build_parser() -> argparse.ArgumentParser:
     # URLhaus は 2026-10 から取れない（410）。渡されない時は無しで作る
     parser.add_argument("--urlhaus", type=Path, default=None,
                         help="URLhaus host file path（省略可）")
-    parser.add_argument("--phishing-db", required=True, type=Path,
+    # --source が今の名前。--phishing-db は古い呼び出し（計測の道具など）のために残す
+    parser.add_argument("--source", "--phishing-db", required=True, type=Path,
                         dest="phishing_db",
-                        help="Phishing.Database active domains text file path")
+                        help="詐欺サイトの一覧（1 行 1 ドメイン）の path")
     parser.add_argument("--tranco", required=True, type=Path,
                         help="Tranco top 1M CSV path")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--limit", type=int, default=30000)
+    parser.add_argument("--notice", type=Path, default=None,
+                        help="元の見出しと改変の旨を書き出す path（省略可）")
     return parser
 
 
@@ -443,6 +470,9 @@ def main() -> None:
     check_rule_count(len(rules), args.limit)
     args.output.write_text(json.dumps(rules, ensure_ascii=False), encoding="utf-8")
     print(f"Wrote {len(rules)} rules → {args.output}", file=sys.stderr)
+    if args.notice:
+        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        args.notice.write_text(source_notice(phishing_db_text, generated_at), encoding="utf-8")
 
 
 if __name__ == "__main__":
