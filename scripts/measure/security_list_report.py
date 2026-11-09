@@ -250,7 +250,7 @@ def to_markdown(r: dict) -> str:
     lines = [
         f"## 計測（profile = {r['profile']}）",
         "",
-        f"元データ: URLhaus {r['sources']['urlhaus']:,} 件 / Phishing.Database {r['sources']['phishing']:,} 件 / "
+        f"元データ: URLhaus {r['sources']['urlhaus']:,} 件 / 詐欺サイトの元の一覧 {r['sources']['phishing']:,} 件 / "
         f"Tranco {r['sources']['tranco']:,} 件",
         "",
         "| | 前 | 後 |",

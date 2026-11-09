@@ -27,11 +27,17 @@ jobs:
       # URLhaus は使わない（2026-11-09 kureho 承認）。配布先が 410 になり、取得で毎週止まっていた
       # （10/25・11/1・11/8）。今は登録と鍵が要り、利用条件で営利の利用は有料になり得る。
       # 詳しくは tasks/a218-g0-measurement-2026-11-09.md
-      - name: Fetch Phishing.Database active domains (public, no auth required)
+      # 詐欺サイトの一覧は HaGeZi Threat Intelligence Feeds（2026-11-09 kureho 承認・前は Phishing.Database）。
+      # 許諾は GPL-3.0。作者の条件（hagezi/dns-blocklists Issue #11938）: 全文を付ける・元の見出しを残す・
+      # 変換したら改変した旨と日付を書く → NOTICE-security.txt と LICENSE-security.txt を一覧の横に置く。
+      # 詳しくは tasks/a218-scam-source-research-2026-11-09.md
+      - name: Fetch HaGeZi Threat Intelligence Feeds (public, no auth required)
         run: |
-          curl -fsSL "https://raw.githubusercontent.com/mitchellkrogza/Phishing.Database/master/phishing-domains-ACTIVE.txt" \
-            -o /tmp/phishing-db-active.txt
-          echo "Phishing.Database lines: $(wc -l < /tmp/phishing-db-active.txt)"
+          # 接続の停滞でジョブの 30 分を使い切らないよう、時間の上限と再試行を付ける
+          curl -fsSL --connect-timeout 30 --max-time 300 --retry 3 --retry-delay 10 \
+            "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt" \
+            -o /tmp/scam-source.txt
+          echo "HaGeZi TIF lines: $(wc -l < /tmp/scam-source.txt)"
 
       - name: Fetch Tranco top 1M
         run: |
@@ -43,9 +49,10 @@ jobs:
       - name: Build security-rules.json
         run: |
           python3 scripts/build_security_rules.py \
-            --phishing-db /tmp/phishing-db-active.txt \
+            --source /tmp/scam-source.txt \
             --tranco /tmp/tranco-top-1m.csv \
             --output /tmp/security-rules.json \
+            --notice /tmp/NOTICE-security.txt \
             --limit 30000
 
       - name: Build empty-rules.json
@@ -71,6 +78,7 @@ jobs:
           for name in security-rules second-ads-sec empty-rules; do
             cp /tmp/${name}.json docs/cdn/${name}.json
           done
+          cp /tmp/NOTICE-security.txt docs/cdn/NOTICE-security.txt
           python3 - <<'PY'
           import json, hashlib, datetime
           from pathlib import Path
@@ -88,7 +96,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/cdn/security-rules.json docs/cdn/second-ads-sec.json docs/cdn/empty-rules.json docs/cdn/version-security.json
+          git add docs/cdn/security-rules.json docs/cdn/second-ads-sec.json docs/cdn/empty-rules.json docs/cdn/version-security.json \
+            docs/cdn/NOTICE-security.txt docs/cdn/LICENSE-security.txt
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else

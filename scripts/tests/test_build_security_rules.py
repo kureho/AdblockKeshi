@@ -33,6 +33,9 @@ from build_security_rules import (  # noqa: E402
     parse_phishing_db_hosts,
     parse_urlhaus_hosts,
     select_hosts,
+    SourceHeaderMissing,
+    check_declared_entries,
+    source_notice,
     stable_key,
 )
 from build_split_rules import list_bytes  # noqa: E402
@@ -167,7 +170,13 @@ def test_check_sources_rejects_truncated_tranco():
 def test_check_sources_rejects_truncated_phishing_db():
     with pytest.raises(SourceTooSmall):
         check_sources(tranco_count=1_000_000, phishing_count=50_000)
-    check_sources(tranco_count=1_000_000, phishing_count=392_178)  # 例外なし
+    check_sources(tranco_count=1_000_000, phishing_count=1_441_295)  # 例外なし（HaGeZi TIF 2026-11-08）
+
+
+def test_check_sources_rejects_a_list_far_smaller_than_hagezi():
+    # 元データを HaGeZi（約 144 万件）に替えたので、前の元データの大きさ（39 万件）は途中で切れた物とみなす
+    with pytest.raises(SourceTooSmall):
+        check_sources(tranco_count=1_000_000, phishing_count=392_178)
 
 
 def test_load_protected_domains_reads_set_literals_only():
@@ -370,10 +379,10 @@ def test_cli_rejects_tranco_that_is_long_only_because_of_duplicates(tmp_path, mo
     tranco = tmp_path / "tranco.csv"
     tranco.write_text("1,safe.test\n" * 900_000, encoding="utf-8")
     phishing = tmp_path / "phishing.txt"
-    phishing.write_text("".join(f"p{i}.test\n" for i in range(100_000)), encoding="utf-8")
+    phishing.write_text("".join(f"p{i}.test\n" for i in range(450_000)), encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["build_security_rules.py", "--phishing-db", str(phishing),
                                       "--tranco", str(tranco), "--output", str(tmp_path / "out.json")])
-    with pytest.raises(SourceTooSmall):
+    with pytest.raises(SourceTooSmall, match="Tranco"):
         main()
     assert not (tmp_path / "out.json").exists()
 
@@ -422,3 +431,108 @@ def test_select_does_not_promote_hosts_of_a_brands_own_site_beyond_the_popular_c
     out = select_hosts([], ["go.amazonbrand.test", "aaa.test"], tranco, protected=set(), shared_parents=set(),
                        jp_tokens=TOKENS, profile="safari", limit=10)
     assert out == sorted(["go.amazonbrand.test", "aaa.test"], key=stable_key) == ["aaa.test", "go.amazonbrand.test"]
+
+
+# --- 元データの替え（HaGeZi Threat Intelligence Feeds・kureho 承認 2026-11-09） ---
+
+HAGEZI_HEAD = (
+    "# Title: HaGeZi's Threat Intelligence Feeds - a serious security boost (recommended)\n"
+    "# License: https://github.com/hagezi/dns-blocklists/blob/main/LICENSE\n"
+    "# Syntax: Domains (without subdomains)\n"
+    "#\n"
+)
+
+
+def test_cli_accepts_source_and_keeps_phishing_db_for_old_calls():
+    args = build_parser().parse_args(["--source", "s.txt", "--tranco", "t.csv", "--output", "o.json"])
+    assert str(args.phishing_db) == "s.txt" and args.notice is None
+    args = build_parser().parse_args(["--phishing-db", "p.txt", "--tranco", "t.csv", "--output", "o.json",
+                                      "--notice", "n.txt"])
+    assert str(args.phishing_db) == "p.txt" and str(args.notice) == "n.txt"
+
+
+def test_parse_hagezi_onlydomains_skips_the_header():
+    # 「v23.0.xxx」は版の目印ではなく本物の項目（.xxx は実在の TLD・一覧は登録単位の名前の順）
+    assert parse_phishing_db_hosts(HAGEZI_HEAD + "v23.0.xxx\nevil.test\n") == ["v23.0.xxx", "evil.test"]
+
+
+def test_source_notice_keeps_the_original_header_and_says_it_was_modified_and_when():
+    # HaGeZi の条件（Issue #11938）: 元の見出しを残す・変換したら改変した旨と日付を書く
+    text = HAGEZI_HEAD + "v23.0.xxx\nevil.test\n# a later comment\n"
+    notice = source_notice(text, "2026-11-15T00:13:00Z")
+    assert notice.startswith(HAGEZI_HEAD)
+    assert "Modified" in notice and "2026-11-15T00:13:00Z" in notice
+    assert "evil.test" not in notice and "a later comment" not in notice
+
+
+def _fake_main_inputs(tmp_path, monkeypatch, rule_count):
+    import build_security_rules as b
+    source = tmp_path / "tif.txt"
+    source.write_text(HAGEZI_HEAD + "evil.test\n", encoding="utf-8")
+    tranco = tmp_path / "tranco.csv"
+    tranco.write_text("1,safe.test\n", encoding="utf-8")
+    monkeypatch.setattr(b, "check_sources", lambda *a, **k: None)
+    monkeypatch.setattr(b, "build_security_rules",
+                        lambda *a, **k: [{"trigger": {"url-filter": "x"}, "action": {"type": "block"}}] * rule_count)
+    notice = tmp_path / "NOTICE.txt"
+    monkeypatch.setattr(sys, "argv", ["build_security_rules.py", "--source", str(source), "--tranco", str(tranco),
+                                      "--output", str(tmp_path / "out.json"), "--notice", str(notice)])
+    return b, notice
+
+
+def test_cli_writes_the_notice_when_the_rules_are_written(tmp_path, monkeypatch):
+    b, notice = _fake_main_inputs(tmp_path, monkeypatch, 20000)
+    b.main()
+    assert (tmp_path / "out.json").exists()
+    assert notice.read_text(encoding="utf-8").startswith(HAGEZI_HEAD)
+
+
+def test_cli_writes_no_notice_when_the_build_stops(tmp_path, monkeypatch):
+    b, notice = _fake_main_inputs(tmp_path, monkeypatch, 10)
+    with pytest.raises(SourceTooSmall):
+        b.main()
+    assert not notice.exists() and not (tmp_path / "out.json").exists()
+
+
+# --- Codex の見直し（2026-11-09）: 見出しの形の変化・途中で切れた一覧 ---
+
+def test_source_notice_skips_a_bom_and_leading_blank_lines():
+    notice = source_notice("\ufeff\n\n" + HAGEZI_HEAD + "evil.test\n", "T")
+    assert notice.startswith(HAGEZI_HEAD)
+
+
+def test_source_notice_keeps_comment_lines_after_a_blank_line_in_the_header():
+    notice = source_notice(HAGEZI_HEAD + "\n# Copyright (C) someone\nevil.test\n", "T")
+    assert "# Copyright (C) someone" in notice and "evil.test" not in notice
+
+
+def test_source_notice_stops_when_the_source_has_no_header():
+    # 元の見出しを残すのが HaGeZi の条件。見出しが取れない一覧は配らない
+    with pytest.raises(SourceHeaderMissing):
+        source_notice("evil.test\nother.test\n", "T")
+
+
+def test_check_declared_entries_stops_a_list_cut_short():
+    head = "# Number of entries: 1441295\n#\n"
+    with pytest.raises(SourceTooSmall, match="declared"):
+        check_declared_entries(head + "evil.test\n", 450_000)
+    check_declared_entries(head, 1_441_295)  # 例外なし
+    check_declared_entries(head, 1_430_000)  # 1% までの差は通す
+    check_declared_entries("evil.test\n", 10)  # 宣言の無い一覧は見ない（Phishing.Database の形）
+
+
+def test_cli_stops_before_writing_when_the_list_is_shorter_than_its_header_says(tmp_path, monkeypatch):
+    b, notice = _fake_main_inputs(tmp_path, monkeypatch, 20000)
+    source = tmp_path / "tif.txt"
+    source.write_text(HAGEZI_HEAD + "# Number of entries: 1441295\n" + "evil.test\n", encoding="utf-8")
+    with pytest.raises(SourceTooSmall, match="declared"):
+        b.main()
+    assert not notice.exists() and not (tmp_path / "out.json").exists()
+
+
+def test_cli_stops_before_writing_when_the_header_is_missing(tmp_path, monkeypatch):
+    b, notice = _fake_main_inputs(tmp_path, monkeypatch, 20000)
+    (tmp_path / "tif.txt").write_text("evil.test\n", encoding="utf-8")
+    with pytest.raises(SourceHeaderMissing):
+        b.main()
+    assert not notice.exists() and not (tmp_path / "out.json").exists()
