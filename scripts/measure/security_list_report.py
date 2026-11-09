@@ -133,7 +133,7 @@ def report(
 
     tiers = Counter()
     for h in new:
-        prio = jp_priority(h, jp_tokens)
+        prio = jp_priority(h, jp_tokens, shared_parents)
         tiers["jp" if prio == 0 else "urlhaus" if h in urlhaus else "brand" if prio == 1 else "rest"] += 1
 
     tranco_top = tranco_ranked[:TRANCO_CHECK_TOP]

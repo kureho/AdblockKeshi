@@ -258,12 +258,21 @@ def load_jp_tokens(path: Path) -> JPTokens:
 _WORD_SPLIT_RE = re.compile(r"[.-]")
 
 
-def jp_priority(host: str, tokens: JPTokens) -> int:
+def jp_priority(host: str, tokens: JPTokens, shared_parents: Iterable[str] = frozenset()) -> int:
     """0 = 日本向け（.jp で終わる・jp の語を含む・jp-token の語と完全一致）／1 = 海外ブランド／2 = その他。
-    語は最後のラベル（.com など）を除いた部分で見る。"""
+    語は最後のラベル（.com など）を除いた部分で見る。共有ホストの下では、共有ホストより左
+    （攻撃者が決めた部分）だけで見る（xyz.s3.amazonaws.com の「amazonaws」は Amazon の偽装ではない）。"""
     if host.endswith(".jp"):
         return 0
-    body = host.rsplit(".", 1)[0] if "." in host else host
+    body = None
+    if shared_parents:
+        shared = shared_parents if isinstance(shared_parents, (set, frozenset)) else set(shared_parents)
+        for anc in _ancestors(host):
+            if _is_shared(anc, shared):
+                body = host[: -(len(anc) + 1)]
+                break
+    if body is None:
+        body = host.rsplit(".", 1)[0] if "." in host else host
     if any(t in body for t in tokens.jp):
         return 0
     words = set(_WORD_SPLIT_RE.split(body))
@@ -315,15 +324,16 @@ def select_hosts(
     urlhaus = accepted(urlhaus_hosts)
     phishing = accepted(phishing_hosts)
     tiers: list[list[str]] = [[], [], [], []]
+    prio = {host: jp_priority(host, jp_tokens, shared_parents) for host in urlhaus | phishing}
     for host in urlhaus | phishing:
-        if jp_priority(host, jp_tokens) == 0:
+        if prio[host] == 0:
             tiers[0].append(host)
     jp = set(tiers[0])
     urlhaus_rest = sorted(urlhaus - jp, key=stable_key)
     tiers[1] = urlhaus_rest[:urlhaus_cap]
     taken = jp | set(tiers[1])
     for host in phishing - taken:
-        tiers[2 if jp_priority(host, jp_tokens) == 1 else 3].append(host)
+        tiers[2 if prio[host] == 1 else 3].append(host)
     ordered: list[str] = []
     for tier in tiers:
         ordered.extend(sorted(tier, key=stable_key))

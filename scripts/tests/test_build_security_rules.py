@@ -307,3 +307,19 @@ def test_safari_keeps_tenants_of_shared_hosts_under_protected_domains():
     src = ["evil-bucket.s3.amazonaws.com", "s3.amazonaws.com", "signin.amazonaws.com", "login.smbc.co.jp"]
     assert select_hosts([], src, [], profile="safari", **kw) == ["evil-bucket.s3.amazonaws.com"]
     assert select_hosts([], src, [], profile="dns", **kw) == []
+
+
+def test_jp_priority_looks_only_left_of_a_shared_parent():
+    # 共有ホストの下では、攻撃者が決めた部分（共有ホストより左）だけで語を見る。
+    # 「amazonaws」は S3 の名前で、Amazon の偽装ではない
+    shared = {"s3.amazonaws.com", "*.r.appspot.com"}
+    assert jp_priority("xyz123.s3.amazonaws.com", TOKENS, shared) == 2
+    assert jp_priority("amazon-verify.s3.amazonaws.com", TOKENS, shared) == 1
+    assert jp_priority("rakuten-card.ey.r.appspot.com", TOKENS, shared) == 0
+    assert jp_priority("amazon-verify.test", TOKENS, shared) == 1   # 共有ホストの下でなければ今まで通り
+
+
+def test_select_does_not_promote_plain_s3_buckets_to_brand_tier():
+    out = select_hosts([], ["aaa.s3.amazonaws.com", "zz.test"], [], protected={"amazonaws.com"},
+                       shared_parents={"s3.amazonaws.com"}, jp_tokens=TOKENS, profile="safari", limit=10)
+    assert out == sorted(["aaa.s3.amazonaws.com", "zz.test"], key=stable_key)   # 両方「その他」の段
