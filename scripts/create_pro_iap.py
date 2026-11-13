@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""広告消し v4.0 の Pro IAP（非消耗型・アプリ内広告ブロック ¥800）を ASC 上で作成。
+"""広告消し v4.0 の Pro IAP（非消耗型・アプリ内広告ブロック）を ASC 上で作成。
 
 - productId: com.kureho.adblockkeshi.pro（★コードと一致・変更不可）
 - type: NON_CONSUMABLE
-- 価格: ¥800（JPN price point 検索）
+- 価格: 値段の表がまだ無い時だけ ¥1,980（JPN price point 検索）を書く。
+  値段が付いていれば書かない。付いているか確かめられない時は書かずに止まる。
+  （v4.0 配信時は ¥800、今は ¥1,980。2026-11-13 に守りを追加）
 - ja/en localization 追加
 
 ★実行は kureho 権限（Claude の auto-mode 分類器が本番 ASC 書込をブロックするため）:
@@ -30,7 +32,7 @@ EN_DESC = "On-device DNS ad filter. One-time purchase."
 REVIEW_NOTE = ("Non-consumable Pro unlock: an on-device local DNS content filter "
                "(NEPacketTunnelProvider) that reduces ads in other apps and Safari. "
                "All filtering is on-device; no account required.")
-PRICE_JPY = 800
+PRICE_JPY = 1980  # 今の値段（ASC で確認済み・2026-11-13）。値段の表が無い時だけ使う
 
 
 def req(method, path, body=None):
@@ -103,8 +105,14 @@ def find_price_point(iap_id, amount):
 
 
 def has_price(iap_id):
+    """値段の表があれば True、無ければ False。確かめられなければ書かずに止まる。"""
     code, r = req("GET", f"/v2/inAppPurchases/{iap_id}/iapPriceSchedule")
-    return code == 200 and bool(r.get("data"))
+    if code == 200 and r.get("data"):
+        return True
+    if code in (200, 404):
+        return False
+    print(f"  ❌ 値段が付いているか確かめられなかったので、値段は書かずに止めます（HTTP {code}）")
+    sys.exit(1)
 
 
 def set_price(iap_id, pp_id):
