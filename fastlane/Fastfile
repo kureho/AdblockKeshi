@@ -130,7 +130,6 @@ platform :ios do
       skip_screenshots: true,
       skip_metadata: false,
       skip_binary_upload: true,
-      price_tier: 4,
       reset_ratings: false,
       run_precheck_before_submit: false
     )
