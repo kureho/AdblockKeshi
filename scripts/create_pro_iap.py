@@ -149,4 +149,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    print("このスクリプトは一度きりの作業用で、もう使いません。直接実行しても何もしません。", file=sys.stderr)
+    sys.exit(2)
