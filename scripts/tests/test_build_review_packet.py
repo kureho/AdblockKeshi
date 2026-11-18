@@ -6,15 +6,24 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "review"))
+import datetime as dt  # noqa: E402
+
 from build_review_packet import (  # noqa: E402
     ad_marked_hosts,
+    is_scam_report,
+    measure_targets,
+    normalize_report_host,
     packets_to_prune,
     page_url_for_measure,
+    rdap_candidates,
+    rdap_registration_date,
     render_packet,
     results_draft,
+    scam_facts,
     suggest_outcome,
     third_party_hosts,
 )
+from build_security_rules import JPTokens  # noqa: E402
 
 
 # --- page_url_for_measure: 報告 URL を「開いてよい形」にする ---
@@ -294,3 +303,248 @@ def test_d1_select_does_not_retry_when_first_call_succeeds(monkeypatch):
     monkeypatch.setattr(b.time, "sleep", lambda s: (_ for _ in ()).throw(AssertionError("待たない")))
     assert b.d1_select("SELECT 1") == []
     assert len(calls) == 1
+
+
+# --- A-218 詐欺サイトの報告: ページを開かず、ドメインの事実だけを並べる ---
+
+_SCAM_ID = "33333333-3333-4333-8333-333333333333"
+
+
+def test_is_scam_report_only_phishing_type():
+    assert is_scam_report(_row(ad_type="phishing"))
+    assert not is_scam_report(_row(ad_type="popup"))
+    assert not is_scam_report(_row(ad_type=None))
+
+
+def test_measure_targets_never_opens_scam_reports_or_other_app():
+    # 詐欺サイトのページを開くと、相手に見に来た事が伝わり、悪い仕掛けにも触れ得る（設計 §3-2）
+    ad = _row()
+    scam = _row(id=_SCAM_ID, ad_type="phishing", domain="evil.top", url="https://evil.top/login")
+    in_app = _row(id="22222222-2222-4222-8222-222222222222", seen_in="other_app", url="https://x.jp/")
+    targets = measure_targets([scam, ad, in_app], max_pages=30)
+    assert [(r["id"], u) for r, u in targets] == [(ad["id"], "https://example.jp/a")]
+
+
+def test_measure_targets_caps_pages():
+    rows = [_row(id=f"{i:08d}-1111-4111-8111-111111111111", url=f"https://s{i}.example.jp/") for i in range(5)]
+    assert len(measure_targets(rows, max_pages=2)) == 2
+
+
+def test_normalize_report_host_lowercases_and_drops_port_and_trailing_dot():
+    assert normalize_report_host("Login.Evil.TOP:8443") == "login.evil.top"
+    assert normalize_report_host("evil.top.") == "evil.top"
+
+
+def test_normalize_report_host_rejects_non_hosts():
+    # 報告の値は外から来る＝RDAP の問い合わせの URL に入れる前に形を確かめる
+    for bad in (None, "", "   ", "evil.top/../x", "evil.top?a=1", "localhost", "[::1]", "a" * 250 + ".top", "ev il.top",
+                "a" * 64 + ".top"):
+        assert normalize_report_host(bad) is None, bad
+
+
+def test_rdap_candidates_go_up_from_two_labels():
+    assert rdap_candidates("a.b.example.co.uk") == ["co.uk", "example.co.uk", "b.example.co.uk"]
+    assert rdap_candidates("evil.top") == ["evil.top"]
+
+
+def test_rdap_registration_date_reads_registration_event():
+    payload = {"events": [{"eventAction": "last changed", "eventDate": "2026-11-01T00:00:00Z"},
+                          {"eventAction": "registration", "eventDate": "2026-10-30T12:34:56Z"}]}
+    assert rdap_registration_date(payload) == "2026-10-30"
+
+
+def test_rdap_registration_date_none_when_missing_or_broken():
+    assert rdap_registration_date({"events": [{"eventAction": "expiration", "eventDate": "2027-01-01"}]}) is None
+    assert rdap_registration_date({}) is None
+    assert rdap_registration_date({"events": "x"}) is None
+    assert rdap_registration_date({"events": [{"eventAction": "registration", "eventDate": "yesterday"}]}) is None
+
+
+_TOKENS = JPTokens(jp=("rakuten", "japan"), jp_token=("jp", "nta"), brand=("amazon", "paypal"))
+_TODAY = dt.date(2026, 11, 9)
+
+
+def _facts(domain, *, served=frozenset(), source=frozenset(), shared=frozenset(), dates=None, source_note=""):
+    calls = []
+
+    def lookup(d):
+        calls.append(d)
+        return (dates or {}).get(d)
+
+    f = scam_facts(domain, served=None if served is None else set(served),
+                   source=None if source is None else set(source), tokens=_TOKENS,
+                   shared_parents=set(shared), lookup=lookup, today=_TODAY, source_note=source_note)
+    return f, calls
+
+
+def test_scam_facts_served_matches_host_or_parent():
+    f, _ = _facts("login.evil.top", served={"evil.top"})
+    assert f["served"] == "evil.top" and f["served_known"]
+    f, _ = _facts("evil.top", served={"other.top", "notevil.top"})
+    assert f["served"] is None and f["served_known"]
+
+
+def test_scam_facts_served_unknown_when_list_missing():
+    f, _ = _facts("evil.top", served=None)
+    assert f["served"] is None and not f["served_known"]
+
+
+def test_scam_facts_source_hit_miss_and_unknown():
+    f, _ = _facts("a.evil.top", source={"evil.top"})
+    assert f["source"] == "evil.top" and f["source_known"]
+    f, _ = _facts("evil.top", source={"good.top"})
+    assert f["source"] is None and f["source_known"]
+    f, _ = _facts("evil.top", source=None, source_note="取得に失敗")
+    assert f["source"] is None and not f["source_known"] and f["source_note"] == "取得に失敗"
+
+
+def test_scam_facts_brand_words_whole_word_tokens_and_substrings():
+    f, _ = _facts("amazon-security-check.top")
+    assert f["brand_words"] == ["amazon"]
+    f, _ = _facts("nta-tax.top")
+    assert f["brand_words"] == ["nta"]
+    f, _ = _facts("antana.top")  # 「nta」は語として一致した時だけ
+    assert f["brand_words"] == []
+
+
+def test_scam_facts_registration_date_within_90_days():
+    f, calls = _facts("secure.amazon-verify.top", dates={"amazon-verify.top": "2026-10-30"})
+    assert calls == ["amazon-verify.top"]
+    assert f["registered"] == "2026-10-30" and f["registered_domain"] == "amazon-verify.top"
+    assert f["age_days"] == 10
+
+
+def test_scam_facts_registration_goes_up_until_found():
+    f, calls = _facts("a.example.co.uk", dates={"example.co.uk": "2026-11-01"})
+    assert calls == ["co.uk", "example.co.uk"]
+    assert f["registered_domain"] == "example.co.uk" and f["age_days"] == 8
+
+
+def test_scam_facts_registration_unknown_when_rdap_has_nothing():
+    f, calls = _facts("evil.jp")
+    assert calls == ["evil.jp"]
+    assert f["registered"] is None and f["age_days"] is None and f["rdap_note"]
+
+
+def test_scam_facts_under_shared_host_skips_rdap_and_brand_of_platform():
+    # 共有ホストの登録日は場所の持ち主の物＝根拠にならない。場所の名前（amazonaws）はブランドの偽装ではない
+    f, calls = _facts("paypal-login.s3.amazonaws.com", shared={"s3.amazonaws.com"})
+    assert f["shared_parent"] == "s3.amazonaws.com"
+    assert calls == []
+    assert f["registered"] is None and "共有ホスト" in f["rdap_note"]
+    assert f["brand_words"] == ["paypal"]
+
+
+def test_scam_facts_ipv4_skips_rdap():
+    f, calls = _facts("192.0.2.10")
+    assert calls == [] and f["registered"] is None and f["brand_words"] == []
+
+
+def test_scam_facts_invalid_domain_does_no_lookup():
+    f, calls = _facts("evil.top/../x")
+    assert f["host"] is None and f["invalid"] and calls == []
+
+
+def test_render_packet_scam_report_shows_facts_and_never_measures():
+    row = _row(id=_SCAM_ID, ad_type="phishing", domain="login.evil.top", url="https://login.evil.top/x")
+    f, _ = _facts("login.evil.top", source={"evil.top"}, dates={"evil.top": "2026-10-30"})
+    md = render_packet("2026-11-09", [row], measurements={}, candidates=[], scam={_SCAM_ID: f})
+    assert "ページは開いていない" in md
+    assert "配信中の 3 万件: なし" in md
+    assert "HaGeZi の全部: **あり**（evil.top）" in md
+    assert "2026-10-30" in md and "10 日前" in md
+    assert "計測: なし" not in md
+
+
+def test_render_packet_scam_report_already_served_says_not_to_add():
+    row = _row(id=_SCAM_ID, ad_type="phishing", domain="evil.top")
+    f, _ = _facts("evil.top", served={"evil.top"})
+    md = render_packet("2026-11-09", [row], measurements={}, candidates=[], scam={_SCAM_ID: f})
+    assert "配信中の 3 万件: **あり**（evil.top）" in md
+    assert "足す話ではない" in md
+
+
+def test_render_packet_scam_report_marks_unknowns():
+    row = _row(id=_SCAM_ID, ad_type="phishing", domain="evil.top")
+    f, _ = _facts("evil.top", served=None, source=None, source_note="取得に失敗")
+    md = render_packet("2026-11-09", [row], measurements={}, candidates=[], scam={_SCAM_ID: f})
+    assert "配信中の 3 万件: 未確認" in md
+    assert "HaGeZi の全部: 未確認（取得に失敗）" in md
+    assert "登録日（RDAP）: 未確認" in md
+
+
+def test_render_packet_scam_report_without_facts_says_so():
+    row = _row(id=_SCAM_ID, ad_type="phishing", domain="evil.top")
+    md = render_packet("2026-11-09", [row], measurements={}, candidates=[])
+    assert "ページは開いていない" in md
+    assert "ドメインの事実: 取れなかった" in md
+
+
+def test_measure_targets_never_opens_a_host_reported_as_scam_by_another_report():
+    # 同じページが別の種類でも報告されていると、そちらから開いてしまう（Codex 2026-11-09 指摘 1）
+    scam = _row(id=_SCAM_ID, ad_type="phishing", domain="evil.top", url="https://evil.top/login")
+    same = _row(id="44444444-4444-4444-8444-444444444444", ad_type="popup", domain="evil.top",
+                url="https://evil.top/login")
+    sub = _row(id="55555555-5555-4555-8555-555555555555", ad_type="popup", domain="cdn.evil.top",
+               url="https://cdn.evil.top/x")
+    ok = _row()
+    targets = measure_targets([scam, same, sub, ok], max_pages=30)
+    assert [r["id"] for r, _ in targets] == [ok["id"]]
+
+
+def test_render_packet_says_why_a_same_host_report_was_not_opened():
+    scam = _row(id=_SCAM_ID, ad_type="phishing", domain="evil.top", url="https://evil.top/login")
+    same = _row(id="44444444-4444-4444-8444-444444444444", ad_type="popup", domain="evil.top",
+                url="https://evil.top/login")
+    md = render_packet("2026-11-09", [scam, same], measurements={}, candidates=[])
+    assert "詐欺サイトとして報告されたホストなので開いていない" in md
+
+
+def test_served_scam_hosts_unknown_when_fetch_fails(monkeypatch):
+    # 取り直しに失敗した古い一覧を「配信中」と言うと、外れたドメインを足さずに済ませてしまう（指摘 5）
+    import build_review_packet as b
+
+    class P:
+        def __init__(self, rc, out=b""):
+            self.returncode, self.stdout, self.stderr = rc, out, b""
+
+    rules = json.dumps([{"trigger": {"url-filter": "^[^:]+://+([^:/]+\\.)?evil\\.top[/:]"},
+                         "action": {"type": "block"}}]).encode()
+
+    def fake_run(cmd, **kw):
+        return P(128) if "fetch" in cmd else P(0, rules)
+
+    monkeypatch.setattr(b.subprocess, "run", fake_run)
+    assert b.served_scam_hosts() is None
+
+    monkeypatch.setattr(b.subprocess, "run", lambda cmd, **kw: P(0, rules))
+    assert b.served_scam_hosts() == {"evil.top"}
+
+
+def test_scam_facts_future_registration_date_is_unknown():
+    f, _ = _facts("evil.top", dates={"evil.top": "2026-12-01"})
+    assert f["registered"] is None and f["age_days"] is None and "未来" in f["rdap_note"]
+
+
+def test_scam_facts_reported_shared_host_itself_is_not_looked_up():
+    f, calls = _facts("github.io", shared={"github.io"})
+    assert calls == [] and f["shared_parent"] == "github.io" and "共有ホストそのもの" in f["rdap_note"]
+
+
+def test_page_url_drops_userinfo():
+    # URL の利用者名・パスワードは利用者の物になり得る＝開く時に送らない。ポートは残す
+    assert page_url_for_measure("https://user:pass@Evil.TOP:8443/x?a=1") == "https://evil.top:8443/x"
+
+
+def test_measure_targets_never_opens_a_scam_host_hidden_behind_userinfo():
+    # 利用者名つきの URL でも、詐欺サイトとして報告されたホストなら開かない（自動のセキュリティ点検 2026-11-09）
+    scam = _row(id=_SCAM_ID, ad_type="phishing", domain="evil.top", url="https://evil.top/login")
+    hidden = _row(id="66666666-6666-4666-8666-666666666666", ad_type="popup", domain="evil.top",
+                  url="https://user@evil.top/login")
+    assert measure_targets([scam, hidden], max_pages=30) == []
+
+
+def test_measure_targets_skips_a_url_whose_host_cannot_be_checked():
+    # 照合できない形のホスト（%で書いた点など）は、開くと別の名前として扱われ得る＝開かない
+    odd = _row(id="77777777-7777-4777-8777-777777777777", domain="evil.top", url="https://login%2eevil.top/x")
+    assert measure_targets([odd], max_pages=30) == []

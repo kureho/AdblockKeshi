@@ -1,4 +1,5 @@
-# NOTE: triggers limited to schedule + workflow_dispatch.
+# NOTE: triggers limited to schedule + workflow_dispatch + push to main under review/scam-domains/
+# (only maintainers can push to main; the files are validated by build_security_rules.py).
 # Do NOT add issue / PR / repository_dispatch triggers without sanitizing untrusted fields.
 # See: https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
 name: Weekly Security Rules Update
@@ -7,6 +8,16 @@ on:
   schedule:
     - cron: '13 0 * * 0'  # 毎週日曜 0:13 UTC（0 分は GitHub が混み遅れるのでずらした。2026-10-12）
   workflow_dispatch:
+  # 報告を見直しで確かめた詐欺サイトを書いたら、日曜を待たずに作り直す（A-218・kureho 承認 2026-11-09）
+  push:
+    branches: [main]
+    paths:
+      - 'review/scam-domains/*.json'  # README の編集（この仕組みを入れる merge を含む）では動かさない
+
+# 日曜の定期と push の作り直しが重ならないよう、同時に 1 つだけ（後から来た方は待つ）
+concurrency:
+  group: security-rules
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -17,7 +28,11 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      # 起動した時の版ではなく、走り始めた時の枝の最新を取る。待っていた後の回が、先の回の push より前の版で
+      # 作って push を拒まれないように（concurrency で待つと起きる・A-218）
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -53,6 +68,7 @@ jobs:
             --tranco /tmp/tranco-top-1m.csv \
             --output /tmp/security-rules.json \
             --notice /tmp/NOTICE-security.txt \
+            --reported-dir review/scam-domains \
             --limit 30000
 
       - name: Build empty-rules.json
@@ -102,6 +118,8 @@ jobs:
             echo "No changes to commit."
           else
             git commit -m "chore(security): weekly auto-update $(date -u +%Y-%m-%d)"
+            # 作っている間に main へ別の push があっても通す（同じ配信ファイルを変えていれば止まる＝前の版のまま）
+            git pull --rebase
             git push
           fi
 
