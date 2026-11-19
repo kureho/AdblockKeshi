@@ -1,0 +1,13 @@
+{
+  "added_at": "2026-11-19",
+  "rules": [
+    {
+      "trigger": {
+        "url-filter": "^[^:]+://+[^/:]+\\.in[/:]",
+        "load-type": ["third-party"],
+        "if-domain": ["*mangaraw.ai", "*mangaraw.lc"]
+      },
+      "action": { "type": "block" }
+    }
+  ]
+}
