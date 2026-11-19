@@ -1,0 +1,14 @@
+{
+  "added_at": "2026-11-20",
+  "rules": [
+    {
+      "trigger": {
+        "url-filter": "^[^:]+://+[^/:]+/[0-9]+/[0-9a-f]+$",
+        "resource-type": ["script"],
+        "load-type": ["third-party"],
+        "if-domain": ["*tokyomotion.net"]
+      },
+      "action": { "type": "block" }
+    }
+  ]
+}
