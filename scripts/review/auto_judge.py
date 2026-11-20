@@ -291,8 +291,8 @@ def _hits(results: list[dict], filters: list[re.Pattern]) -> int:
 
 
 def check_rules_measure(rules: list[str], packet: Path, scratch: Path) -> list[str]:
-    sites_all = [s.strip() for s in (packet / "sites.txt").read_text().splitlines() if s.strip()] \
-        if (packet / "sites.txt").exists() else []
+    from fetch_page import is_public, load_sites  # 同じ場所（SRC/scripts/review）
+    sites_all = [u for u in load_sites(packet / "sites.txt") if is_public(u)] if (packet / "sites.txt").exists() else []
     current = [RULES_DIR / n for n in CURRENT_RULES]
     lines: list[str] = []
     if rules:

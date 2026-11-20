@@ -34,6 +34,25 @@ def check_target(url: str) -> None:
             raise ValueError("行き先が外のアドレスでない")
 
 
+def load_sites(path: Path) -> list[str]:
+    """束の sites.txt を計測ツール（measure.swift の loadSites）と同じ規則で読む。スキームが無ければ https を付ける"""
+    out = []
+    for line in path.read_text().splitlines():
+        t = line.strip()
+        if not t or t.startswith("#") or t.startswith("SKIP"):
+            continue
+        out.append(t if t.startswith(("https://", "http://")) else "https://" + t)
+    return out
+
+
+def is_public(url: str) -> bool:
+    try:
+        check_target(url)
+        return True
+    except (ValueError, OSError):
+        return False
+
+
 class SafeRedirect(urllib.request.HTTPRedirectHandler):
     max_redirections = 5
 
@@ -49,7 +68,7 @@ def main() -> int:
     num, name = sys.argv[1], sys.argv[2]
     try:
         scratch = Path(os.environ["AUTO_JUDGE_SCRATCH"])
-        sites = [s.strip() for s in Path(os.environ["AUTO_JUDGE_SITES"]).read_text().splitlines() if s.strip()]
+        sites = load_sites(Path(os.environ["AUTO_JUDGE_SITES"]))
     except (KeyError, OSError) as e:
         print(f"場所が分からない: {e}", file=sys.stderr)
         return 2

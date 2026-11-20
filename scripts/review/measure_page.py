@@ -17,6 +17,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # -I でも同じ場所の fetch_page を読む（Claude は書けない場所）
+from fetch_page import is_public, load_sites  # noqa: E402
+
 NAME = re.compile(r"[A-Za-z0-9_-]{1,60}")
 RULE = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,80}\.json")
 
@@ -48,8 +51,15 @@ def main() -> int:
         if not p.exists():
             return fail(f"規則のファイルが無い: {r}")
         rules.append(str(p))
-    sites = [s.strip() for s in sites_file.read_text().splitlines() if s.strip()]
+    # 報告者が送った URL なので、http/https で外のアドレスのページだけ開く（家の中のネットワークなどは開かない）
+    sites = load_sites(sites_file)
+    bad = [i + 1 for i, u in enumerate(sites) if not is_public(u)]
+    if bad:
+        print(f"開かない（外のアドレスでない・http/https でない）: 番号 {bad}")
     if mode == "run":
+        checked = scratch / ".sites-checked.txt"
+        checked.write_text("".join(u + "\n" for u in sites if is_public(u)))
+        sites_file = checked
         out = scratch / f"measure-{name}.json"
         if out.exists():
             return fail(f"もうある: {out.name}")
@@ -58,6 +68,8 @@ def main() -> int:
     else:
         if not a[3].isdigit() or not 1 <= int(a[3]) <= len(sites):
             return fail(f"番号は 1〜{len(sites)}")
+        if int(a[3]) in bad:
+            return fail("そのページは開かない（外のアドレスでない）")
         out = scratch / f"shot-{name}.png"
         if out.exists():
             return fail(f"もうある: {out.name}")
