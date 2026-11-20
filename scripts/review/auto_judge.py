@@ -8,7 +8,7 @@ launchd（毎週月曜 06:30・scripts/review/weekly_review.sh）が build_revie
      ＝Claude を起動しない（利用枠を使わない）
   2. 作業用の worktree（.review-packets/.auto-wt・origin/main と同じ中身）で `claude -p` を起動し、
      scripts/review/auto-judge-prompt.md の指示で review/results/ と review/rules/ の新しいファイルだけ書かせる
-     （Claude は commit・push しない。使える道具は下の ALLOWED_TOOLS だけ）
+     （Claude は commit・push しない。使える道具は allowed_tools() のものだけ）
   3. 関門（Claude ではなくこのスクリプトが確かめる）:
      - 変わったのが review/results/・review/rules/ の新しいファイルだけ
      - 結果に束の未判定の report_id が全部あり、outcome が 5 値のどれか・note に URL が無い
@@ -107,17 +107,25 @@ def prepare_worktree(base: str = "origin/main") -> None:
 def build_prompt(packet: Path, date: str, scratch: Path) -> str:
     tpl = (SRC / "scripts/review/auto-judge-prompt.md").read_text()
     return (tpl.replace("{PACKET}", str(packet)).replace("{DATE}", date).replace("{BIN}", str(BIN))
-            .replace("{RULES}", str(RULES_DIR)).replace("{SCRATCH}", str(scratch)))
+            .replace("{RULES}", str(RULES_DIR)).replace("{SCRATCH}", str(scratch)).replace("{FETCH}", str(FETCH)))
 
 
-ALLOWED_TOOLS = [
-    "Read", "Glob", "Grep",
-    "Write(review/results/**)", "Write(review/rules/**)",
-    "Edit(review/results/**)", "Edit(review/rules/**)",
-    f"Edit(/{PACKETS}/**)", f"Write(/{PACKETS}/**)",
-    f"Bash({BIN}:*)",
-    "Bash(curl:*)", "Bash(ls:*)", "Bash(mkdir:*)", "Bash(sips:*)", "Bash(git status:*)", "Bash(git diff:*)",
-]
+# 報告されたページは外の人が作った物＝中の文で Claude が操られても被害が出ないよう、道具を絞る
+# - 書けるのは review/results・review/rules と、その回の作業場所（束の auto-scratch）だけ。
+#   計測ツール・今の規則・束の中身・git の中・このスクリプトのある場所には書けない（関門の材料を守る）
+# - 読めるのは作業用 worktree・その回の束・今の規則だけ（--add-dir。読む道具はその中なら許可なしで動く）
+# - コマンドは計測ツールと fetch_page.py（保存先が作業場所に固定）だけ。curl・ls・git などは渡さない
+FETCH = SRC / "scripts/review/fetch_page.py"
+
+
+def allowed_tools(scratch: Path) -> list[str]:
+    return [
+        "Write(review/results/**)", "Write(review/rules/**)",
+        "Edit(review/results/**)", "Edit(review/rules/**)",
+        f"Write(/{scratch}/**)", f"Edit(/{scratch}/**)",
+        f"Bash({BIN} run:*)", f"Bash({BIN} shoot:*)",
+        f"Bash(/opt/homebrew/bin/python3 -I {FETCH}:*)",
+    ]
 
 
 # 個人の Max（~/.claude の claude.ai ログイン）だけで動かす。API キーやほかの席のトークンが環境にあると
@@ -150,10 +158,15 @@ def run_claude(packet: Path, date: str) -> dict:
     scratch.mkdir(exist_ok=True)
     cmd = [CLAUDE, "-p", build_prompt(packet, date, scratch),
            "--model", MODEL, "--permission-mode", "default",
-           "--allowedTools", *ALLOWED_TOOLS,
-           "--add-dir", str(PACKETS),
+           "--allowedTools", *allowed_tools(scratch),
+           "--add-dir", str(packet), str(RULES_DIR),
            "--output-format", "json", "--no-session-persistence"]
     env = claude_env()
+    env["AUTO_JUDGE_SCRATCH"] = str(scratch)
+    # 関門の材料（計測ツール・今の規則・束の計測ページと下書き）は Claude の前後で同じであること
+    # （計測ツールの --out は場所を選べるので、書き換えられていないかを中身で確かめる）
+    guarded = [BIN, *sorted(RULES_DIR.glob("*.json")), packet / "sites.txt", packet / "results-draft.json"]
+    before_hash = {g: _sha256(g) for g in guarded if g.exists()}
     log(f"Claude を起動（{MODEL}・最大 {CLAUDE_TIMEOUT_SEC // 60} 分）")
     p = subprocess.run(cmd, cwd=WT, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_SEC, env=env)
     (packet / "auto-judge-output.json").write_text(p.stdout)
@@ -163,9 +176,17 @@ def run_claude(packet: Path, date: str) -> dict:
         out = json.loads(p.stdout)
     except json.JSONDecodeError:
         out = {}
+    changed = [g.name for g, h in before_hash.items() if not g.exists() or _sha256(g) != h]
+    if changed:
+        raise Hold(f"Claude の実行中に関門の材料が変わった: {', '.join(changed)}")
     if p.returncode != 0 or out.get("is_error"):
         raise Hold(f"Claude の実行が失敗（exit {p.returncode}）")
     return out
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 # ---------- 関門 ----------
@@ -342,18 +363,19 @@ def gate(packet: Path) -> dict:
 
 def commit_and_push(info: dict, push: bool) -> str | None:
     files = [info["results_file"], *info["rule_files"]]
-    run(["git", "-C", str(WT), "add", "--", *files])
+    g = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=", "-C", str(WT)]  # フックは動かさない
+    run([*g, "add", "--", *files])
     sites = ", ".join(Path(r).stem.split("-", 3)[-1] for r in info["rule_files"]) or "規則なし"
     msg = (f"auto-judge: 報告 {info['judged']} 件の判定結果（{sites}）\n\n"
            "scripts/review/auto_judge.py の関門（場所・形式・計測・dry-run）を通ったもの。\n\n"
            "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>")
-    run(["git", "-C", str(WT), "commit", "-q", "-m", msg])
+    run([*g, "commit", "-q", "--no-verify", "-m", msg])
     sha = run(["git", "-C", str(WT), "rev-parse", "--short", "HEAD"]).stdout.strip()
     if push:
-        p = run(["git", "-C", str(WT), "push", "-q", "origin", "HEAD:main"], timeout=120, check=False)
+        p = run([*g, "push", "-q", "--no-verify", "origin", "HEAD:main"], timeout=120, check=False)
         if p.returncode != 0:  # 同じ時間に自動同期が main に載せた時など。足すのは新しいファイルだけなので重ねて 1 回だけ再送
-            run(["git", "-C", str(WT), "pull", "-q", "--rebase", "origin", "main"], timeout=120)
-            run(["git", "-C", str(WT), "push", "-q", "origin", "HEAD:main"], timeout=120)
+            run([*g, "pull", "-q", "--rebase", "origin", "main"], timeout=120)
+            run([*g, "push", "-q", "--no-verify", "origin", "HEAD:main"], timeout=120)
             sha = run(["git", "-C", str(WT), "rev-parse", "--short", "HEAD"]).stdout.strip()
         return sha
     return None
