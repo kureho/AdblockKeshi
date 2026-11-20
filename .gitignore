@@ -40,6 +40,7 @@ scripts/converter-build/
 # Python cache
 scripts/__pycache__/
 scripts/tests/__pycache__/
+scripts/review/__pycache__/
 scripts/.pytest_cache/
 
 # 大型動画 (Git LFS 未使用、ローカル保管のみ)
