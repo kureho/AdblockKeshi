@@ -4,9 +4,24 @@ Claude が判定する。kureho に聞くのは「判定の方針そのものを
 
 ## いつ
 
-- 毎週月曜 06:30 に launchd `com.kureho.adblockkeshi-review-packet` が束を作る（Claude なし・D1 は読み取りのみ）
-- 朝のレポートの「広告消しの報告（未判定）」に件数が出る。新しい束は次のセッション開始時に 1 回だけ知らせる
+- 毎週月曜 06:30 に launchd `com.kureho.adblockkeshi-review-packet` が `scripts/review/weekly_review.sh` を動かす
+  1. 束を作る（Claude なし・D1 は読み取りのみ）
+  2. 未判定があれば **自動判定**（`scripts/review/auto_judge.py`・2026-11-20 kureho「Aで作って」）:
+     この Mac の `claude -p`（個人の Max・Opus 5.5・API の従量は使わない）が下の手順 1〜5 をし、
+     スクリプトの関門（書いた場所・形・計測で効き目と壊れ・dry-run）を全部通ったものだけ 7 の push をする
+- 朝のレポートの「広告消しの報告（未判定）」に件数と自動判定の結果が出る
 - 手で作り直すとき: `python3 -B scripts/review/build_review_packet.py`（約 5〜10 分・報告ページを開くため）
+
+## 自動判定が保留・失敗した時
+
+- 保留＝何も配信していない。Claude が書いた物は `.review-packets/.auto-wt`（main と同じ中身の作業場所）に残り、
+  理由は朝のレポートと `.review-packets/auto-judge-status.json`、Claude の返事は束の `auto-judge-output.json`
+- 中身を見て、手順 3〜7 を手で続ける（`.auto-wt` の中で直して commit・push してよい）か、やめるなら `.auto-wt` の
+  未コミットの物を片付ける。`.auto-wt` に未コミットの物が残っている間は、次の週も新しく判定しない
+- 関門だけかけ直す: `python3 -B scripts/review/auto_judge.py --gate-only --no-push`
+- 失敗（ログイン切れ・束が無い等）はログ `~/.claude/logs/adblockkeshi-review-packet.log` を見る。
+  `claude auth status` が個人の max でないと起動しない作り
+- 自動判定をやめる: plist の ProgramArguments を `build_review_packet.py` に戻して launchctl で入れ直す
 
 ## 手順
 
