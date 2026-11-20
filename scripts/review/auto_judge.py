@@ -107,15 +107,17 @@ def prepare_worktree(base: str = "origin/main") -> None:
 def build_prompt(packet: Path, date: str, scratch: Path) -> str:
     tpl = (SRC / "scripts/review/auto-judge-prompt.md").read_text()
     return (tpl.replace("{PACKET}", str(packet)).replace("{DATE}", date).replace("{BIN}", str(BIN))
-            .replace("{RULES}", str(RULES_DIR)).replace("{SCRATCH}", str(scratch)).replace("{FETCH}", str(FETCH)))
+            .replace("{RULES}", str(RULES_DIR)).replace("{SCRATCH}", str(scratch)).replace("{FETCH}", str(FETCH)).replace("{MEASURE}", str(MEASURE)))
 
 
 # 報告されたページは外の人が作った物＝中の文で Claude が操られても被害が出ないよう、道具を絞る
 # - 書けるのは review/results・review/rules と、その回の作業場所（束の auto-scratch）だけ。
 #   計測ツール・今の規則・束の中身・git の中・このスクリプトのある場所には書けない（関門の材料を守る）
 # - 読めるのは作業用 worktree・その回の束・今の規則だけ（--add-dir。読む道具はその中なら許可なしで動く）
-# - コマンドは計測ツールと fetch_page.py（保存先が作業場所に固定）だけ。curl・ls・git などは渡さない
+# - コマンドは measure_page.py と fetch_page.py だけ。どちらも開けるのは束の sites.txt の報告ページだけで、
+#   出力は作業場所に固定（計測ツールそのもの・curl・git などは渡さない＝外へ何かを送る道を作らない）
 FETCH = SRC / "scripts/review/fetch_page.py"
+MEASURE = SRC / "scripts/review/measure_page.py"
 
 
 def allowed_tools(scratch: Path) -> list[str]:
@@ -123,7 +125,7 @@ def allowed_tools(scratch: Path) -> list[str]:
         "Write(review/results/**)", "Write(review/rules/**)",
         "Edit(review/results/**)", "Edit(review/rules/**)",
         f"Write(/{scratch}/**)", f"Edit(/{scratch}/**)",
-        f"Bash({BIN} run:*)", f"Bash({BIN} shoot:*)",
+        f"Bash(/opt/homebrew/bin/python3 -I {MEASURE}:*)",
         f"Bash(/opt/homebrew/bin/python3 -I {FETCH}:*)",
     ]
 
@@ -162,10 +164,13 @@ def run_claude(packet: Path, date: str) -> dict:
            "--add-dir", str(packet), str(RULES_DIR),
            "--output-format", "json", "--no-session-persistence"]
     env = claude_env()
-    env["AUTO_JUDGE_SCRATCH"] = str(scratch)
+    env.update(AUTO_JUDGE_SCRATCH=str(scratch), AUTO_JUDGE_SITES=str(packet / "sites.txt"),
+               AUTO_JUDGE_RULES=str(RULES_DIR), AUTO_JUDGE_BIN=str(BIN))
     # 関門の材料（計測ツール・今の規則・束の計測ページと下書き）は Claude の前後で同じであること
     # （計測ツールの --out は場所を選べるので、書き換えられていないかを中身で確かめる）
-    guarded = [BIN, *sorted(RULES_DIR.glob("*.json")), packet / "sites.txt", packet / "results-draft.json"]
+    guarded = [BIN, *sorted(RULES_DIR.glob("*.json")), packet / "sites.txt", packet / "results-draft.json",
+               *sorted((SRC / "scripts/review").glob("*.py")), *sorted((SRC / "scripts/review").glob("*.ts")),
+               *sorted((SRC / "scripts/sync").glob("*.ts")), SRC / "scripts/measure/measure.swift"]
     before_hash = {g: _sha256(g) for g in guarded if g.exists()}
     log(f"Claude を起動（{MODEL}・最大 {CLAUDE_TIMEOUT_SEC // 60} 分）")
     p = subprocess.run(cmd, cwd=WT, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_SEC, env=env)
