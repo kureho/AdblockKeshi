@@ -6,9 +6,10 @@ launchd（毎週月曜 06:30・scripts/review/weekly_review.sh）が build_revie
 
   1. .review-packets/status.json を読み、今日作った束に未判定（または止まっている候補）が無ければ何もしない
      ＝Claude を起動しない（利用枠を使わない）
-  2. 作業用の worktree（.review-packets/.auto-wt・origin/main と同じ中身）で `claude -p` を起動し、
+  2. Max の使用量を読み（check_plan_usage・費用 0）、上限を超えた分（有料）に入り得るなら起動しない
+     作業用の worktree（.review-packets/.auto-wt・origin/main と同じ中身）で `claude -p` を起動し、
      scripts/review/auto-judge-prompt.md の指示で review/results/ と review/rules/ の新しいファイルだけ書かせる
-     （Claude は commit・push しない。使える道具は allowed_tools() のものだけ）
+     （Claude は commit・push しない。使える道具は allowed_tools() のものだけ。上限の知らせが危なくなればすぐ止める）
   3. 関門（Claude ではなくこのスクリプトが確かめる）:
      - 変わったのが review/results/・review/rules/ の新しいファイルだけ
      - 結果に束の未判定の report_id が全部あり、outcome が 5 値のどれか・note に URL が無い
@@ -65,6 +66,10 @@ CURRENT_RULES = ["merged-rules.json", "popunder-rules.json", "rules-reported.jso
 
 class Hold(Exception):
     """関門で止めた（載せない・人の確認に回す）"""
+
+
+class UsageStop(Exception):
+    """Max の使用量が多い・上限を超えた分（有料）に入り得るので、起動しなかった・途中で止めた"""
 
 
 def now() -> str:
@@ -153,8 +158,59 @@ def check_claude_login() -> None:
         raise RuntimeError("個人の Max で Claude にログインしていない（API の従量にならないよう起動しない）")
 
 
+# 上限を超えた分（有料の追加利用）は絶対に使わない（2026-11-20 kureho「上限をこえた分（有料になる）はぜったいにしない」）
+# - 起動の前: `claude -p /usage`（モデルを呼ばない・費用 0）で Max の各枠の使用量を読み、どれかが USAGE_MAX_PCT 以上、
+#   追加利用で動いている、読めない、のどれかなら起動しない
+# - 動いている間: 本体の上限の知らせ（stream-json の rate_limit_event）が「allowed」以外・追加利用中・追加利用の枠・
+#   使用量が USAGE_STOP_RATIO 以上、のどれかになったら、すぐ止める（上限に届く前の警告の段で止める）
+USAGE_MAX_PCT = 80
+USAGE_STOP_RATIO = 0.9
+USAGE_LINE = re.compile(r"^(Current [^:\n]+): (\d+)% used", re.M)
+
+
+def check_plan_usage() -> str:
+    p = subprocess.run([CLAUDE, "-p", "/usage", "--model", "claude-haiku-5-5", "--max-turns", "1", "--tools", "",
+                        "--output-format", "json", "--no-session-persistence"],
+                       cwd=PACKETS, capture_output=True, text=True, timeout=120, env=claude_env())
+    try:
+        out = json.loads(p.stdout)
+    except json.JSONDecodeError:
+        out = {}
+    text = str(out.get("result", ""))
+    if out.get("num_turns") != 0 or out.get("total_cost_usd") not in (0, 0.0):
+        raise UsageStop("使用量の確かめ方が変わった（/usage がモデルを呼んだ）ので起動しない")
+    if "using your overages" in text:
+        raise UsageStop("上限を超えた分（有料）で動いている最中なので起動しない")
+    windows = {name: int(pct) for name, pct in USAGE_LINE.findall(text)}
+    if "Current week (all models)" not in windows:
+        raise UsageStop("Max の使用量を読めないので起動しない")
+    over = {n: v for n, v in windows.items() if v >= USAGE_MAX_PCT}
+    if over:
+        raise UsageStop("Max の使用量が多いので起動しない（" + "・".join(f"{n} {v}%" for n, v in over.items()) + "）")
+    return "・".join(f"{n} {v}%" for n, v in windows.items())
+
+
+def usage_danger(info: dict) -> str | None:
+    """上限の知らせ 1 つを見て、止める理由（無ければ None）"""
+    if info.get("isUsingOverage") or info.get("rateLimitType") == "overage":
+        return "上限を超えた分（有料）に入った"
+    # 追加利用が切れていれば overageStatus は rejected（2026-11-20 の実物: rejected・org_level_disabled）。
+    # 使える設定になっていたら、枠の内でもその時点で止める（設定が変わっても有料に入らない）
+    if info.get("overageStatus") != "rejected":
+        return f"上限を超えた分（有料）が使える設定になっている（{info.get('overageStatus')}）"
+    if info.get("status") != "allowed":
+        return f"上限に近い・届いた（{info.get('status')}・{info.get('rateLimitType')}）"
+    ratios = [info.get("utilization")] + [w.get("utilization") for w in (info.get("unifiedWindows") or {}).values()
+                                          if isinstance(w, dict)]
+    top = max((r for r in ratios if isinstance(r, (int, float))), default=0)
+    if top >= USAGE_STOP_RATIO:
+        return f"使用量が {round(top * 100)}% に届いた"
+    return None
+
+
 def run_claude(packet: Path, date: str) -> dict:
     check_claude_login()
+    log(f"Max の使用量: {check_plan_usage()}")
     ensure_measure_binary()
     scratch = packet / "auto-scratch"
     scratch.mkdir(exist_ok=True)
@@ -162,7 +218,7 @@ def run_claude(packet: Path, date: str) -> dict:
            "--model", MODEL, "--permission-mode", "default",
            "--allowedTools", *allowed_tools(scratch),
            "--add-dir", str(packet), str(RULES_DIR),
-           "--output-format", "json", "--no-session-persistence"]
+           "--output-format", "stream-json", "--verbose", "--no-session-persistence"]
     env = claude_env()
     env.update(AUTO_JUDGE_SCRATCH=str(scratch), AUTO_JUDGE_SITES=str(packet / "sites.txt"),
                AUTO_JUDGE_RULES=str(RULES_DIR), AUTO_JUDGE_BIN=str(BIN))
@@ -173,20 +229,55 @@ def run_claude(packet: Path, date: str) -> dict:
                *sorted((SRC / "scripts/sync").glob("*.ts")), SRC / "scripts/measure/measure.swift"]
     before_hash = {g: _sha256(g) for g in guarded if g.exists()}
     log(f"Claude を起動（{MODEL}・最大 {CLAUDE_TIMEOUT_SEC // 60} 分）")
-    p = subprocess.run(cmd, cwd=WT, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_SEC, env=env)
-    (packet / "auto-judge-output.json").write_text(p.stdout)
-    if p.stderr.strip():
-        (packet / "auto-judge-stderr.txt").write_text(p.stderr)
-    try:
-        out = json.loads(p.stdout)
-    except json.JSONDecodeError:
-        out = {}
+    out, stop, rc = stream_claude(cmd, env, packet)
+    (packet / "auto-judge-output.json").write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n")
+    if stop:
+        raise UsageStop(f"途中で止めた: {stop}")
     changed = [g.name for g, h in before_hash.items() if not g.exists() or _sha256(g) != h]
     if changed:
         raise Hold(f"Claude の実行中に関門の材料が変わった: {', '.join(changed)}")
-    if p.returncode != 0 or out.get("is_error"):
-        raise Hold(f"Claude の実行が失敗（exit {p.returncode}）")
+    if rc != 0 or not out or out.get("is_error"):
+        raise Hold(f"Claude の実行が失敗（exit {rc}）")
     return out
+
+
+def stream_claude(cmd: list[str], env: dict, packet: Path) -> tuple[dict, str | None, int]:
+    """claude を動かし、1 行ずつ読む。上限の知らせが危ない値になったらすぐ止める。返り値は (最後の result・止めた理由・exit)"""
+    import threading
+    stream_log = packet / "auto-judge-stream.jsonl"
+    stop: list[str] = []
+    out: dict = {}
+    with open(packet / "auto-judge-stderr.txt", "w") as err, open(stream_log, "w") as sl:
+        p = subprocess.Popen(cmd, cwd=WT, stdout=subprocess.PIPE, stderr=err, text=True, env=env)
+        timer = threading.Timer(CLAUDE_TIMEOUT_SEC, lambda: (stop.append(f"{CLAUDE_TIMEOUT_SEC // 60} 分を超えた"), p.kill()))
+        timer.start()
+        try:
+            for line in p.stdout:
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                t = ev.get("type")
+                if t == "rate_limit_event":
+                    info = ev.get("rate_limit_info") or {}
+                    sl.write(json.dumps({"type": t, "rate_limit_info": info}) + "\n")  # 中身は使用量の数字だけ
+                    sl.flush()
+                    why = usage_danger(info)
+                    if why:
+                        stop.append(why)
+                        p.kill()
+                        break
+                elif t == "result":
+                    out = ev
+            p.wait(timeout=60)
+        finally:
+            timer.cancel()
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+    if stop and stop[0].endswith("分を超えた"):
+        raise subprocess.TimeoutExpired(cmd[:2], CLAUDE_TIMEOUT_SEC)
+    return out, (stop[0] if stop else None), p.returncode
 
 
 def _sha256(path: Path) -> str:
@@ -427,6 +518,9 @@ def main() -> int:
         return 0
     except Hold as e:
         write_status("held", packet=str(st.get("packet", "")), worktree=str(WT), reason=str(e), claude_reply=reply)
+        return 0
+    except UsageStop as e:
+        write_status("usage-stop", packet=str(st.get("packet", "")), worktree=str(WT), reason=str(e))
         return 0
     except Exception as e:  # noqa: BLE001
         write_status("failed", reason=f"{type(e).__name__}: {e}"[:600], worktree=str(WT))
