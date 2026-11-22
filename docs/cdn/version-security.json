@@ -1,11 +1,11 @@
 {
-  "security-rules_sha256": "a442f03eb90ff7c2098ef101f760c72ad91fc9c521ad7564f38a8ab90b2ffe8c",
-  "security-rules_bytes": 3242621,
+  "security-rules_sha256": "a077f4dcabc9f2f29f713f5aef104a26f139a33b5ef548c1e4dfff340e1c72f0",
+  "security-rules_bytes": 3269112,
   "merged-rules_sha256": "6ca5ca7f5805d7f7ee6dbb22202f368140767a3b0fe0e02a91df9000fa4ae753",
   "merged-rules_bytes": 19499901,
   "empty-rules_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "empty-rules_bytes": 2,
-  "second-ads-sec_sha256": "0d972824b1b7f154b0460e6fe26b56f13712f865c67d26dea4fd90cd334e5acc",
-  "second-ads-sec_bytes": 18554535,
-  "generated_at": "2026-11-15T06:20:18.149658Z"
+  "second-ads-sec_sha256": "d1d3b0289863e81407c8e0ceee426c60bec67729ed047027ee033f9c1c358a50",
+  "second-ads-sec_bytes": 18581026,
+  "generated_at": "2026-11-22T06:39:40.827094Z"
 }
