@@ -4,9 +4,35 @@ Claude が判定する。kureho に聞くのは「判定の方針そのものを
 
 ## いつ
 
-- 毎週月曜 06:30 に launchd `com.kureho.adblockkeshi-review-packet` が束を作る（Claude なし・D1 は読み取りのみ）
-- 朝のレポートの「広告消しの報告（未判定）」に件数が出る。新しい束は次のセッション開始時に 1 回だけ知らせる
+- 毎週月曜 06:30 に launchd `com.kureho.adblockkeshi-review-packet` が `scripts/review/weekly_review.sh` を動かす
+  1. 束を作る（Claude なし・D1 は読み取りのみ）
+  2. 未判定があれば **自動判定**（`scripts/review/auto_judge.py`・2026-11-20 kureho「Aで作って」）:
+     この Mac の `claude -p`（個人の Max・Opus 5.5）が下の手順 1〜5 をし、
+     スクリプトの関門（書いた場所・形・計測で効き目と壊れ・dry-run）を全部通ったものだけ 7 の push をする
+   - **使うのは個人の Max の利用枠の内だけ。上限を超えた分（有料の追加利用）は使わない**
+     （kureho「上限をこえた分（有料になる）はぜったいにしない」）。API の従量も使わない
+     - 起動の前に `claude -p /usage`（モデルを呼ばない・費用 0）で枠の使用量を読み、どれかが 80% 以上・
+       追加利用で動いている最中・読めない、のどれかなら起動しない
+     - 動いている間は Claude の上限の知らせを見て、警告の段（上限に届く前）・追加利用・使用量 90% のどれかで
+       すぐ止める（束の `auto-judge-stream.jsonl` に使用量の数字だけ残る）
+     - 追加利用が切れていること（上限の知らせの `overageStatus` が `rejected`）も毎回確かめ、使える設定になっていたら
+       その時点で止める。2026-11-20 の実物は `rejected`・`org_level_disabled`（アカウント側で切れている）。
+       支払設定そのものは Claude は触らない
+- 朝のレポートの「広告消しの報告（未判定）」に件数と自動判定の結果が出る
 - 手で作り直すとき: `python3 -B scripts/review/build_review_packet.py`（約 5〜10 分・報告ページを開くため）
+
+## 自動判定が保留・失敗した時
+
+- 保留＝何も配信していない。Claude が書いた物は `.review-packets/.auto-wt`（main と同じ中身の作業場所）に残り、
+  理由は朝のレポートと `.review-packets/auto-judge-status.json`、Claude の返事は束の `auto-judge-output.json`
+- 中身を見て、手順 3〜7 を手で続ける（`.auto-wt` の中で直して commit・push してよい）か、やめるなら `.auto-wt` の
+  未コミットの物を片付ける。`.auto-wt` に未コミットの物が残っている間は、次の週も新しく判定しない
+- 関門だけかけ直す: `python3 -B scripts/review/auto_judge.py --gate-only --no-push`
+- 使用量で止めた（`usage-stop`）＝何も配信していない。起動の前に止めた時は次の週にそのまま動く。
+  途中で止めた時は `.auto-wt` に書きかけが残るので、上の保留と同じく片付けるか手で続ける
+- 失敗（ログイン切れ・束が無い等）はログ `~/.claude/logs/adblockkeshi-review-packet.log` を見る。
+  `claude auth status` が個人の max でないと起動しない作り
+- 自動判定をやめる: plist の ProgramArguments を `build_review_packet.py` に戻して launchctl で入れ直す
 
 ## 手順
 

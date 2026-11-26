@@ -6,13 +6,13 @@
 # Issues: https://github.com/hagezi/dns-blocklists/issues
 # Disclaimer: https://github.com/hagezi/dns-blocklists/blob/main/README.md#disclaimer
 # Expires: 8 hours
-# Last modified: 14 Nov 2026 23:00 UTC
-# Version: 2026.1114.2300.37
+# Last modified: 21 Nov 2026 23:04 UTC
+# Version: 2026.1121.2304.08
 # Syntax: Domains (without subdomains)
-# Number of entries: 1462895
+# Number of entries: 1650050
 #
 #
-# Modified on 2026-11-15T06:20:00Z by the AdblockKeshi weekly build (scripts/build_security_rules.py):
+# Modified on 2026-11-22T06:39:05Z by the AdblockKeshi weekly build (scripts/build_security_rules.py):
 # converted to Safari Content Blocker rules (second-ads-sec.json), with popular sites,
 # shared hosting parents and public .jp domains excluded, and limited in count.
 # The modified list is distributed under the same license (GPL-3.0, see LICENSE-security.txt).

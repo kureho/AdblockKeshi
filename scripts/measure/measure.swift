@@ -70,6 +70,7 @@ func userScriptSource(waitMs: Int) -> String {
             var nav = performance.getEntriesByType('navigation')[0];
             try { payload.textLen = (document.body && document.body.innerText || '').length; } catch(e) { payload.textLen = -1; }
             try { payload.imgCount = document.querySelectorAll('img').length; } catch(e) { payload.imgCount = -1; }
+            try { payload.imgLoaded = Array.prototype.filter.call(document.querySelectorAll('img'), function(i){ return i.complete && i.naturalWidth > 0; }).length; } catch(e) { payload.imgLoaded = -1; }
             payload.navMs = nav ? Math.round(nav.loadEventEnd - nav.startTime) : -1;
           }
           window.webkit.messageHandlers.collector.postMessage(payload);
@@ -123,8 +124,10 @@ final class Job: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     var webView: WKWebView!
     var window: NSWindow?
     var resources = Set<String>()
+    var urls = Set<String>()  // 通信の URL そのもの（規則が当たる通信があるかを確かめる用）
     var mainTextLen: Int = -1
     var mainImgCount: Int = -1
+    var mainImgLoaded: Int = -1  // 読み込めて表示できている img の数（画像を止めて壊れたかを見る）
     var mainNavMs: Int = -1
     var subframeReports = 0
     var mainReported = false
@@ -273,12 +276,14 @@ final class Job: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
                 if let host = URL(string: r)?.host {
                     resources.insert(host)
                 }
+                urls.insert(r)
             }
         }
         if let top = body["top"] as? Bool, top {
             mainReported = true
             mainTextLen = body["textLen"] as? Int ?? -1
             mainImgCount = body["imgCount"] as? Int ?? -1
+            mainImgLoaded = body["imgLoaded"] as? Int ?? -1
             mainNavMs = body["navMs"] as? Int ?? -1
         } else {
             subframeReports += 1
@@ -374,8 +379,10 @@ func runMode() {
                         "repeat": j.repeatIndex,
                         "resources": Array(j.resources).sorted(),
                         "resourceCount": j.resources.count,
+                        "urls": Array(j.urls).sorted(),
                         "textLen": j.mainTextLen,
                         "imgCount": j.mainImgCount,
+                        "imgLoaded": j.mainImgLoaded,
                         "navMs": j.mainNavMs,
                         "elapsedMs": elapsedMs,
                         "mainReported": j.mainReported,
