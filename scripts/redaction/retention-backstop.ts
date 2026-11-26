@@ -8,6 +8,8 @@ import { redactPII } from '../../workers/src/lib/pii-redact'
 
 const RETENTION_DAYS = 14
 const SEC_PER_DAY = 86_400
+const ABUSE_PAGE_SIZE = 1000
+const ABUSE_MAX_PAGES = 50
 
 export interface RetentionBackstopDeps {
   fetch: typeof globalThis.fetch
@@ -61,21 +63,31 @@ export async function runRetentionBackstop(
   }
 
   // abuse_log: 14日超・reason 分岐（broken_site=自由文→redactPII / else=実URL→normalizeURL）
-  // ⚠️ 既縮約除外は未対応（kureho 承認待ちの設計判断）: broken_site は自由文で、redactPII
-  // 済みでも '/' を含み得るため reports と同じ slash ヒューリスティックが sound でない。
-  // robust 化には marker 列 or 時間窓処理が要る。abuse_log は低ボリューム想定（未実測）
-  // のため当面 LIMIT 10000 到達リスクは低いと判断し、本番反映前に kureho へ escalate する。
-  const abuse = await q(
-    `SELECT id, reason, url FROM abuse_log WHERE created_at < ? AND url IS NOT NULL LIMIT 10000`,
-    [threshold]
-  )
+  // 処理済みの行が毎回 LIMIT を占有して後ろの行に届かなくならないよう、id を進めるカーソルで
+  // ページ送りする（マーカー列は不要＝マイグレーションなし）。
+  // - 縮約済みの URL 行（eTLD+1 は '/' を含まない）は SELECT 段で除外する。
+  //   broken_site は自由文で redactPII 済みでも '/' を含み得るため除外対象にしない。
+  // - 縮約できない行（不正な URL など）が残っても、カーソルが先へ進むので後続の行は処理される。
   let abuse_log_redacted = 0
-  for (const a of abuse) {
-    const redacted =
-      a.reason === 'broken_site' ? redactPII(a.url).redacted : normalizeURL(a.url)
-    if (redacted === a.url) continue
-    await q(`UPDATE abuse_log SET url = ? WHERE id = ?`, [redacted, a.id])
-    abuse_log_redacted++
+  let cursor = 0
+  for (let page = 0; page < ABUSE_MAX_PAGES; page++) {
+    const abuse = await q(
+      `SELECT id, reason, url FROM abuse_log
+        WHERE created_at < ? AND url IS NOT NULL AND id > ?
+          AND (reason = 'broken_site' OR url LIKE '%/%')
+        ORDER BY id ASC LIMIT ${ABUSE_PAGE_SIZE}`,
+      [threshold, cursor]
+    )
+    for (const a of abuse) {
+      const redacted =
+        a.reason === 'broken_site' ? redactPII(a.url).redacted : normalizeURL(a.url)
+      if (redacted !== a.url) {
+        await q(`UPDATE abuse_log SET url = ? WHERE id = ?`, [redacted, a.id])
+        abuse_log_redacted++
+      }
+    }
+    if (abuse.length < ABUSE_PAGE_SIZE) break
+    cursor = abuse[abuse.length - 1].id
   }
 
   return { reports_redacted, candidates_redacted, abuse_log_redacted }
