@@ -137,3 +137,28 @@ describe('computeAggregations', () => {
     expect(result[0].unique_uuid_count).toBe(2)
   })
 })
+
+describe('computeAggregations: ip_hash salt epochs', () => {
+  const at = NOW - 100
+  test('the same IP seen under the old and new salt is not counted twice', () => {
+    const reports = [
+      baseReport({ id: 'r1', uuid_hash: 'u1', ip_hash: 'legacyA', created_at: at }),
+      baseReport({ id: 'r2', uuid_hash: 'u2', ip_hash: 'v2:newA', created_at: at }),
+      baseReport({ id: 'r3', uuid_hash: 'u3', ip_hash: 'v2:newA', created_at: at }),
+    ]
+    // 実体は 1 つの IP（世代をまたいで 2 件に見えるだけ）→ 閾値（IP 2 以上）に届かない
+    expect(computeAggregations(reports, NOW)).toEqual([])
+  })
+
+  test('distinct IPs within one epoch still count; max per epoch is used', () => {
+    const reports = [
+      baseReport({ id: 'r1', uuid_hash: 'u1', ip_hash: 'legacyA', created_at: at }),
+      baseReport({ id: 'r2', uuid_hash: 'u2', ip_hash: 'v2:newA', created_at: at }),
+      baseReport({ id: 'r3', uuid_hash: 'u3', ip_hash: 'v2:newB', created_at: at }),
+    ]
+    const out = computeAggregations(reports, NOW)
+    expect(out).toHaveLength(1)
+    expect(out[0].unique_ip_count).toBe(2)
+  })
+})
+

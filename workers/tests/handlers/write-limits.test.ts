@@ -90,17 +90,17 @@ describe('abuse_log write cap', () => {
     await env.DB.prepare('DELETE FROM bans').run()
   })
 
-  it('caps abuse_log writes per subject and reason', async () => {
+  it('caps abuse_log writes per subject (sum over ban-eligible reasons, reaches the top ban tier)', async () => {
     const uuid = HEX64('d')
     const token = await tok(uuid, 'submit')
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 110; i++) {
       const r = await post('submit', { token, uuid_hash: uuid, url: 'http://not-https.example.com/' })
       expect(r.status).toBe(400)
     }
     const c = await env.DB.prepare(
       "SELECT COUNT(*) AS c FROM abuse_log WHERE identifier_hash = ? AND reason = 'invalid_url'"
     ).bind(uuid).first<{ c: number }>()
-    expect(c!.c).toBe(20)
+    expect(c!.c).toBe(100)
   })
 
   it('does not log for a subject that is already banned', async () => {
@@ -194,7 +194,7 @@ describe('ip_hash salt separation', () => {
     const r = await post('submit', { token, uuid_hash: uuid, url: 'https://example.com/a' })
     expect(r.status).toBe(200)
     const row = await env.DB.prepare('SELECT ip_hash FROM reports WHERE uuid_hash = ?').bind(uuid).first<{ ip_hash: string }>()
-    expect(row!.ip_hash).toBe(await sha256Hex(IP + ':test-ip-hash-salt'))
+    expect(row!.ip_hash).toBe('v2:' + await sha256Hex(IP + ':test-ip-hash-salt'))
     expect(row!.ip_hash).not.toBe(await sha256Hex(IP + ':' + env.SERVER_SALT))
   })
 
@@ -230,5 +230,78 @@ describe('ip_hash salt separation', () => {
     const fallback = await hashClientIp({ ...env, IP_HASH_SALT: undefined } as any, IP)
     expect(fallback.ipHash).toBe(await sha256Hex(IP + ':' + env.SERVER_SALT))
     expect(fallback.legacyIpHash).toBeNull()
+  })
+})
+
+describe('type-scoped ban / log lookups', () => {
+  beforeEach(async () => {
+    await env.DB.prepare('DELETE FROM reports').run()
+    await env.DB.prepare('DELETE FROM abuse_log').run()
+    await env.DB.prepare('DELETE FROM bans').run()
+  })
+
+  it('a uuid-type ban whose hash equals an IP hash does not ban that IP', async () => {
+    const now = Math.floor(Date.now() / 1000)
+    const legacyIp = await sha256Hex(IP + ':' + env.SERVER_SALT)
+    // クライアントが選んだ uuid_hash = 旧 IP ハッシュ、という形の uuid 種別 ban
+    await env.DB.prepare(
+      "INSERT INTO bans (identifier_hash, identifier_type, reason, abuse_count, ban_level, expires_at, created_at) VALUES (?, 'uuid', 'auto_initial', 3, 1, ?, ?)"
+    ).bind(legacyIp, now + 3600, now).run()
+    const uuid = HEX64('a')
+    const token = await tok(uuid, 'submit')
+    const r = await post('submit', { token, uuid_hash: uuid, url: 'https://example.com/a' })
+    expect(r.status).toBe(200)
+  })
+
+  it('an ip-type ban does not apply to a uuid with the same hash value', async () => {
+    const now = Math.floor(Date.now() / 1000)
+    const uuid = HEX64('b')
+    await env.DB.prepare(
+      "INSERT INTO bans (identifier_hash, identifier_type, reason, abuse_count, ban_level, expires_at, created_at) VALUES (?, 'ip', 'auto_initial', 3, 1, ?, ?)"
+    ).bind(uuid, now + 3600, now).run()
+    const token = await tok(uuid, 'submit')
+    const r = await post('submit', { token, uuid_hash: uuid, url: 'https://example.com/a' })
+    expect(r.status).toBe(200)
+  })
+
+  it('abuse_log cap ignores a ban of the other identifier type', async () => {
+    const now = Math.floor(Date.now() / 1000)
+    const uuid = HEX64('c')
+    await env.DB.prepare(
+      "INSERT INTO bans (identifier_hash, identifier_type, reason, abuse_count, ban_level, expires_at, created_at) VALUES (?, 'ip', 'auto_initial', 3, 1, ?, ?)"
+    ).bind(uuid, now + 3600, now).run()
+    const token = await tok(uuid, 'submit')
+    await post('submit', { token, uuid_hash: uuid, url: 'http://not-https.example.com/' })
+    const c = await env.DB.prepare('SELECT COUNT(*) AS c FROM abuse_log WHERE identifier_hash = ?').bind(uuid).first<{ c: number }>()
+    expect(c!.c).toBe(1)
+  })
+
+  it('every ban tier stays reachable: 100 rows across ban-eligible reasons, cap not per reason', async () => {
+    const uuid = HEX64('d')
+    const token = await tok(uuid, 'submit')
+    // invalid_url 60 件 + spam_memo 60 件 → 合計は 100 で止まる（reason ごとに 20 で止まらない）
+    for (let i = 0; i < 60; i++) await post('submit', { token, uuid_hash: uuid, url: 'http://x.example.com/' })
+    for (let i = 0; i < 60; i++) await post('submit', { token, uuid_hash: uuid, url: 'https://example.com/a', memo: 'see https://spam.example' })
+    const c = await env.DB.prepare(
+      "SELECT COUNT(*) AS c FROM abuse_log WHERE identifier_hash = ? AND reason IN ('rate_limit','spam_memo','invalid_url')"
+    ).bind(uuid).first<{ c: number }>()
+    expect(c!.c).toBe(100)
+  })
+})
+
+describe('deletion dedupe only joins pending rows', () => {
+  beforeEach(async () => {
+    await env.DB.prepare('DELETE FROM deletion_requests').run()
+  })
+
+  it('a request arriving while the earlier one is processing creates a new pending row', async () => {
+    const uuid = HEX64('f')
+    const token = await tok(uuid, 'delete')
+    const r1 = await post('delete', { token, uuid_hash: uuid })
+    const id1 = ((await r1.json()) as any).id
+    await env.DB.prepare("UPDATE deletion_requests SET status = 'processing', processed_at = 1 WHERE id = ?").bind(id1).run()
+    const r2 = await post('delete', { token, uuid_hash: uuid })
+    expect(r2.status).toBe(202)
+    expect(((await r2.json()) as any).id).not.toBe(id1)
   })
 })

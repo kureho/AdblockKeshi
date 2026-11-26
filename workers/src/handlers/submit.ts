@@ -5,14 +5,20 @@ import { redactPII } from '../lib/pii-redact'
 import { checkRateLimit } from '../lib/rate-limit'
 import { sha256Hex } from '../lib/hash'
 import { hashClientIp } from '../lib/ip-hash'
+import { BAN_ELIGIBLE_REASONS } from '../lib/ban-engine-core'
 import { readJsonObject, isHex64, isStringWithin, errorResponse } from '../lib/request-body'
 import { isAdType, type AdType } from '../lib/ad-type'
 import { isSeenIn, type SeenIn } from '../lib/seen-in'
 import { isReportKind, hasUnknownReportKind, type ReportKind } from '../lib/report-kind'
 
-/** 同一主体・同一 reason あたり 24h に abuse_log へ書く最大件数（ban 閾値 3/10 を超えて ban へ届く余裕を残す）。 */
+/**
+ * abuse_log への書き込み上限（24h 窓）。
+ * ban 集計対象の reason は主体ごとに合計で ABUSE_LOG_MAX_BAN_ELIGIBLE まで。
+ * ban-engine の最上段（100 件）に届く値にしてあり、段の閾値自体は変えない。
+ */
 const ABUSE_LOG_WINDOW_SEC = 86400
-const ABUSE_LOG_MAX_PER_REASON = 20
+const ABUSE_LOG_MAX_BAN_ELIGIBLE = 100
+const ABUSE_LOG_MAX_OTHER = 20
 
 interface SubmitBody {
   token?: string
@@ -191,17 +197,30 @@ async function insertAbuseLog(
   url: string | null,
   now: number,
 ): Promise<void> {
-  // abuse_log への書き込み上限: 1 文で「停止中でない」かつ「同じ主体・同じ reason の直近 24h の件数が
-  // 上限未満」のときだけ書く（原子的に判定）。
+  // abuse_log への書き込み上限（原子的に判定する 1 文）:
+  //   - 同じ種別（uuid / ip）の主体が停止中なら書かない
+  //   - ban 集計対象の reason は、主体ごとに直近 24h の合計が上限未満のときだけ書く
+  //     （ban-engine は reason を合算して 3/10/30/100 の各段を判定するため、合算の上限にする）
+  //   - それ以外（pii_redacted）は reason ごとの小さい上限
+  const banEligible = (BAN_ELIGIBLE_REASONS as readonly string[]).includes(reason)
+  const reasonFilter = banEligible
+    ? `reason IN (${BAN_ELIGIBLE_REASONS.map(() => '?').join(',')})`
+    : 'reason = ?'
+  const reasonArgs: string[] = banEligible ? [...BAN_ELIGIBLE_REASONS] : [reason]
+  const cap = banEligible ? ABUSE_LOG_MAX_BAN_ELIGIBLE : ABUSE_LOG_MAX_OTHER
   await db.prepare(`
     INSERT INTO abuse_log (identifier_hash, identifier_type, reason, url, created_at)
-    SELECT ?1, ?2, ?3, ?4, ?5
-    WHERE NOT EXISTS (SELECT 1 FROM bans WHERE identifier_hash = ?1 AND expires_at > ?5)
+    SELECT ?, ?, ?, ?, ?
+    WHERE NOT EXISTS (SELECT 1 FROM bans
+                       WHERE identifier_hash = ? AND identifier_type = ? AND expires_at > ?)
       AND (SELECT COUNT(*) FROM abuse_log
-            WHERE identifier_hash = ?1 AND reason = ?3 AND created_at > ?5 - ?6) < ?7
+            WHERE identifier_hash = ? AND identifier_type = ? AND ${reasonFilter}
+              AND created_at > ?) < ?
   `).bind(
     identifierHash, identifierType, reason, url, now,
-    ABUSE_LOG_WINDOW_SEC, ABUSE_LOG_MAX_PER_REASON,
+    identifierHash, identifierType, now,
+    identifierHash, identifierType, ...reasonArgs,
+    now - ABUSE_LOG_WINDOW_SEC, cap,
   ).run()
 }
 

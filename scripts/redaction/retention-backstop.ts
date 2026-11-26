@@ -65,8 +65,9 @@ export async function runRetentionBackstop(
   // abuse_log: 14日超・reason 分岐（broken_site=自由文→redactPII / else=実URL→normalizeURL）
   // 処理済みの行が毎回 LIMIT を占有して後ろの行に届かなくならないよう、id を進めるカーソルで
   // ページ送りする（マーカー列は不要＝マイグレーションなし）。
-  // - 縮約済みの URL 行（eTLD+1 は '/' を含まない）は SELECT 段で除外する。
-  //   broken_site は自由文で redactPII 済みでも '/' を含み得るため除外対象にしない。
+  // - 縮約済みの URL 行（eTLD+1 は '/' を含まない）は SELECT 段で除外する。ただし
+  //   broken_site（自由文）と invalid_url（検証で弾いた生の入力）は縮約後も '/' を含み得るため
+  //   除外対象にせず、JS 側で「変換しても変わらない行」だけを更新スキップにする。
   // - 縮約できない行（不正な URL など）が残っても、カーソルが先へ進むので後続の行は処理される。
   let abuse_log_redacted = 0
   let cursor = 0
@@ -74,13 +75,15 @@ export async function runRetentionBackstop(
     const abuse = await q(
       `SELECT id, reason, url FROM abuse_log
         WHERE created_at < ? AND url IS NOT NULL AND id > ?
-          AND (reason = 'broken_site' OR url LIKE '%/%')
+          AND (reason IN ('broken_site', 'invalid_url') OR url LIKE '%/%')
         ORDER BY id ASC LIMIT ${ABUSE_PAGE_SIZE}`,
       [threshold, cursor]
     )
     for (const a of abuse) {
       const redacted =
-        a.reason === 'broken_site' ? redactPII(a.url).redacted : normalizeURL(a.url)
+        a.reason === 'broken_site' ? redactPII(a.url).redacted :
+        a.reason === 'invalid_url' ? redactPII(normalizeURL(a.url)).redacted :
+        normalizeURL(a.url)
       if (redacted !== a.url) {
         await q(`UPDATE abuse_log SET url = ? WHERE id = ?`, [redacted, a.id])
         abuse_log_redacted++

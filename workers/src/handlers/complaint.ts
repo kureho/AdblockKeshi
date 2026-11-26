@@ -75,7 +75,7 @@ export async function handleComplaint(request: Request, env: Env): Promise<Respo
   // count without modifying anything.
   const dup = await env.DB.prepare(
     `SELECT 1 FROM abuse_log
-      WHERE identifier_hash = ? AND target_id = ? AND reason = 'broken_site'
+      WHERE identifier_hash = ? AND identifier_type = 'uuid' AND target_id = ? AND reason = 'broken_site'
       LIMIT 1`
   )
     .bind(body.uuid_hash, body.rule_candidate_id)

@@ -31,8 +31,11 @@ export async function checkRateLimit(db: D1Database, args: RateLimitArgs): Promi
   const ipKeys = args.legacyIpHash ? [args.ipHash, args.legacyIpHash] : [args.ipHash]
   const ipPlaceholders = ipKeys.map(() => '?').join(', ')
   const ban = await db.prepare(
-    `SELECT identifier_hash FROM bans WHERE identifier_hash IN (?, ${ipPlaceholders}) AND expires_at > ?`
-  ).bind(args.uuidHash, ...ipKeys, args.now).first()
+    `SELECT identifier_hash FROM bans
+      WHERE expires_at > ?
+        AND ((identifier_type = 'uuid' AND identifier_hash = ?)
+          OR (identifier_type = 'ip' AND identifier_hash IN (${ipPlaceholders})))`
+  ).bind(args.now, args.uuidHash, ...ipKeys).first()
   if (ban) return { allowed: false, reason: 'banned' }
 
   // 2. uuid monthly（日より先に見る。両方に当たったとき「明日また送れます」と言わないため・A-88）

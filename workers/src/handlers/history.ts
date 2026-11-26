@@ -43,6 +43,7 @@ export async function handleHistory(request: Request, env: Env): Promise<Respons
       EXISTS (
         SELECT 1 FROM abuse_log a
         WHERE a.identifier_hash = r.uuid_hash
+          AND a.identifier_type = 'uuid'
           AND a.reason = 'pii_redacted'
           AND a.url = r.url
       ) AS memo_redacted

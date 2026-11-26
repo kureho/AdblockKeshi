@@ -100,4 +100,29 @@ describe('runRetentionBackstop', () => {
     const upd = calls.find((c) => /UPDATE abuse_log/i.test(c.body.sql))!
     expect(upd.body.params).toEqual(['example.com', PAGE + 5])
   })
+
+  test('abuse_log: invalid_url rows (raw input) are selected and redacted even if they contain "/"', async () => {
+    const { fetch, calls } = makeD1FetchMock([
+      { rows: [] }, // reports
+      { rows: [] }, // rule_candidates
+      { rows: [{ id: 7, reason: 'invalid_url', url: 'http://user:pw@raw.example.com/path?token=abc' }] },
+      { rows: [] }, // UPDATE
+    ])
+    const r = await runRetentionBackstop(ENV, { fetch, now: () => NOW })
+    expect(r.abuse_log_redacted).toBe(1)
+    const sel = calls.find((c) => /FROM abuse_log/i.test(c.body.sql))!
+    expect(sel.body.sql).toMatch(/reason IN \('broken_site', 'invalid_url'\)/)
+    const upd = calls.find((c) => /UPDATE abuse_log/i.test(c.body.sql))!
+    expect(upd.body.params).toEqual(['example.com', 7])
+  })
+
+  test('abuse_log: an already-redacted invalid_url row is a fixed point (no UPDATE)', async () => {
+    const { fetch, calls } = makeD1FetchMock([
+      { rows: [] }, { rows: [] },
+      { rows: [{ id: 8, reason: 'invalid_url', url: 'example.com' }] },
+    ])
+    const r = await runRetentionBackstop(ENV, { fetch, now: () => NOW })
+    expect(r.abuse_log_redacted).toBe(0)
+    expect(calls.some((c) => /UPDATE abuse_log/i.test(c.body.sql))).toBe(false)
+  })
 })
