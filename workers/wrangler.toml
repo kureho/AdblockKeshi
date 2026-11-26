@@ -14,7 +14,8 @@ database_id = "91b0e61f-d4a2-4dd0-b979-7c6635dbdbe4"
 
 # Secrets (wrangler secret put で別途設定、commit 禁止):
 #   HMAC_KEY        — ephemeral token 署名鍵
-#   SERVER_SALT     — UUID/IP hash の reversibility 防止 salt
+#   SERVER_SALT     — UUID hash の salt（クライアントが /token から受け取る）
+#   IP_HASH_SALT    — IP hash 用の Worker 専用 salt（未設定の間は SERVER_SALT で代替。先に secret を設定してから deploy）
 #   TURNSTILE_SECRET — Cloudflare Turnstile server-side secret
 #   GH_DISPATCH_TOKEN — 月次/週次 workflow trigger 用 GitHub PAT
 

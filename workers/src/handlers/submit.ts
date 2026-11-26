@@ -4,9 +4,15 @@ import { validateURL, validateMemo, countsAsAbuse } from '../lib/validation'
 import { redactPII } from '../lib/pii-redact'
 import { checkRateLimit } from '../lib/rate-limit'
 import { sha256Hex } from '../lib/hash'
+import { hashClientIp } from '../lib/ip-hash'
+import { readJsonObject, isHex64, isStringWithin, errorResponse } from '../lib/request-body'
 import { isAdType, type AdType } from '../lib/ad-type'
 import { isSeenIn, type SeenIn } from '../lib/seen-in'
 import { isReportKind, hasUnknownReportKind, type ReportKind } from '../lib/report-kind'
+
+/** 同一主体・同一 reason あたり 24h に abuse_log へ書く最大件数（ban 閾値 3/10 を超えて ban へ届く余裕を残す）。 */
+const ABUSE_LOG_WINDOW_SEC = 86400
+const ABUSE_LOG_MAX_PER_REASON = 20
 
 interface SubmitBody {
   token?: string
@@ -49,16 +55,16 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
     return jsonError(405, 'method_not_allowed', 'POST required')
   }
 
-  let body: SubmitBody
-  try {
-    body = await request.json() as SubmitBody
-  } catch {
-    return jsonError(400, 'validation_failed', 'invalid JSON')
-  }
+  const parsed = await readJsonObject(request)
+  if (!parsed.ok) return parsed.response
+  const body = parsed.body as SubmitBody
 
-  if (!body.token) return jsonError(400, 'validation_failed', 'token required')
-  if (!body.uuid_hash || body.uuid_hash.length !== 64) return jsonError(400, 'validation_failed', 'uuid_hash must be 64 hex chars')
-  if (!body.url) return jsonError(400, 'validation_failed', 'url required')
+  if (!isStringWithin(body.token, 2048) || body.token === '') return jsonError(400, 'validation_failed', 'token required')
+  if (!isHex64(body.uuid_hash)) return jsonError(400, 'validation_failed', 'uuid_hash must be 64 hex chars')
+  if (typeof body.url !== 'string' || body.url === '') return jsonError(400, 'validation_failed', 'url required')
+  if (body.memo !== undefined && body.memo !== null && typeof body.memo !== 'string') {
+    return jsonError(400, 'validation_failed', 'memo must be a string')
+  }
 
   // ad_type は v3.0 build 15 以降のクライアントから送られる任意フィールド。
   // 旧クライアント (build 14 以前) は ad_type を送らないので NULL を許容。
@@ -105,9 +111,9 @@ export async function handleSubmit(request: Request, env: Env): Promise<Response
   const { redacted: redactedMemo, didRedact } = redactPII(body.memo ?? '')
 
   const ipPlain = request.headers.get('CF-Connecting-IP') ?? 'unknown'
-  const ipHash = await sha256Hex(ipPlain + ':' + env.SERVER_SALT)
+  const { ipHash, legacyIpHash } = await hashClientIp(env, ipPlain)
 
-  const rl = await checkRateLimit(env.DB, { uuidHash, ipHash, now })
+  const rl = await checkRateLimit(env.DB, { uuidHash, ipHash, legacyIpHash, now })
   if (!rl.allowed) {
     // 停止中の再送は記録しない。記録すると停止中に送り直すたびに件数が増え、
     // ban-engine が停止を延ばしてしまう（3 件 24h → 10 件 7 日）。A-88
@@ -185,10 +191,18 @@ async function insertAbuseLog(
   url: string | null,
   now: number,
 ): Promise<void> {
+  // abuse_log への書き込み上限: 1 文で「停止中でない」かつ「同じ主体・同じ reason の直近 24h の件数が
+  // 上限未満」のときだけ書く（原子的に判定）。
   await db.prepare(`
     INSERT INTO abuse_log (identifier_hash, identifier_type, reason, url, created_at)
-    VALUES (?, ?, ?, ?, ?)
-  `).bind(identifierHash, identifierType, reason, url, now).run()
+    SELECT ?1, ?2, ?3, ?4, ?5
+    WHERE NOT EXISTS (SELECT 1 FROM bans WHERE identifier_hash = ?1 AND expires_at > ?5)
+      AND (SELECT COUNT(*) FROM abuse_log
+            WHERE identifier_hash = ?1 AND reason = ?3 AND created_at > ?5 - ?6) < ?7
+  `).bind(
+    identifierHash, identifierType, reason, url, now,
+    ABUSE_LOG_WINDOW_SEC, ABUSE_LOG_MAX_PER_REASON,
+  ).run()
 }
 
 /**

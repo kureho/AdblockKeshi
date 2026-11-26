@@ -15,6 +15,7 @@ export default defineWorkersConfig(async () => {
             bindings: {
               HMAC_KEY: 'test-hmac-key-do-not-use-in-prod',
               SERVER_SALT: 'test-server-salt',
+              IP_HASH_SALT: 'test-ip-hash-salt',
               TURNSTILE_SECRET: '1x0000000000000000000000000000000AA',
               GH_DISPATCH_TOKEN: 'test-gh-token',
               TEST_MIGRATIONS: migrations,

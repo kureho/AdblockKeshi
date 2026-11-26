@@ -9,6 +9,8 @@
 export interface RateLimitArgs {
   uuidHash: string
   ipHash: string
+  /** IP_HASH_SALT 切替前の ip_hash。移行期間だけ停止・15分窓の照合に足す。 */
+  legacyIpHash?: string | null
   now: number  // unix sec
 }
 
@@ -26,9 +28,11 @@ const FIFTEEN_MIN_SEC = 15 * 60
 
 export async function checkRateLimit(db: D1Database, args: RateLimitArgs): Promise<RateLimitResult> {
   // 1. ban check (either uuid or ip can be banned)
+  const ipKeys = args.legacyIpHash ? [args.ipHash, args.legacyIpHash] : [args.ipHash]
+  const ipPlaceholders = ipKeys.map(() => '?').join(', ')
   const ban = await db.prepare(
-    'SELECT identifier_hash FROM bans WHERE identifier_hash IN (?, ?) AND expires_at > ?'
-  ).bind(args.uuidHash, args.ipHash, args.now).first()
+    `SELECT identifier_hash FROM bans WHERE identifier_hash IN (?, ${ipPlaceholders}) AND expires_at > ?`
+  ).bind(args.uuidHash, ...ipKeys, args.now).first()
   if (ban) return { allowed: false, reason: 'banned' }
 
   // 2. uuid monthly（日より先に見る。両方に当たったとき「明日また送れます」と言わないため・A-88）
@@ -49,8 +53,8 @@ export async function checkRateLimit(db: D1Database, args: RateLimitArgs): Promi
 
   // 4. ip 15-min
   const ip15 = await db.prepare(
-    'SELECT COUNT(*) as c FROM reports WHERE ip_hash = ? AND created_at > ?'
-  ).bind(args.ipHash, args.now - FIFTEEN_MIN_SEC).first<{ c: number }>()
+    `SELECT COUNT(*) as c FROM reports WHERE ip_hash IN (${ipPlaceholders}) AND created_at > ?`
+  ).bind(...ipKeys, args.now - FIFTEEN_MIN_SEC).first<{ c: number }>()
   if ((ip15?.c ?? 0) >= IP_15MIN_LIMIT) {
     return { allowed: false, reason: 'ip_15min_limit' }
   }

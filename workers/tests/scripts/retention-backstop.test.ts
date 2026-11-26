@@ -77,4 +77,27 @@ describe('runRetentionBackstop', () => {
     expect(updates[0].body.params).toEqual(['連絡先 ***-****-**** です', 1]) // redactPII
     expect(updates[1].body.params).toEqual(['example.com', 2]) // normalizeURL
   })
+
+  test('abuse_log: 処理済み行で先頭が埋まってもカーソルで先へ進み、後ろの行を処理する', async () => {
+    const PAGE = 1000
+    // 1 ページ目: 縮約不要（冪等スキップ）の行で満杯 → 2 ページ目へ。
+    const page1 = Array.from({ length: PAGE }, (_, i) => ({ id: i + 1, reason: 'invalid_url', url: 'evil.com' }))
+    const { fetch, calls } = makeD1FetchMock([
+      { rows: [] }, // reports
+      { rows: [] }, // rule_candidates
+      { rows: page1 }, // abuse page 1（UPDATE なし）
+      { rows: [{ id: PAGE + 5, reason: 'invalid_url', url: 'https://x.example.com/p?q=1' }] }, // abuse page 2
+      { rows: [] }, // UPDATE
+    ])
+    const r = await runRetentionBackstop(ENV, { fetch, now: () => NOW })
+    expect(r.abuse_log_redacted).toBe(1)
+    const selects = calls.filter((c) => /FROM abuse_log/i.test(c.body.sql))
+    expect(selects).toHaveLength(2)
+    expect(selects[0].body.params).toEqual([NOW - 14 * 86400, 0])
+    expect(selects[1].body.params).toEqual([NOW - 14 * 86400, PAGE])
+    expect(selects[0].body.sql).toMatch(/ORDER BY id ASC/i)
+    expect(selects[0].body.sql).toMatch(/url\s+LIKE\s+'%\/%'/i)
+    const upd = calls.find((c) => /UPDATE abuse_log/i.test(c.body.sql))!
+    expect(upd.body.params).toEqual(['example.com', PAGE + 5])
+  })
 })

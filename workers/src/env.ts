@@ -9,8 +9,14 @@ export interface Env {
   /** HMAC ephemeral token signing key (5min TTL). secret. */
   HMAC_KEY: string
 
-  /** Salt for SHA-256(uuid + salt) and SHA-256(ip + salt) hashes. secret. */
+  /** Salt for SHA-256(uuid + salt). Shipped clients read it from /token, so keep its value stable. secret. */
   SERVER_SALT: string
+
+  /**
+   * Salt for SHA-256(ip + salt). Worker-only. secret.
+   * Optional during rollout: when unset, the legacy SERVER_SALT is used (see lib/ip-hash.ts).
+   */
+  IP_HASH_SALT?: string
 
   /** Cloudflare Turnstile server-side secret. secret. */
   TURNSTILE_SECRET: string

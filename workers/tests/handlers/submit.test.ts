@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { SELF, env } from 'cloudflare:test'
 import { signToken } from '../../src/lib/hmac'
 
-const HEX64 = (c: string) => c.repeat(64)
+// uuid_hash は小文字 16 進 64 文字のみ有効。1 文字のラベルから重複しない 16 進列を作る。
+const HEX64 = (c: string) => c.charCodeAt(0).toString(16).padStart(2, '0').repeat(32)
 
 async function makeToken(uuidHash: string, scope: 'submit' | 'history' | 'delete' = 'submit', overrides?: { expires?: number }): Promise<string> {
   return signToken(

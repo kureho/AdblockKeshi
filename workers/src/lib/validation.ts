@@ -16,9 +16,16 @@ export interface ValidationResult {
 const MAX_URL_LENGTH = 2048
 const MAX_MEMO_LENGTH = 200
 const MIN_HOST_LENGTH = 7
+// 文字数の上限とは別に、UTF-8 のバイト数でも上限をかける（結合文字などで文字数だけでは抑えられないため）。
+const MAX_URL_BYTES = 6144
+const MAX_MEMO_BYTES = 6144
+
+function utf8Bytes(text: string): number {
+  return new TextEncoder().encode(text).length
+}
 
 // 長さ超過はアプリとサーバの数え方のずれで正規の利用者にも起きるので、不正の記録に数えない。
-const LENGTH_REASONS = new Set(['url_too_long', 'memo_too_long'])
+const LENGTH_REASONS = new Set(['url_too_long', 'memo_too_long', 'memo_not_string'])
 
 export function countsAsAbuse(result: ValidationResult): boolean {
   return !result.ok && !LENGTH_REASONS.has(result.reason ?? '')
@@ -34,9 +41,10 @@ export function visibleLength(text: string): number {
   return Array.from(text).length
 }
 
-export function validateURL(url: string): ValidationResult {
+export function validateURL(url: unknown): ValidationResult {
+  if (typeof url !== 'string') return { ok: false, reason: 'url_malformed' }
   if (!url || url.trim().length === 0) return { ok: false, reason: 'url_empty' }
-  if (url.length > MAX_URL_LENGTH) return { ok: false, reason: 'url_too_long' }
+  if (url.length > MAX_URL_LENGTH || utf8Bytes(url) > MAX_URL_BYTES) return { ok: false, reason: 'url_too_long' }
   if (!url.toLowerCase().startsWith('https://')) return { ok: false, reason: 'url_not_https' }
   try {
     const u = new URL(url)
@@ -48,9 +56,10 @@ export function validateURL(url: string): ValidationResult {
   }
 }
 
-export function validateMemo(memo: string | undefined | null): ValidationResult {
+export function validateMemo(memo: unknown): ValidationResult {
   if (memo == null || memo === '') return { ok: true }
-  if (visibleLength(memo) > MAX_MEMO_LENGTH) return { ok: false, reason: 'memo_too_long' }
+  if (typeof memo !== 'string') return { ok: false, reason: 'memo_not_string' }
+  if (utf8Bytes(memo) > MAX_MEMO_BYTES || visibleLength(memo) > MAX_MEMO_LENGTH) return { ok: false, reason: 'memo_too_long' }
   if (/https?:\/\//.test(memo)) return { ok: false, reason: 'memo_contains_url' }
   return { ok: true }
 }

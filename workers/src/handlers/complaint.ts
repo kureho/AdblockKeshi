@@ -10,6 +10,7 @@
 
 import type { Env } from '../env'
 import { verifyToken } from '../lib/hmac'
+import { readJsonObject, isHex64, isStringWithin } from '../lib/request-body'
 
 interface ComplaintBody {
   token?: string
@@ -30,22 +31,22 @@ export async function handleComplaint(request: Request, env: Env): Promise<Respo
     return jsonError(405, 'method_not_allowed', 'POST required')
   }
 
-  let body: ComplaintBody
-  try {
-    body = (await request.json()) as ComplaintBody
-  } catch {
-    return jsonError(400, 'validation_failed', 'invalid JSON')
-  }
+  const parsed = await readJsonObject(request)
+  if (!parsed.ok) return parsed.response
+  const body = parsed.body as ComplaintBody
 
-  if (!body.token) return jsonError(400, 'validation_failed', 'token required')
-  if (!body.uuid_hash || body.uuid_hash.length !== 64) {
+  if (!isStringWithin(body.token, 2048) || body.token === '') return jsonError(400, 'validation_failed', 'token required')
+  if (!isHex64(body.uuid_hash)) {
     return jsonError(400, 'validation_failed', 'uuid_hash must be 64 hex chars')
   }
-  if (!body.rule_candidate_id) {
+  if (!isStringWithin(body.rule_candidate_id, 128) || body.rule_candidate_id === '') {
     return jsonError(400, 'validation_failed', 'rule_candidate_id required')
   }
-  if (body.reason && body.reason.length > 200) {
-    return jsonError(400, 'validation_failed', 'reason too long')
+  if (body.reason !== undefined && body.reason !== null) {
+    if (typeof body.reason !== 'string') return jsonError(400, 'validation_failed', 'reason must be a string')
+    if (body.reason.length > 200 || !isStringWithin(body.reason, 800)) {
+      return jsonError(400, 'validation_failed', 'reason too long')
+    }
   }
 
   try {

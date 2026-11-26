@@ -1,6 +1,7 @@
 import type { Env } from '../env'
 import { verifyTurnstile, TurnstileError } from '../lib/turnstile'
 import { signToken, type TokenPayload } from '../lib/hmac'
+import { readJsonObject, isHex64, isStringWithin } from '../lib/request-body'
 
 interface TokenRequestBody {
   turnstile_response?: string
@@ -25,21 +26,19 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
     return jsonError(405, 'method_not_allowed', 'POST required')
   }
 
-  let body: TokenRequestBody
-  try {
-    body = await request.json() as TokenRequestBody
-  } catch {
-    return jsonError(400, 'validation_failed', 'invalid JSON body')
-  }
+  const parsed = await readJsonObject(request)
+  if (!parsed.ok) return parsed.response
+  const body = parsed.body as TokenRequestBody
 
   const { turnstile_response, scope, uuid_hash } = body
-  if (!turnstile_response || typeof turnstile_response !== 'string') {
+  // Turnstile の response トークンは最大 2048 文字
+  if (!turnstile_response || !isStringWithin(turnstile_response, 2048)) {
     return jsonError(400, 'validation_failed', 'turnstile_response required')
   }
-  if (!scope || !VALID_SCOPES.has(scope as TokenPayload['scope'])) {
+  if (typeof scope !== 'string' || !VALID_SCOPES.has(scope as TokenPayload['scope'])) {
     return jsonError(400, 'validation_failed', `scope must be one of: ${[...VALID_SCOPES].join(', ')}`)
   }
-  if (!uuid_hash || typeof uuid_hash !== 'string' || uuid_hash.length !== 64) {
+  if (!isHex64(uuid_hash)) {
     return jsonError(400, 'validation_failed', 'uuid_hash must be 64 hex chars')
   }
 

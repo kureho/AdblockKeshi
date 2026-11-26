@@ -1,5 +1,6 @@
 import type { Env } from '../env'
 import { resolveReviewOutcome } from '../lib/review-outcome'
+import { readJsonObject } from '../lib/request-body'
 
 interface StatusBody {
   ids?: unknown
@@ -33,12 +34,9 @@ export async function handleReportStatus(request: Request, env: Env): Promise<Re
     return jsonError(405, 'method_not_allowed', 'POST required')
   }
 
-  let body: StatusBody
-  try {
-    body = await request.json() as StatusBody
-  } catch {
-    return jsonError(400, 'validation_failed', 'invalid JSON')
-  }
+  const parsed = await readJsonObject(request)
+  if (!parsed.ok) return parsed.response
+  const body = parsed.body as StatusBody
 
   if (!Array.isArray(body.ids) || body.ids.length === 0) {
     return jsonError(400, 'validation_failed', 'ids must be a non-empty array')

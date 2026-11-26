@@ -8,7 +8,8 @@ import { signToken } from '../../src/lib/hmac'
 // - メモはアプリが見た目の文字数・サーバが UTF-16 で数えていた（絵文字 150 個 = 300）
 // - 停止中の再送・長さ超過が abuse_log に積まれ、停止が延びていた（3 件で 24h / 10 件で 7 日）
 
-const HEX64 = (c: string) => c.repeat(64)
+// uuid_hash は小文字 16 進 64 文字のみ有効。1 文字のラベルから重複しない 16 進列を作る。
+const HEX64 = (c: string) => c.charCodeAt(0).toString(16).padStart(2, '0').repeat(32)
 
 async function makeToken(uuidHash: string): Promise<string> {
   return signToken({ subject: uuidHash, expires: Date.now() + 60000, scope: 'submit' }, env.HMAC_KEY)

@@ -1,5 +1,6 @@
 import type { Env } from '../env'
 import { verifyToken } from '../lib/hmac'
+import { readJsonObject, isHex64, isStringWithin } from '../lib/request-body'
 
 interface HistoryBody {
   token?: string
@@ -17,11 +18,11 @@ export async function handleHistory(request: Request, env: Env): Promise<Respons
     return jsonError(405, 'method_not_allowed', 'POST required')
   }
 
-  let body: HistoryBody
-  try { body = await request.json() as HistoryBody }
-  catch { return jsonError(400, 'validation_failed', 'invalid JSON') }
+  const parsed = await readJsonObject(request)
+  if (!parsed.ok) return parsed.response
+  const body = parsed.body as HistoryBody
 
-  if (!body.token || !body.uuid_hash) {
+  if (!isStringWithin(body.token, 2048) || body.token === '' || !isHex64(body.uuid_hash)) {
     return jsonError(400, 'validation_failed', 'token and uuid_hash required')
   }
 
